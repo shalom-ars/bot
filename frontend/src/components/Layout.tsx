@@ -11,17 +11,26 @@ export default function Layout() {
     { name: 'Portfolio', path: '/app/portfolio', icon: Wallet },
     { name: 'Research Terminal', path: '/app/research', icon: FileTerminal },
   ];
+  
+  const secondaryNav = [
+    { name: 'Positions', path: '/app/positions' },
+    { name: 'Trades', path: '/app/trades' },
+    { name: 'Performance', path: '/app/performance' },
+    { name: 'Risk', path: '/app/risk' },
+    { name: 'Alerts', path: '/app/alerts' },
+    { name: 'Settings', path: '/app/settings' },
+  ];
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900">
       {/* Sidebar */}
-      <div className="w-64 bg-white border-r border-slate-200 flex flex-col">
+      <div className="w-64 bg-white border-r border-slate-200 flex flex-col overflow-y-auto">
         <div className="p-6">
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">JONANDA</h1>
           <p className="text-xs text-slate-500 font-medium tracking-wide mt-1 uppercase">Quant Intelligence</p>
         </div>
         
-        <nav className="flex-1 px-4 space-y-1">
+        <nav className="px-4 space-y-1 mb-6">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
@@ -36,6 +45,26 @@ export default function Layout() {
                 }`}
               >
                 <Icon className="w-5 h-5" />
+                {item.name}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <nav className="flex-1 px-4 space-y-1">
+          <p className="px-3 text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Management</p>
+          {secondaryNav.map((item) => {
+            const isActive = location.pathname === item.path;
+            return (
+              <Link
+                key={item.name}
+                to={item.path}
+                className={`block px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                  isActive 
+                    ? 'text-blue-700 font-semibold' 
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
                 {item.name}
               </Link>
             );

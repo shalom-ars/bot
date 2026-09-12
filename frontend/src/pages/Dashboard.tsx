@@ -1,21 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Activity, TrendingUp, AlertTriangle, ArrowUpRight, ArrowDownRight, FileTerminal } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import client from '../api/client';
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
+  const [perf, setPerf] = useState<any>(null);
 
   useEffect(() => {
-    // In a real app, this would use axios to fetch from /api/users/portfolio
-    // Here we stub it to show the professional layout.
-    setData({
-      balance: 500.00,
-      todayPnl: 0.00,
-      totalPnl: 0.00,
-      winRate: 0,
-      openPositions: 0,
-      drawdown: 0
-    });
+    client.get('/users/portfolio').then((r: any) => setData(r.data)).catch(console.error);
+    client.get('/users/performance').then((r: any) => setPerf(r.data)).catch(console.error);
   }, []);
 
   return (
@@ -33,10 +27,10 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card title="Virtual Balance" value={`$${data?.balance?.toFixed(2) ?? '0.00'}`} icon={WalletIcon} />
-        <Card title="Total PnL" value={`$${data?.totalPnl?.toFixed(2) ?? '0.00'}`} icon={TrendingUp} trend={0} />
-        <Card title="Win Rate" value={`${data?.winRate ?? 0}%`} icon={Activity} />
-        <Card title="Open Positions" value={data?.openPositions ?? 0} icon={AlertTriangle} />
+        <Card title="Virtual Balance" value={`$${data?.current_balance?.toFixed(2) ?? '0.00'}`} icon={WalletIcon} />
+        <Card title="Total PnL" value={`$${data?.realized_pnl?.toFixed(2) ?? '0.00'}`} icon={TrendingUp} trend={0} />
+        <Card title="Win Rate" value={`${perf?.win_rate ?? 0}%`} icon={Activity} />
+        <Card title="Trades" value={data?.trades ?? 0} icon={AlertTriangle} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

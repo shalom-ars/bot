@@ -53,7 +53,11 @@ class Settings(BaseSettings):
     live_initial_capital: float = 500.0
     live_max_capital: float = 500.0
 
+    # Phase 8: SaaS
+    saas_secret_key: str = ""
+
     class Config:
         env_file = ".env"
+        extra = "allow"
 
 settings = Settings()

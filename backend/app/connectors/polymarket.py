@@ -22,7 +22,10 @@ class PolymarketConnector:
     async def connect(self):
         if not self.session:
             timeout = aiohttp.ClientTimeout(total=10)
-            self.session = aiohttp.ClientSession(timeout=timeout)
+            self.session = aiohttp.ClientSession(
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
 
     async def disconnect(self):
         if self.session:
@@ -44,7 +47,8 @@ class PolymarketConnector:
                     else:
                         logger.error(f"Polymarket HTTP {resp.status} on {url}")
             except Exception as e:
-                logger.error(f"Polymarket Network Error: {e}. Retrying in {delay}s...")
+                import traceback
+                logger.error(f"Polymarket Network Error: {e}. Retrying in {delay}s...\n{traceback.format_exc()}")
             
             self.is_stale = True
             await asyncio.sleep(delay)
@@ -55,15 +59,26 @@ class PolymarketConnector:
     async def get_active_markets(self, limit=50):
         if not settings.polymarket_enabled:
             return []
-        
-        url = f"{self.gamma_api_url}/events?limit={limit}&active=true&closed=false"
-        data = await self._request_with_retry(url)
-        markets = []
-        if data:
-            for event in data:
-                for market in event.get('markets', []):
-                    markets.append(market)
-        return markets
+            
+        def fetch_sync():
+            import urllib.request, json
+            url = f"{self.gamma_api_url}/events?limit=100&active=true&closed=false"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read().decode())
+                    if not data: return []
+                    sorted_events = sorted(data, key=lambda e: e.get('volume', 0) or 0, reverse=True)
+                    m = []
+                    for event in sorted_events[:limit]:
+                        for market in event.get('markets', []):
+                            m.append(market)
+                    return m
+            except Exception as e:
+                logger.error(f"Gamma API Fetch Error: {e}")
+                return []
+                
+        return await asyncio.to_thread(fetch_sync)
 
     async def fetch_market_data(self, token_id):
         if not settings.polymarket_enabled:
@@ -124,29 +139,28 @@ class PolymarketConnector:
         if not settings.polymarket_enabled or not token_ids:
             return []
             
-        url = f"{self.clob_api_url}/books"
-        req_start = datetime.utcnow()
-        payload = [{"token_id": t} for t in token_ids]
-        
-        delay = settings.reconnect_delay_seconds
-        data = None
-        for attempt in range(3):
+        def fetch_sync():
+            import urllib.request, json
+            url = f"{self.clob_api_url}/books"
+            payload = [{"token_id": t} for t in token_ids]
+            data_bytes = json.dumps(payload).encode('utf-8')
+            req = urllib.request.Request(
+                url, 
+                data=data_bytes, 
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Content-Type": "application/json"},
+                method="POST"
+            )
             try:
-                if not self.session: await self.connect()
-                async with self.session.post(url, json=payload, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        break
-                    elif resp.status == 429:
-                        logger.warning(f"Rate Limit: {resp.status}")
-                    else:
-                        logger.error(f"HTTP {resp.status} on {url}")
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    return json.loads(response.read().decode())
             except Exception as e:
-                pass
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, settings.max_reconnect_delay_seconds)
-            
+                logger.error(f"CLOB API Fetch Error: {e}")
+                return None
+                
+        req_start = datetime.utcnow()
+        data = await asyncio.to_thread(fetch_sync)
         req_end = datetime.utcnow()
+        
         results = []
         if data and isinstance(data, list):
             self.is_stale = False

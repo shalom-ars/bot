@@ -3,18 +3,31 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import asyncio
 import threading
+import logging
 from app.api.endpoints import router as api_router
 from app.api.websockets import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.admin import router as admin_router
 from app.api.health import router as health_router
+from app.api.markets import router as markets_router
+from app.api.signals import router as signals_router
 from app.engine.scanner import orchestrator
 from app.db.session import engine, Base
+from contextlib import asynccontextmanager
 
-Base.metadata.create_all(bind=engine)
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Polymarket Bot API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Setup
+    Base.metadata.create_all(bind=engine)
+    logger.info("FastAPI lifecycle start. DB created.")
+    yield
+    # Teardown
+    logger.info("FastAPI lifecycle end.")
+
+app = FastAPI(title="Polymarket Bot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,6 +39,8 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(users_router, prefix="/api/users", tags=["users"])
+app.include_router(markets_router, prefix="/api/markets", tags=["markets"])
+app.include_router(signals_router, prefix="/api/signals", tags=["signals"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(health_router, prefix="/api/health", tags=["health"])
 app.include_router(api_router, prefix="/api")

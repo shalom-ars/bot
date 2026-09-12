@@ -10,7 +10,6 @@ from app.engine.features import FeatureEngine
 from app.engine.model import ProbabilityModel
 from app.engine.strategy import StrategyEngine
 from app.connectors.polymarket import PolymarketConnector
-from app.connectors.mock_data import MockDataConnector
 from app.api.websockets import manager
 from app.research.snapshot_validator import classify_snapshot
 
@@ -21,7 +20,6 @@ from app.trading.paper_engine import PaperEngine
 class Orchestrator:
     def __init__(self):
         self.poly = PolymarketConnector()
-        self.mock = MockDataConnector()
         self.running = False
         
         self.risk_manager = RiskManager()
@@ -36,7 +34,6 @@ class Orchestrator:
         self.strategy = StrategyEngine(self.prob_model)
         
         self.poly.register_callback(self.handle_tick)
-        self.mock.register_callback(self.handle_tick)
         
         self.last_latency = 0
 
@@ -44,11 +41,8 @@ class Orchestrator:
         self.running = True
         logger.info(f"Starting Orchestrator in {settings.data_mode} mode")
         
-        if settings.data_mode == "mock":
-            asyncio.create_task(self.mock.start())
-        else:
-            asyncio.create_task(self._poly_scanner_loop())
-            asyncio.create_task(self._poly_polling_loop())
+        asyncio.create_task(self._poly_scanner_loop())
+        asyncio.create_task(self._poly_polling_loop())
             
         asyncio.create_task(self._broadcast_loop())
 
@@ -132,10 +126,11 @@ class Orchestrator:
     def _sync_get_active_market_ids(self):
         db = SessionLocal()
         try:
-            # Only poll if not quarantined
+            # Only poll if not quarantined and not expired
             now = datetime.utcnow()
             return [m.market_id for m in db.query(Market).filter(
                 Market.active == True,
+                (Market.end_time == None) | (Market.end_time > now),
                 (Market.quarantine_until == None) | (Market.quarantine_until < now)
             ).all()]
         finally:
@@ -270,7 +265,13 @@ class Orchestrator:
                         else:
                             logger.info(f"[PAPER TRADE] Rejected {sig_type} on {tick.market_id}: {reason}")
 
-            db.commit()
+            for attempt in range(5):
+                try:
+                    db.commit()
+                    break
+                except Exception as e:
+                    db.rollback()
+                    import time; time.sleep(0.5)
         except Exception as e:
             db.rollback()
             logger.error(f"Error handling tick: {e}")
@@ -334,7 +335,22 @@ class Orchestrator:
                             )
                             db.add(new_market)
                     markets_discovered += 1
-            db.commit()
+                    
+                    if markets_discovered % 10 == 0:
+                        for attempt in range(5):
+                            try:
+                                db.commit()
+                                break
+                            except Exception as e:
+                                db.rollback()
+                                import time; time.sleep(0.5)
+            for attempt in range(5):
+                try:
+                    db.commit()
+                    break
+                except:
+                    db.rollback()
+                    import time; time.sleep(0.5)
             logger.info(f"[SCANNER] Markets discovered and processed: {markets_discovered}")
             self.tracked_markets_count = db.query(Market).filter(Market.active == True).count()
         except Exception as e:
@@ -348,19 +364,6 @@ class Orchestrator:
         valid_clob = getattr(self, 'last_valid_clob_count', 0)
         invalid_clob = getattr(self, 'last_invalid_clob_count', 0)
         
-        if settings.data_mode == "mock":
-            return {
-                "mode": "mock",
-                "active_markets": tracked,
-                "poly": {
-                    "status": "CONNECTED",
-                    "latency": self.last_latency,
-                    "last_update": self.mock.last_update.isoformat(),
-                    "valid_clob_markets": tracked,
-                    "quarantined_markets": 0
-                }
-            }
-            
         poly_status = "STALE" if self.poly.check_stale() else "CONNECTED"
         if not self.poly.last_update:
             poly_status = "DISCONNECTED"
@@ -382,7 +385,7 @@ class Orchestrator:
     async def stop(self):
         self.running = False
         await self.poly.disconnect()
-        await self.mock.stop()
+        ()
 
 # We will export a global orchestrator instance
 orchestrator = Orchestrator()
