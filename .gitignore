@@ -1,0 +1,11 @@
+.env
+*.db
+*.sqlite3
+*.log
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+.venv/
+bot.lock

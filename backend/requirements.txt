@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+websockets
+pydantic
+pydantic-settings
+SQLAlchemy
+pandas
+numpy
+scikit-learn
+requests
+aiohttp
+python-dotenv
+pytest
+pytest-asyncio

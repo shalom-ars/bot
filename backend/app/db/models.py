@@ -1,0 +1,353 @@
+from sqlalchemy import Column, Index, Integer, String, Float, Boolean, DateTime, JSON, ForeignKey
+from app.db.session import Base
+from sqlalchemy.orm import declarative_base
+from datetime import datetime
+
+
+class Market(Base):
+    __tablename__ = "markets"
+    id = Column(Integer, primary_key=True, index=True)
+    market_id   = Column(String, unique=True, index=True)  # Still represents the token_id instrument
+    condition_id = Column(String, index=True, nullable=True) # Ties YES/NO tokens together. NULL means old corrupted record.
+    question    = Column(String)
+    token       = Column(String)            # primary outcome token name (e.g. "Yes")
+    token_id    = Column(String, index=True)  # Redundant but kept for backward compatibility
+    current_price = Column(Float)
+    best_bid    = Column(Float)
+    best_ask    = Column(Float)
+    spread      = Column(Float)
+    liquidity   = Column(Float)
+    volume      = Column(Float)
+    end_time    = Column(DateTime)
+    last_update = Column(DateTime, default=datetime.utcnow)
+    active      = Column(Boolean, default=True)
+    quarantine_until = Column(DateTime, nullable=True)
+    # Resolution fields – populated by the resolution-checker
+    resolved       = Column(Boolean, default=False)
+    resolved_at    = Column(DateTime, nullable=True)
+    resolution     = Column(String, nullable=True)   # "YES" | "NO" | None
+
+
+class Trade(Base):
+    __tablename__ = "trades"
+    id              = Column(Integer, primary_key=True, index=True)
+    trade_id        = Column(String, unique=True, index=True)
+    market_id       = Column(String, index=True)
+    condition_id    = Column(String)
+    token_id        = Column(String)
+    strategy        = Column(String)
+    timestamp       = Column(DateTime, default=datetime.utcnow)
+    entry_timestamp = Column(DateTime)
+    exit_timestamp  = Column(DateTime)
+    side            = Column(String)
+    requested_size  = Column(Float)
+    approved_size   = Column(Float)
+    entry_price     = Column(Float)
+    quantity        = Column(Float)
+    position_value  = Column(Float)
+    model_probability  = Column(Float)
+    market_probability = Column(Float)
+    edge            = Column(Float)
+    confidence      = Column(Float)
+    fees            = Column(Float)
+    slippage        = Column(Float)
+    exit_price      = Column(Float, nullable=True)
+    pnl             = Column(Float, nullable=True)
+    status          = Column(String)   # OPEN, CLOSED
+    reason          = Column(String)
+
+
+class Position(Base):
+    __tablename__ = "positions"
+    id            = Column(Integer, primary_key=True, index=True)
+    market_id     = Column(String, unique=True)
+    condition_id  = Column(String)
+    token_id      = Column(String)
+    strategy      = Column(String)
+    timestamp     = Column(DateTime, default=datetime.utcnow)
+    side          = Column(String)
+    entry_price   = Column(Float)
+    quantity      = Column(Float)
+    current_price = Column(Float)
+    unrealized_pnl = Column(Float)
+
+
+class BotEvent(Base):
+    __tablename__ = "bot_events"
+    id        = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    level     = Column(String)
+    message   = Column(String)
+
+
+class MarketSnapshot(Base):
+    """
+    One row per CLOB orderbook poll for a single token.
+    source is always 'POLYMARKET' for live data.
+    is_synthetic is always False for live data; True only for test fixtures.
+    """
+    __tablename__ = "market_snapshots"
+    id                 = Column(Integer, primary_key=True, index=True)
+    source             = Column(String, index=True)
+    symbol             = Column(String, index=True)
+    market_id          = Column(String, index=True)
+    token_id           = Column(String, index=True, nullable=True)
+    event_timestamp    = Column(DateTime, index=True)
+    received_timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    price              = Column(Float)
+    bid                = Column(Float, nullable=True)
+    ask                = Column(Float, nullable=True)
+    spread             = Column(Float, nullable=True)
+    bid_depth          = Column(Float, nullable=True)
+    ask_depth          = Column(Float, nullable=True)
+    imbalance          = Column(Float, nullable=True)
+    volume             = Column(Float, nullable=True)
+    liquidity          = Column(Float, nullable=True)
+    latency_ms         = Column(Integer, nullable=True)
+    is_synthetic       = Column(Boolean, default=False)   # MUST be False for real data
+    trade_eligible     = Column(Boolean, default=False)   # passes trade filters
+    ineligibility_reason = Column(String, nullable=True)  # why not trade-eligible
+
+# Composite index for fast time-series queries
+Index("ix_ms_market_time", MarketSnapshot.market_id, MarketSnapshot.received_timestamp)
+Index("ix_ms_token_time",  MarketSnapshot.token_id,  MarketSnapshot.received_timestamp)
+
+
+class RiskDecisionLog(Base):
+    __tablename__ = "risk_decisions"
+    id            = Column(Integer, primary_key=True, index=True)
+    timestamp     = Column(DateTime, default=datetime.utcnow)
+    signal_id     = Column(String)
+    market_id     = Column(String)
+    condition_id  = Column(String)
+    decision      = Column(String)
+    requested_size = Column(Float)
+    approved_size  = Column(Float)
+    current_exposure = Column(Float)
+    new_exposure   = Column(Float)
+    daily_pnl      = Column(Float)
+    drawdown       = Column(Float)
+    consecutive_losses = Column(Integer)
+    reason         = Column(String)
+
+class Signal(Base):
+    __tablename__ = "signals"
+    id             = Column(Integer, primary_key=True, index=True)
+    timestamp      = Column(DateTime, default=datetime.utcnow, index=True)
+    market_id      = Column(String, index=True)
+    signal_type    = Column(String)
+    
+    # Phase 3 Fields
+    strategy       = Column(String)
+    fair_probability = Column(Float)
+    calibrated_probability = Column(Float)
+    market_prob    = Column(Float)
+    model_prob     = Column(Float) # Legacy/fallback
+    entry_price    = Column(Float)
+    raw_edge       = Column(Float)
+    spread_cost    = Column(Float)
+    slippage_cost  = Column(Float)
+    liquidity_cost = Column(Float)
+    fees           = Column(Float)
+    net_edge       = Column(Float)
+    effective_edge = Column(Float) # Legacy/fallback
+    threshold      = Column(Float)
+    confidence     = Column(Float)
+    uncertainty    = Column(Float)
+    correlation_status = Column(String)
+    market_quality_status = Column(String)
+    model_version  = Column(String)
+    reason         = Column(String)
+
+
+class BacktestRun(Base):
+    __tablename__ = "backtest_runs"
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(String, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    dataset_version = Column(String)
+    model_version = Column(String)
+    strategy_version = Column(String)
+    train_start = Column(DateTime)
+    train_end = Column(DateTime)
+    validation_start = Column(DateTime)
+    validation_end = Column(DateTime)
+    test_start = Column(DateTime)
+    test_end = Column(DateTime)
+    resolved_markets = Column(Integer)
+    valid_samples = Column(Integer)
+    trades = Column(Integer)
+    win_rate = Column(Float, nullable=True)
+    brier_score = Column(Float, nullable=True)
+    net_pnl = Column(Float, nullable=True)
+    max_drawdown = Column(Float, nullable=True)
+    profit_factor = Column(Float, nullable=True)
+    status = Column(String)
+
+class PaperTestSession(Base):
+    __tablename__ = "paper_test_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, unique=True, index=True)
+    start_time = Column(DateTime, default=datetime.utcnow)
+    end_time = Column(DateTime, nullable=True)
+    status = Column(String)
+    initial_balance = Column(Float)
+    current_balance = Column(Float)
+    equity = Column(Float)
+    resolved_markets = Column(Integer, default=0)
+    signals = Column(Integer, default=0)
+    actionable_signals = Column(Integer, default=0)
+    skipped_signals = Column(Integer, default=0)
+    paper_trades = Column(Integer, default=0)
+    closed_trades = Column(Integer, default=0)
+    open_positions = Column(Integer, default=0)
+    net_pnl = Column(Float, default=0.0)
+    drawdown = Column(Float, default=0.0)
+    win_rate = Column(Float, default=0.0)
+    profit_factor = Column(Float, default=0.0)
+    expectancy = Column(Float, default=0.0)
+    average_net_edge = Column(Float, default=0.0)
+
+class PaperDailySnapshot(Base):
+    __tablename__ = "paper_daily_snapshots"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True)
+    date = Column(DateTime)
+    starting_equity = Column(Float)
+    ending_equity = Column(Float)
+    daily_pnl = Column(Float)
+    daily_return = Column(Float)
+    trades = Column(Integer)
+    wins = Column(Integer)
+    losses = Column(Integer)
+    drawdown = Column(Float)
+    exposure = Column(Float)
+    fees = Column(Float)
+    slippage = Column(Float)
+    signals = Column(Integer)
+    skips = Column(Integer)
+
+class LiveOrder(Base):
+    __tablename__ = "live_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(String, unique=True, nullable=True) # API order ID (null before submission)
+    client_id = Column(String, unique=True) # Idempotency key
+    market_id = Column(String)
+    condition_id = Column(String)
+    token_id = Column(String)
+    side = Column(String)
+    price = Column(Float)
+    quantity = Column(Float)
+    state = Column(String) # CREATED, VALIDATED, SUBMITTED, ACKNOWLEDGED, PARTIALLY_FILLED, FILLED, CANCEL_REQUESTED, CANCELLED, REJECTED, EXPIRED, FAILED
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    error_reason = Column(String, nullable=True)
+
+class CircuitBreakerEvent(Base):
+    __tablename__ = "circuit_breaker_events"
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    event_type = Column(String)
+    reason = Column(String)
+    resolved = Column(Boolean, default=False)
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    action = Column(String)
+    details = Column(String)
+
+# --- PHASE 8 SAAS MODELS ---
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    role = Column(String, default="USER")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    plan = Column(String, default="FREE")
+    status = Column(String, default="ACTIVE")
+    provider_subscription_id = Column(String, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+
+class UserPortfolio(Base):
+    __tablename__ = "user_portfolios"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    initial_balance = Column(Float, default=500.0)
+    current_balance = Column(Float, default=500.0)
+    equity = Column(Float, default=500.0)
+    exposure = Column(Float, default=0.0)
+    realized_pnl = Column(Float, default=0.0)
+    unrealized_pnl = Column(Float, default=0.0)
+    drawdown = Column(Float, default=0.0)
+    trades = Column(Integer, default=0)
+    wins = Column(Integer, default=0)
+
+class UserTrade(Base):
+    __tablename__ = "user_trades"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    market_id = Column(String)
+    condition_id = Column(String)
+    token_id = Column(String)
+    side = Column(String)
+    entry_price = Column(Float)
+    exit_price = Column(Float, nullable=True)
+    quantity = Column(Float)
+    pnl = Column(Float, nullable=True)
+    status = Column(String) # OPEN, CLOSED
+    entry_time = Column(DateTime, default=datetime.utcnow)
+    exit_time = Column(DateTime, nullable=True)
+
+class UserPosition(Base):
+    __tablename__ = "user_positions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    market_id = Column(String)
+    condition_id = Column(String)
+    token_id = Column(String)
+    side = Column(String)
+    entry_price = Column(Float)
+    quantity = Column(Float)
+
+class UserSetting(Base):
+    __tablename__ = "user_settings"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    max_position_risk = Column(Float, default=0.02)
+    max_drawdown = Column(Float, default=0.15)
+    notifications_enabled = Column(Boolean, default=True)
+
+class UsageRecord(Base):
+    __tablename__ = "usage_records"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    endpoint = Column(String)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+class DataCollectionStats(Base):
+    """
+    Single-row stats table updated by the orchestrator.
+    Gives the dashboard O(1) reads instead of full table scans.
+    """
+    __tablename__ = "data_collection_stats"
+    id                   = Column(Integer, primary_key=True, default=1)
+    collection_started   = Column(DateTime, nullable=True)
+    last_snapshot        = Column(DateTime, nullable=True)
+    total_snapshots      = Column(Integer, default=0)
+    unique_markets       = Column(Integer, default=0)
+    resolved_markets     = Column(Integer, default=0)
+    unresolved_markets   = Column(Integer, default=0)
+    valid_training_samples = Column(Integer, default=0)
+    invalid_samples      = Column(Integer, default=0)
+    api_errors           = Column(Integer, default=0)
+    orderbook_failures   = Column(Integer, default=0)
