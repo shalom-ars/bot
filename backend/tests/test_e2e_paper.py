@@ -94,3 +94,126 @@ def test_e2e_paper_lifecycle(test_db):
         port_after = test_db.query(UserPortfolio).filter_by(user_id=user_id).first()
         assert port_after.current_balance > 500.0
         assert port_after.realized_pnl > 0
+
+def test_e2e_paper_no_settlement(test_db):
+    with patch('app.engine.user_engine.SessionLocal', return_value=test_db):
+        user = User(email="test2@example.com", hashed_password="pw")
+        test_db.add(user)
+        test_db.commit()
+        
+        portfolio = UserPortfolio(user_id=user.id, initial_balance=500.0, current_balance=500.0, equity=500.0)
+        test_db.add(portfolio)
+        
+        setting = UserSetting(user_id=user.id, max_position_risk=0.05)
+        test_db.add(setting)
+        
+        market = Market(market_id="m2", condition_id="c2", token="Yes", token_id="t1", active=True, question="Test NO?")
+        test_db.add(market)
+        test_db.commit()
+
+        signal_data = {
+            "signal_id": "sig_2",
+            "market_id": "m2",
+            "condition_id": "c2",
+            "token_id": "t1",
+            "side": "SELL",
+            "signal_type": "SELL",
+            "fair_probability": 0.4,
+            "entry_price": 0.52,
+            "raw_edge": 0.08,
+            "spread_cost": 0.04,
+            "slippage": 0.01,
+            "liquidity_cost": 0.0,
+            "fees": 0.01,
+            "net_edge": 0.02,
+            "confidence": 0.9,
+            "timestamp": datetime.utcnow()
+        }
+        
+        market_info = {"question": "Test NO?", "tokens": "['t1','t2']"}
+
+        user_id = user.id
+        execute_saas_user_trades(signal_data, market_info, 0.52)
+        test_db.commit()
+        
+        pos = test_db.query(UserPosition).filter_by(user_id=user_id, market_id="m2").first()
+        assert pos is not None
+        assert pos.side == "SELL"
+        assert pos.entry_price == 0.51  # 0.52 - 0.01 slippage for SELL
+
+        # Resolve NO -> NO token pays out $1, meaning YES token pays $0
+        resolve_saas_user_trades("m2", "NO")
+        test_db.commit()
+        
+        pos_after = test_db.query(UserPosition).filter_by(user_id=user_id, market_id="m2").first()
+        assert pos_after is None
+        
+        trade = test_db.query(UserTrade).filter_by(user_id=user_id, market_id="m2").first()
+        assert trade is not None
+        assert trade.status == "CLOSED"
+        assert trade.exit_price == 0.0 # Exit price for YES token is 0.0
+        assert trade.pnl > 0 # PNL is ((1.0 - 0.0) - 0.51) * qty > 0
+        
+        port_after = test_db.query(UserPortfolio).filter_by(user_id=user_id).first()
+        assert port_after.realized_pnl > 0
+
+def test_e2e_paper_idempotency(test_db):
+    with patch('app.engine.user_engine.SessionLocal', return_value=test_db):
+        user = User(email="test3@example.com", hashed_password="pw")
+        test_db.add(user)
+        test_db.commit()
+        
+        portfolio = UserPortfolio(user_id=user.id, initial_balance=500.0, current_balance=500.0, equity=500.0)
+        test_db.add(portfolio)
+        
+        setting = UserSetting(user_id=user.id, max_position_risk=0.05)
+        test_db.add(setting)
+        
+        market = Market(market_id="m3", condition_id="c3", token="Yes", token_id="t1", active=True, question="Test Idempotency?")
+        test_db.add(market)
+        test_db.commit()
+
+        signal_data = {
+            "signal_id": "sig_3",
+            "market_id": "m3",
+            "condition_id": "c3",
+            "token_id": "t1",
+            "side": "BUY",
+            "signal_type": "BUY",
+            "fair_probability": 0.6,
+            "entry_price": 0.52,
+            "raw_edge": 0.08,
+            "spread_cost": 0.04,
+            "slippage": 0.01,
+            "liquidity_cost": 0.0,
+            "fees": 0.01,
+            "net_edge": 0.02,
+            "confidence": 0.9,
+            "timestamp": datetime.utcnow()
+        }
+        
+        market_info = {"question": "Test Idempotency?", "tokens": "['t1','t2']"}
+
+        user_id = user.id
+        execute_saas_user_trades(signal_data, market_info, 0.52)
+        test_db.commit()
+        
+        # Resolve once
+        resolve_saas_user_trades("m3", "YES")
+        test_db.commit()
+        
+        trade_count_1 = test_db.query(UserTrade).filter_by(user_id=user_id, market_id="m3").count()
+        port_after_1 = test_db.query(UserPortfolio).filter_by(user_id=user_id).first()
+        pnl_1 = port_after_1.realized_pnl
+        
+        # Resolve twice (should be idempotent and not duplicate PnL)
+        resolve_saas_user_trades("m3", "YES")
+        test_db.commit()
+        
+        trade_count_2 = test_db.query(UserTrade).filter_by(user_id=user_id, market_id="m3").count()
+        port_after_2 = test_db.query(UserPortfolio).filter_by(user_id=user_id).first()
+        pnl_2 = port_after_2.realized_pnl
+        
+        assert trade_count_1 == 1
+        assert trade_count_2 == 1
+        assert pnl_1 == pnl_2

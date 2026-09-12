@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Activity, Wallet, ShieldAlert, Clock, AlertTriangle, Wifi, WifiOff, Database, FlaskConical } from 'lucide-react'
+import { Activity, Wallet, ShieldAlert, Clock, Wifi, WifiOff, Database, FlaskConical } from 'lucide-react'
 
 function StatusBadge({ value, good, warn }: { value: string, good: string[], warn?: string[] }) {
   const isGood = good.includes(value)
@@ -67,10 +67,10 @@ export default function ResearchTerminal() {
         </div>
       )}
 
-      {health?.mode === 'mock' && (
-        <div className="bg-amber-500 text-amber-950 font-bold text-center py-2 px-4 rounded-md flex items-center justify-center gap-2">
-          <AlertTriangle className="w-5 h-5"/>
-          PAPER TRADING - MOCK DATA ACTIVE (Not Live)
+      {health?.mode === 'paper' && (
+        <div className="bg-emerald-900/50 border border-emerald-800 text-emerald-300 p-2 text-sm font-semibold flex justify-center items-center gap-2">
+          <Activity className="w-4 h-4"/> 
+          PAPER TRADING - LIVE DATA ACTIVE
         </div>
       )}
 

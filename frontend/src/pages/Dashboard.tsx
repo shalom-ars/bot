@@ -1,16 +1,13 @@
-import { useState, useEffect } from 'react';
-import { Activity, TrendingUp, AlertTriangle, ArrowUpRight, ArrowDownRight, FileTerminal } from 'lucide-react';
+import { Activity, TrendingUp, AlertTriangle, ArrowUpRight, ArrowDownRight, FileTerminal, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import client from '../api/client';
+import { useApi } from '../hooks/useApi';
 
 export default function Dashboard() {
-  const [data, setData] = useState<any>(null);
-  const [perf, setPerf] = useState<any>(null);
+  const { data: portfolio, loading: portLoading, error: portError } = useApi<any>('/users/portfolio', null);
+  const { data: perf, loading: perfLoading, error: perfError } = useApi<any>('/users/performance', null);
 
-  useEffect(() => {
-    client.get('/users/portfolio').then((r: any) => setData(r.data)).catch(console.error);
-    client.get('/users/performance').then((r: any) => setPerf(r.data)).catch(console.error);
-  }, []);
+  const loading = portLoading || perfLoading;
+  const error = portError || perfError;
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -25,43 +22,65 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card title="Virtual Balance" value={`$${data?.current_balance?.toFixed(2) ?? '0.00'}`} icon={WalletIcon} />
-        <Card title="Total PnL" value={`$${data?.realized_pnl?.toFixed(2) ?? '0.00'}`} icon={TrendingUp} trend={0} />
-        <Card title="Win Rate" value={`${perf?.win_rate ?? 0}%`} icon={Activity} />
-        <Card title="Trades" value={data?.trades ?? 0} icon={AlertTriangle} />
-      </div>
+      {loading && (
+        <div className="p-12 text-center text-slate-500 flex flex-col items-center">
+          <RefreshCw className="w-8 h-8 animate-spin text-blue-500 mb-4" />
+          <p>Loading portfolio data...</p>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Chart Area */}
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-slate-900">Equity Curve</h3>
-            <div className="flex bg-slate-100 rounded-lg p-1">
-              {['7D', '30D', '90D', 'ALL'].map(t => (
-                <button key={t} className={`px-3 py-1 text-xs font-semibold rounded-md ${t === '7D' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}>
-                  {t}
-                </button>
-              ))}
+      {error && (
+        <div className="bg-red-50 p-12 text-center rounded border border-red-200">
+          <AlertTriangle className="mx-auto text-red-500 mb-2 w-8 h-8" />
+          <p className="text-red-700 font-bold mb-2">BACKEND CONNECTION ERROR</p>
+          <p className="text-sm text-red-600 mb-4">{error}</p>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium flex items-center mx-auto gap-2">
+            <RefreshCw className="w-4 h-4" /> Retry Connection
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <Card title="Virtual Balance" value={`$${portfolio?.current_balance?.toFixed(2) ?? '0.00'}`} icon={WalletIcon} />
+            <Card title="Total PnL" value={`$${portfolio?.realized_pnl?.toFixed(2) ?? '0.00'}`} icon={TrendingUp} trend={0} />
+            <Card title="Win Rate" value={`${perf?.win_rate ?? 0}%`} icon={Activity} />
+            <Card title="Trades" value={portfolio?.trade_count ?? 0} icon={AlertTriangle} />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Chart Area */}
+            <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-slate-900">Equity Curve</h3>
+                <div className="flex bg-slate-100 rounded-lg p-1">
+                  {['7D', '30D', '90D', 'ALL'].map(t => (
+                    <button key={t} className={`px-3 py-1 text-xs font-semibold rounded-md ${t === '7D' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="h-64 flex items-center justify-center border-2 border-dashed border-slate-100 rounded-lg bg-slate-50">
+                <p className="text-slate-400 font-medium text-sm">No sufficient trading history yet.</p>
+              </div>
+            </div>
+
+            {/* Recent Activity */}
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+              <h3 className="text-lg font-bold text-slate-900 mb-6">Recent Activity</h3>
+              <div className="space-y-4">
+                 <div className="text-center py-8">
+                   <Activity className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+                   <p className="text-sm text-slate-500">No recent activity.</p>
+                 </div>
+              </div>
             </div>
           </div>
-          <div className="h-64 flex items-center justify-center border-2 border-dashed border-slate-100 rounded-lg bg-slate-50">
-            <p className="text-slate-400 font-medium text-sm">No sufficient trading history yet.</p>
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-          <h3 className="text-lg font-bold text-slate-900 mb-6">Recent Activity</h3>
-          <div className="space-y-4">
-             <div className="text-center py-8">
-               <Activity className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-               <p className="text-sm text-slate-500">No recent activity.</p>
-             </div>
-          </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
