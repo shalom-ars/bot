@@ -33,7 +33,8 @@ class Orchestrator:
         self.prob_model = ProbabilityModel()
         self.strategy = StrategyEngine(self.prob_model)
         
-        self.poly.register_callback(self.handle_tick)
+        # OMITTED: self.poly.register_callback(self.handle_tick)
+        self.market_poll_times = {} # Track adaptive polling times
         
         self.last_latency = 0
 
@@ -92,36 +93,49 @@ class Orchestrator:
             await asyncio.sleep(60)
 
     async def _poly_polling_loop(self):
+        import time
         # Polls orderbooks for active markets we are tracking using batch API
         while self.running:
             try:
                 active_markets = await asyncio.to_thread(self._sync_get_active_market_ids)
                 if active_markets:
-                    valid_asset_ids = set()
-                    
-                    # Batch fetch in chunks of 50
-                    for i in range(0, len(active_markets), 50):
-                        chunk = active_markets[i:i+50]
-                        ticks = await self.poly.fetch_markets_books(chunk)
-                        for t in ticks:
-                            valid_asset_ids.add(t.market_id)
-                        await asyncio.sleep(0.5) # simple rate limit avoidance
+                    now = time.time()
+                    # ADAPTIVE POLLING PRIORITY FILTER
+                    to_poll = []
+                    for m_id in active_markets:
+                        if now >= self.market_poll_times.get(m_id, 0):
+                            to_poll.append(m_id)
+                            
+                    if to_poll:
+                        valid_asset_ids = set()
                         
-                    invalid = set(active_markets) - valid_asset_ids
-                    self.last_valid_clob_count = len(valid_asset_ids)
-                    self.last_invalid_clob_count = len(invalid)
-                    
-                    # Clear quarantine for valid markets
-                    if valid_asset_ids:
-                        await asyncio.to_thread(self._sync_clear_quarantine, list(valid_asset_ids))
-                    
-                    if invalid:
-                        logger.warning(f"[SCANNER] Quarantining {len(invalid)} invalid/404 tokens for 5 minutes.")
-                        await asyncio.to_thread(self._sync_quarantine_invalid, list(invalid))
-                    
+                        # Batch fetch in chunks of 50
+                        for i in range(0, len(to_poll), 50):
+                            chunk = to_poll[i:i+50]
+                            ticks = await self.poly.fetch_markets_books(chunk)
+                            
+                            # SMART BATCH PROCESSING
+                            await asyncio.to_thread(self._sync_handle_ticks_batch, ticks, now)
+                            
+                            for t in ticks:
+                                valid_asset_ids.add(t.market_id)
+                            await asyncio.sleep(0.1) # reduced sleep since we batch and adaptive poll
+                            
+                        invalid = set(to_poll) - valid_asset_ids
+                        self.last_valid_clob_count = len(valid_asset_ids)
+                        self.last_invalid_clob_count = len(invalid)
+                        
+                        # Clear quarantine for valid markets
+                        if valid_asset_ids:
+                            await asyncio.to_thread(self._sync_clear_quarantine, list(valid_asset_ids))
+                        
+                        if invalid:
+                            logger.warning(f"[SCANNER] Quarantining {len(invalid)} invalid/404 tokens for 5 minutes.")
+                            await asyncio.to_thread(self._sync_quarantine_invalid, list(invalid))
+                        
             except Exception as e:
                 logger.error(f"Polling loop error: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(2)
 
     def _sync_get_active_market_ids(self):
         db = SessionLocal()
@@ -163,93 +177,74 @@ class Orchestrator:
         finally:
             db.close()
 
-    async def handle_tick(self, tick: MarketTick):
-        self.last_latency = tick.latency_ms
-        self.feature_engine.add_tick(tick.symbol, tick.model_dump())
-        await asyncio.to_thread(self._sync_handle_tick, tick)
-        
-    def _sync_handle_tick(self, tick: MarketTick):
-        # ── 1. Classify snapshot ─────────────────────────────────────────────
-        classification = classify_snapshot(tick)
-
-        if not classification.data_valid:
-            logger.warning(
-                f"[SNAPSHOT] REJECTED [{tick.market_id[:20]}…]: {classification.reject_reason}"
-            )
-            db2 = SessionLocal()
-            try:
-                db2.add(BotEvent(level="WARNING",
-                                 message=f"Snapshot rejected [{tick.market_id[:30]}]: "
-                                         f"{classification.reject_reason}"))
-                db2.commit()
-            except Exception:
-                db2.rollback()
-            finally:
-                db2.close()
+    def _sync_handle_ticks_batch(self, ticks: list[MarketTick], now_time: float):
+        if not ticks:
             return
-
-        # ── 2. Persist validated REAL snapshot (DATA_VALID=True) ─────────────
+            
         db = SessionLocal()
         try:
-            snap = MarketSnapshot(
-                source               = tick.source,
-                symbol               = tick.symbol,
-                market_id            = tick.market_id,
-                token_id             = tick.market_id,
-                event_timestamp      = tick.event_timestamp,
-                received_timestamp   = tick.received_timestamp,
-                price                = tick.price,
-                bid                  = tick.bid,
-                ask                  = tick.ask,
-                spread               = tick.spread,
-                bid_depth            = tick.bid_depth,
-                ask_depth            = tick.ask_depth,
-                imbalance            = tick.imbalance,
-                volume               = tick.volume,
-                liquidity            = tick.liquidity,
-                latency_ms           = tick.latency_ms,
-                is_synthetic         = False,
-                trade_eligible       = classification.trade_eligible,
-                ineligibility_reason = "; ".join(classification.ineligibility_reasons) or None,
-            )
-            db.add(snap)
-
-            if classification.trade_eligible:
-                logger.debug(f"[SNAPSHOT] TRADE_ELIGIBLE [{tick.market_id[:20]}…]")
-            else:
-                logger.debug(
-                    f"[SNAPSHOT] DATA_VALID, NOT TRADE_ELIGIBLE [{tick.market_id[:20]}…]: "
-                    f"{'; '.join(classification.ineligibility_reasons)}"
+            # Pre-fetch all markets in this batch
+            market_ids = [t.market_id for t in ticks]
+            markets_dict = {m.market_id: m for m in db.query(Market).filter(Market.market_id.in_(market_ids)).all()}
+            
+            for tick in ticks:
+                self.last_latency = tick.latency_ms
+                
+                # ── STAGE A: CHEAP FILTER (Priority / Adaptive Polling) ──
+                is_cheap_valid = tick.bid > 0 and tick.ask > 0 and tick.spread <= settings.max_spread
+                
+                # Update poll frequency
+                if not is_cheap_valid:
+                    if tick.bid == 0 and tick.ask == 0:
+                        self.market_poll_times[tick.market_id] = now_time + 300 # Extremely low quality: poll every 5 min
+                    else:
+                        self.market_poll_times[tick.market_id] = now_time + 60 # Low quality: poll every 1 min
+                else:
+                    self.market_poll_times[tick.market_id] = now_time + 5 # High quality: poll frequently
+                
+                # Keep parent market record updated even if cheap filter fails
+                market = markets_dict.get(tick.market_id)
+                time_remaining = 0
+                if market:
+                    market.current_price = tick.price
+                    market.best_bid = tick.bid
+                    market.best_ask = tick.ask
+                    market.spread = tick.spread
+                    market.liquidity = tick.liquidity
+                    market.last_update = datetime.utcnow()
+                    if market.end_time:
+                        time_remaining = (market.end_time - datetime.utcnow()).total_seconds()
+                        
+                classification = classify_snapshot(tick)
+                if not classification.data_valid:
+                    continue
+                    
+                # ── STAGE B: FULL QUANT ANALYSIS ──
+                # Only execute expensive features and DB snapshots for trade eligible or sample research 
+                # To preserve DB speed but keep research, we insert snapshot here (batched).
+                snap = MarketSnapshot(
+                    source=tick.source, symbol=tick.symbol, market_id=tick.market_id, token_id=tick.market_id,
+                    event_timestamp=tick.event_timestamp, received_timestamp=tick.received_timestamp,
+                    price=tick.price, bid=tick.bid, ask=tick.ask, spread=tick.spread, bid_depth=tick.bid_depth,
+                    ask_depth=tick.ask_depth, imbalance=tick.imbalance, volume=tick.volume, liquidity=tick.liquidity,
+                    latency_ms=tick.latency_ms, is_synthetic=False, trade_eligible=classification.trade_eligible,
+                    ineligibility_reason="; ".join(classification.ineligibility_reasons) or None,
                 )
-
-            # ── 3. Update parent market record ──────────────────────────────
-            market = db.query(Market).filter(Market.market_id == tick.market_id).first()
-            time_remaining = 0
-            if market:
-                market.current_price = tick.price
-                market.best_bid      = tick.bid
-                market.best_ask      = tick.ask
-                market.spread        = tick.spread
-                market.liquidity     = tick.liquidity
-                market.last_update   = datetime.utcnow()
-                if market.end_time:
-                    time_remaining = (market.end_time - datetime.utcnow()).total_seconds()
-
-            # Process signal and paper trading
-            if classification.trade_eligible:
+                db.add(snap)
+                
+                if not classification.trade_eligible:
+                    continue
+                    
+                self.feature_engine.add_tick(tick.symbol, tick.model_dump())
                 features = self.feature_engine.get_features(tick.symbol, time_remaining)
                 if features:
                     signal_data = self.strategy.evaluate(tick, features)
                     db.add(Signal(**signal_data))
 
-                    # Update paper engine positions with current price
                     self.paper_engine.update_positions(tick.market_id, tick.price)
 
-                    # Only execute actionable signals in paper mode
                     sig_type = signal_data["signal_type"]
                     if settings.execution_mode == "paper" and sig_type in ("BUY", "SELL"):
-                        # P0-002 FIX: use the parent condition_id from the Market record,
-                        # not the token_id. This is critical for condition-level exposure caps.
                         real_condition_id = market.condition_id if market and market.condition_id else tick.market_id
                         market_info = {
                             "condition_id": real_condition_id,
@@ -258,13 +253,10 @@ class Orchestrator:
                         }
                         success, reason = self.paper_engine.execute_signal(signal_data, market_info)
                         if success:
-                            logger.info(f"[PAPER TRADE] Executed {sig_type} on {tick.market_id}")
-                            # --- SaaS MULTI-TENANT PAPER EXECUTION ---
                             from app.engine.user_engine import execute_saas_user_trades
                             execute_saas_user_trades(signal_data, market_info, tick.price)
-                        else:
-                            logger.info(f"[PAPER TRADE] Rejected {sig_type} on {tick.market_id}: {reason}")
 
+            # Bulk commit once per batch (50 ticks)
             for attempt in range(5):
                 try:
                     db.commit()
@@ -274,7 +266,7 @@ class Orchestrator:
                     import time; time.sleep(0.5)
         except Exception as e:
             db.rollback()
-            logger.error(f"Error handling tick: {e}")
+            logger.error(f"Error handling tick batch: {e}")
         finally:
             db.close()
 

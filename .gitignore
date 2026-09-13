@@ -9,3 +9,5 @@ dist/
 build/
 .venv/
 bot.lock
+*.db-shm
+*.db-wal

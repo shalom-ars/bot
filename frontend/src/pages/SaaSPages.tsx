@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { Wallet, ShieldAlert, Crosshair, BarChart3, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -57,29 +58,51 @@ export function Portfolio() {
 }
 
 export function Markets() {
-  const { data, loading, error } = useApi<{markets: any[], total: number}>('/markets', { markets: [], total: 0 });
+  const [skip, setSkip] = useState(0);
+  const limit = 50;
+  const { data, loading, error } = useApi<{markets: any[], total: number}>(`/markets?skip=${skip}&limit=${limit}`, { markets: [], total: 0 });
   
   return (
     <div className="space-y-6 max-w-5xl">
       <h1 className="text-3xl font-extrabold">Tracked Markets</h1>
       
-      {loading && <LoadingState />}
+      {loading && skip === 0 && <LoadingState />}
       {error && <ErrorState message={error} retry={() => window.location.reload()} />}
 
-      {!loading && !error && (
+      {!error && data && (
         <>
           <p className="text-slate-500 mb-4">Total active markets tracked: {data.total}</p>
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 divide-y overflow-hidden">
-            {data.markets.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 divide-y overflow-hidden mb-4">
+            {data.markets.length === 0 && !loading ? (
                <p className="p-6 text-slate-500 text-center">No active markets tracked.</p>
             ) : (
               data.markets.map(m => (
                 <Link key={m.market_id} to={`/app/markets/${m.market_id}`} className="block p-4 hover:bg-slate-50">
                   <p className="font-semibold">{m.question}</p>
-                  <p className="text-sm text-slate-500">Token: {m.token} | ID: {m.market_id}</p>
+                  <p className="text-sm text-slate-500">Token: {m.token} | ID: {m.market_id} | Spread: {(m.spread || 0).toFixed(4)}</p>
                 </Link>
               ))
             )}
+          </div>
+          
+          <div className="flex justify-between items-center mt-4">
+            <button 
+              onClick={() => setSkip(Math.max(0, skip - limit))}
+              disabled={skip === 0 || loading}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded disabled:opacity-50 font-medium text-sm"
+            >
+              Previous Page
+            </button>
+            <span className="text-sm text-slate-500">
+              Showing {skip + 1} - {Math.min(skip + limit, data.total)} of {data.total}
+            </span>
+            <button 
+              onClick={() => setSkip(skip + limit)}
+              disabled={skip + limit >= data.total || loading}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded disabled:opacity-50 font-medium text-sm"
+            >
+              Next Page
+            </button>
           </div>
         </>
       )}

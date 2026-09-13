@@ -18,12 +18,12 @@ class Market(Base):
     spread      = Column(Float)
     liquidity   = Column(Float)
     volume      = Column(Float)
-    end_time    = Column(DateTime)
+    end_time    = Column(DateTime, index=True)
     last_update = Column(DateTime, default=datetime.utcnow)
-    active      = Column(Boolean, default=True)
+    active      = Column(Boolean, default=True, index=True)
     quarantine_until = Column(DateTime, nullable=True)
     # Resolution fields – populated by the resolution-checker
-    resolved       = Column(Boolean, default=False)
+    resolved       = Column(Boolean, default=False, index=True)
     resolved_at    = Column(DateTime, nullable=True)
     resolution     = Column(String, nullable=True)   # "YES" | "NO" | None
 
@@ -105,7 +105,7 @@ class MarketSnapshot(Base):
     liquidity          = Column(Float, nullable=True)
     latency_ms         = Column(Integer, nullable=True)
     is_synthetic       = Column(Boolean, default=False)   # MUST be False for real data
-    trade_eligible     = Column(Boolean, default=False)   # passes trade filters
+    trade_eligible     = Column(Boolean, default=False, index=True)   # passes trade filters
     ineligibility_reason = Column(String, nullable=True)  # why not trade-eligible
 
 # Composite index for fast time-series queries
