@@ -5,11 +5,12 @@ import ResearchTerminal from './pages/ResearchTerminal';
 import Login from './pages/auth/Login';
 import Signup from './pages/auth/Signup';
 import Layout from './components/Layout';
+import BTC5M from './pages/BTC5M';
 import AuthLayout from './components/AuthLayout';
 import { 
   Markets, MarketDetail, Signals, Portfolio, 
   Positions, Trades, Performance, Risk, 
-  Alerts, Settings, Subscription 
+  Alerts, Settings, Subscription, OrderBook 
 } from './pages/SaaSPages';
 
 export default function App() {
@@ -36,6 +37,8 @@ export default function App() {
           <Route path="trades" element={<Trades />} />
           <Route path="performance" element={<Performance />} />
           <Route path="risk" element={<Risk />} />
+          <Route path="orderbook" element={<OrderBook />} />
+          <Route path="btc5m" element={<BTC5M />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="settings" element={<Settings />} />
           <Route path="subscription" element={<Subscription />} />

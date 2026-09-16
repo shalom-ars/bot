@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.db.models import User, UserPortfolio, UserTrade, UserSetting, Subscription, UserPosition
+from app.db.models import User, UserPortfolio, UserTrade, UserSetting, Subscription, UserPosition, Market
 from app.api.security import get_current_user
 
 router = APIRouter()
@@ -37,29 +37,80 @@ def get_user_portfolio(db: Session = Depends(get_db), current_user: User = Depen
 def get_user_positions(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     positions = db.query(UserPosition).filter(UserPosition.user_id == current_user.id).offset(skip).limit(limit).all()
     total = db.query(UserPosition).filter(UserPosition.user_id == current_user.id).count()
-    return {"total": total, "positions": positions}
+    
+    # Enrich each position with market question
+    enriched = []
+    for p in positions:
+        market = db.query(Market).filter(Market.market_id == p.market_id).first()
+        enriched.append({
+            "id": p.id,
+            "user_id": p.user_id,
+            "market_id": p.market_id,
+            "condition_id": p.condition_id,
+            "token_id": p.token_id,
+            "side": p.side,
+            "entry_price": p.entry_price,
+            "quantity": p.quantity,
+            "market_question": market.question if market else "Unknown Market",
+            "current_price": market.current_price if market else p.entry_price,
+            "best_bid": market.best_bid if market else None,
+            "best_ask": market.best_ask if market else None,
+            "spread": market.spread if market else None,
+        })
+    
+    return {"total": total, "positions": enriched}
 
 @router.get("/trades")
 def get_user_trades(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    trades = db.query(UserTrade).filter(UserTrade.user_id == current_user.id).offset(skip).limit(limit).all()
+    trades = db.query(UserTrade).filter(UserTrade.user_id == current_user.id).order_by(UserTrade.entry_time.desc()).offset(skip).limit(limit).all()
     total = db.query(UserTrade).filter(UserTrade.user_id == current_user.id).count()
-    return {"total": total, "trades": trades}
+    
+    # Enrich each trade with market question
+    enriched = []
+    for t in trades:
+        market = db.query(Market).filter(Market.market_id == t.market_id).first()
+        enriched.append({
+            "id": t.id,
+            "user_id": t.user_id,
+            "market_id": t.market_id,
+            "condition_id": t.condition_id,
+            "token_id": t.token_id,
+            "side": t.side,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "quantity": t.quantity,
+            "pnl": t.pnl,
+            "status": t.status,
+            "entry_time": t.entry_time,
+            "exit_time": t.exit_time,
+            "market_question": market.question if market else "Unknown Market",
+        })
+    
+    return {"total": total, "trades": enriched}
 
 @router.get("/performance")
 def get_user_performance(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     portfolio = db.query(UserPortfolio).filter(UserPortfolio.user_id == current_user.id).first()
-    if not portfolio or portfolio.trades == 0:
-        return {"win_rate": 0, "profit_factor": 0, "roi": 0, "trades": 0, "wins": 0, "losses": 0}
+    if not portfolio:
+        return {"win_rate": 0, "profit_factor": 0, "roi": 0, "trades": 0, "closed_trades": 0, "wins": 0, "losses": 0}
     
-    losses = portfolio.trades - portfolio.wins
-    win_rate = (portfolio.wins / portfolio.trades) * 100 if portfolio.trades > 0 else 0
-    roi = ((portfolio.equity - portfolio.initial_balance) / portfolio.initial_balance) * 100
+    # Calculate performance from actual trades
+    all_trades = db.query(UserTrade).filter(UserTrade.user_id == current_user.id).all()
+    total_trades = len(all_trades)
+    
+    closed_trades = [t for t in all_trades if t.status == 'CLOSED']
+    wins = len([t for t in closed_trades if (t.pnl or 0) > 0])
+    losses = len([t for t in closed_trades if (t.pnl or 0) < 0])
+    
+    win_rate = (wins / len(closed_trades)) * 100 if closed_trades else 0
+    roi = ((portfolio.equity - portfolio.initial_balance) / portfolio.initial_balance) * 100 if portfolio.initial_balance else 0
     
     return {
         "win_rate": round(win_rate, 2),
         "roi": round(roi, 2),
-        "trades": portfolio.trades,
-        "wins": portfolio.wins,
+        "trades": total_trades,
+        "closed_trades": len(closed_trades),
+        "wins": wins,
         "losses": losses
     }
 

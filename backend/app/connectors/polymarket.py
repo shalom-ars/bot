@@ -90,11 +90,11 @@ class PolymarketConnector:
         req_end = datetime.utcnow()
         
         if data and isinstance(data, dict):
-            bids = data.get('bids', [])
-            asks = data.get('asks', [])
+            bids = sorted(data.get('bids', []), key=lambda x: float(x.get('price', 0)), reverse=True)
+            asks = sorted(data.get('asks', []), key=lambda x: float(x.get('price', 1)), reverse=False)
             
             best_bid = float(bids[0].get('price', 0)) if bids else 0.0
-            best_ask = float(asks[0].get('price', 0)) if asks else 0.0
+            best_ask = float(asks[0].get('price', 1.0)) if asks else 1.0
             
             if best_bid > 0 and best_ask > 0:
                 price = (best_bid + best_ask) / 2
@@ -170,8 +170,8 @@ class PolymarketConnector:
                 asset_id = book.get('asset_id')
                 if not asset_id: continue
                 
-                bids = book.get('bids', [])
-                asks = book.get('asks', [])
+                bids = sorted(book.get('bids', []), key=lambda x: float(x.get('price', 0)), reverse=True)
+                asks = sorted(book.get('asks', []), key=lambda x: float(x.get('price', 1)), reverse=False)
                 
                 best_bid = float(bids[0].get('price', 0)) if bids else 0.0
                 best_ask = float(asks[0].get('price', 1.0)) if asks else 1.0

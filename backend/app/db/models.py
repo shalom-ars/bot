@@ -282,6 +282,7 @@ class UserPortfolio(Base):
     __tablename__ = "user_portfolios"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    paper_status = Column(String, default="STOPPED")
     initial_balance = Column(Float, default=500.0)
     current_balance = Column(Float, default=500.0)
     equity = Column(Float, default=500.0)
@@ -351,3 +352,151 @@ class DataCollectionStats(Base):
     invalid_samples      = Column(Integer, default=0)
     api_errors           = Column(Integer, default=0)
     orderbook_failures   = Column(Integer, default=0)
+
+
+# ══════════════════════════════════════════════════════════════
+# BTC 5M Module Models
+# ══════════════════════════════════════════════════════════════
+
+
+class BTC5MPriceHistory(Base):
+    __tablename__ = "btc5m_price_history"
+    id              = Column(Integer, primary_key=True, index=True)
+    market_id       = Column(String, index=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True)
+    best_bid        = Column(Float)
+    best_ask        = Column(Float)
+
+class BTC5MMarket(Base):
+    """Discovered BTC 5-minute prediction markets from Polymarket."""
+    __tablename__ = "btc5m_markets"
+    id              = Column(Integer, primary_key=True, index=True)
+    market_id       = Column(String, unique=True, index=True)   # YES token_id
+    condition_id    = Column(String, index=True, nullable=True)
+    question        = Column(String)
+    yes_token_id    = Column(String, index=True)
+    no_token_id     = Column(String, nullable=True)
+    start_time      = Column(DateTime, nullable=True)
+    end_time        = Column(DateTime, nullable=True, index=True)
+    # Latest CLOB snapshot
+    best_bid        = Column(Float, nullable=True)
+    best_ask        = Column(Float, nullable=True)
+    bid_depth       = Column(Float, nullable=True)
+    ask_depth       = Column(Float, nullable=True)
+    spread          = Column(Float, nullable=True)
+    mid_price       = Column(Float, nullable=True)
+    imbalance       = Column(Float, nullable=True)
+    liquidity       = Column(Float, nullable=True)
+    time_remaining_sec = Column(Float, nullable=True)
+    orderbook_timestamp = Column(DateTime, nullable=True)
+    is_valid        = Column(Boolean, default=False)
+    rejection_reason = Column(String, nullable=True)
+    last_seen       = Column(DateTime, default=datetime.utcnow)
+
+
+class BTC5MSignal(Base):
+    """Full signal audit trail for every BTC 5M evaluation."""
+    __tablename__ = "btc5m_signals"
+    id              = Column(Integer, primary_key=True, index=True)
+    market_id       = Column(String, index=True)
+    condition_id    = Column(String, nullable=True)
+    question        = Column(String)
+    yes_token_id    = Column(String, nullable=True)
+    no_token_id     = Column(String, nullable=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True)
+    state           = Column(String, index=True)  # WATCH/SETUP/READY/ENTER/SKIP/HOLD/EXIT/RESOLVED
+    side            = Column(String)              # BUY/SELL/NONE
+    entry_price     = Column(Float, nullable=True)
+    bid             = Column(Float, nullable=True)
+    ask             = Column(Float, nullable=True)
+    spread          = Column(Float, nullable=True)
+    bid_depth       = Column(Float, nullable=True)
+    ask_depth       = Column(Float, nullable=True)
+    momentum        = Column(Float, nullable=True)
+    imbalance       = Column(Float, nullable=True)
+    ob_pressure     = Column(Float, nullable=True)
+    volatility      = Column(Float, nullable=True)
+    momentum_persistence = Column(Float, nullable=True)
+    market_probability   = Column(Float, nullable=True)
+    fair_probability     = Column(Float, nullable=True)
+    raw_edge        = Column(Float, nullable=True)
+    spread_cost     = Column(Float, nullable=True)
+    slippage_cost   = Column(Float, nullable=True)
+    fees            = Column(Float, nullable=True)
+    net_edge        = Column(Float, nullable=True)
+    risk_pct        = Column(Float, nullable=True)
+    position_size   = Column(Float, nullable=True)
+    time_remaining_sec = Column(Float, nullable=True)
+    model_version   = Column(String, nullable=True)
+    strategy        = Column(String, nullable=True)
+    reason          = Column(String)
+
+
+class BTC5MTrade(Base):
+    """Paper trades executed by the BTC 5M strategy."""
+    __tablename__ = "btc5m_trades"
+    id              = Column(Integer, primary_key=True, index=True)
+    market_id       = Column(String, index=True)
+    condition_id    = Column(String, nullable=True)
+    question        = Column(String)
+    yes_token_id    = Column(String, nullable=True)
+    no_token_id     = Column(String, nullable=True)
+    side            = Column(String)
+    entry_price     = Column(Float)
+    exit_price      = Column(Float, nullable=True)
+    quantity        = Column(Float)
+    position_size   = Column(Float)
+    spread_at_entry = Column(Float, nullable=True)
+    fees            = Column(Float, nullable=True)
+    slippage        = Column(Float, nullable=True)
+    net_edge        = Column(Float, nullable=True)
+    momentum_at_entry   = Column(Float, nullable=True)
+    imbalance_at_entry  = Column(Float, nullable=True)
+    time_remaining_at_entry = Column(Float, nullable=True)
+    yes_score           = Column(Float, nullable=True)
+    no_score            = Column(Float, nullable=True)
+    planned_risk    = Column(Float, nullable=True)
+    planned_reward  = Column(Float, nullable=True)
+    planned_rr      = Column(Float, nullable=True)
+    stop_loss_price = Column(Float, nullable=True)
+    take_profit_price = Column(Float, nullable=True)
+    actual_rr       = Column(Float, nullable=True)
+    strategy        = Column(String, default="BTC_5M")
+    model_version   = Column(String, nullable=True)
+    entry_reason    = Column(String, nullable=True)
+    exit_reason     = Column(String, nullable=True)
+    status          = Column(String, default="OPEN", index=True)  # OPEN/CLOSED
+    entry_time      = Column(DateTime, default=datetime.utcnow, index=True)
+    exit_time       = Column(DateTime, nullable=True)
+    pnl             = Column(Float, nullable=True)
+    resolution      = Column(String, nullable=True)   # YES/NO/NONE
+
+
+class BTC5MSkip(Base):
+    """Skipped BTC 5M markets."""
+    __tablename__ = "btc5m_skips"
+    id              = Column(Integer, primary_key=True, index=True)
+    market_id       = Column(String, index=True)
+    question        = Column(String)
+    yes_score       = Column(Float)
+    no_score        = Column(Float)
+    yes_prob        = Column(Float)
+    no_prob         = Column(Float)
+    net_edge        = Column(Float)
+    spread          = Column(Float)
+    liquidity       = Column(Float)
+    volatility      = Column(Float)
+    time_remaining  = Column(Float)
+    planned_rr      = Column(Float)
+    skip_reason     = Column(String)
+    timestamp       = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+    actual_resolution    = Column(String, nullable=True)
+    hypothetical_outcome = Column(String, nullable=True)
+
+class BTC5MAudit(Base):
+    """Audit log for BTC 5M module."""
+    __tablename__ = "btc5m_audit"
+    id          = Column(Integer, primary_key=True, index=True)
+    action      = Column(String) # "START" or "STOP"
+    timestamp   = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+    details     = Column(String)

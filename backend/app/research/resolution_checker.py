@@ -115,9 +115,13 @@ def resolve_market(market_id: str, resolution: str, paper_engine=None):
                     is_resolved=True, 
                     resolved_price=resolved_price
                 )
-            
-            from app.engine.user_engine import resolve_saas_user_trades
-            resolve_saas_user_trades(mkt.market_id, resolution)
+            from app.trading.multi_tenant import multi_tenant_engine
+            multi_tenant_engine.update_positions(
+                market_id=mkt.market_id,
+                current_price=resolved_price,
+                is_resolved=True,
+                resolved_price=resolved_price
+            )
     except Exception as e:
         logger.error(f"[RESOLUTION] resolve_market error: {e}")
         db.rollback()

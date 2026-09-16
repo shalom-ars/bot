@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, LineChart, Activity, Wallet, FileTerminal, LogOut, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, LineChart, Activity, Wallet, FileTerminal, LogOut, ShieldAlert, Bitcoin } from 'lucide-react';
 
 export default function Layout() {
   const location = useLocation();
@@ -10,6 +10,7 @@ export default function Layout() {
     { name: 'Signals', path: '/app/signals', icon: Activity },
     { name: 'Portfolio', path: '/app/portfolio', icon: Wallet },
     { name: 'Research Terminal', path: '/app/research', icon: FileTerminal },
+    { name: '₿ BTC 5M', path: '/app/btc5m', icon: Bitcoin },
   ];
   
   const secondaryNav = [
@@ -17,6 +18,7 @@ export default function Layout() {
     { name: 'Trades', path: '/app/trades' },
     { name: 'Performance', path: '/app/performance' },
     { name: 'Risk', path: '/app/risk' },
+    { name: 'Order Book', path: '/app/orderbook' },
     { name: 'Alerts', path: '/app/alerts' },
     { name: 'Settings', path: '/app/settings' },
   ];

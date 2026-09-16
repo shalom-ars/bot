@@ -3,8 +3,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     mode: str = "paper"
-    starting_balance: float = 100.0
-    risk_per_trade: float = 0.01
+    starting_balance: float = 500.0
+    risk_per_trade: float = 0.02
     max_daily_loss: float = 0.05
     max_consecutive_losses: int = 3
     min_edge: float = 0.03

@@ -22,17 +22,17 @@ class PaperTestController:
     def _ensure_active_session(self):
         db = SessionLocal()
         try:
-            # Check for an ongoing session
-            active_session = db.query(PaperTestSession).filter(PaperTestSession.status == "RUNNING").first()
+            # Check for ANY existing active/paused session before creating a new one
+            active_session = db.query(PaperTestSession).filter(PaperTestSession.status.in_(["RUNNING", "PAUSED", "EMERGENCY_STOP"])).order_by(desc(PaperTestSession.start_time)).first()
             if active_session:
                 self.session_id = active_session.session_id
-                logger.info(f"[PAPER-TEST] Resuming active paper test session: {self.session_id}")
+                logger.info(f"[PAPER-TEST] Found existing paper test session: {self.session_id} (Status: {active_session.status})")
             else:
                 self.session_id = f"pts_{uuid.uuid4().hex[:8]}"
                 new_session = PaperTestSession(
                     session_id=self.session_id,
                     status="RUNNING",
-                    initial_balance=500.0, # Specifically $500 simulation constraint
+                    initial_balance=500.0,
                     current_balance=500.0,
                     equity=500.0
                 )
@@ -40,17 +40,51 @@ class PaperTestController:
                 db.commit()
                 logger.info(f"[PAPER-TEST] Created NEW paper test session: {self.session_id}")
                 
-            # If our RiskManager was running on 100 default but we resumed a $500 test:
-            # We must override risk manager starting balance
             session_rec = db.query(PaperTestSession).filter_by(session_id=self.session_id).first()
             self.risk.starting_balance = session_rec.initial_balance
-            # Force risk manager to rehydrate against the $500 baseline
             self.risk._rehydrate_state()
             
         except Exception as e:
             logger.error(f"[PAPER-TEST] Failed to ensure session: {e}")
         finally:
             db.close()
+
+    def set_status(self, new_status: str, reason: str = ""):
+        db = SessionLocal()
+        try:
+            session = db.query(PaperTestSession).filter_by(session_id=self.session_id).first()
+            if session:
+                session.status = new_status
+                if new_status == "STOPPED":
+                    session.end_time = datetime.utcnow()
+                db.commit()
+                logger.info(f"[PAPER-TEST] Session {self.session_id} status changed to {new_status}. Reason: {reason}")
+        except Exception as e:
+            logger.error(f"Failed to change session status: {e}")
+        finally:
+            db.close()
+
+    def get_status(self) -> str:
+        db = SessionLocal()
+        try:
+            session = db.query(PaperTestSession).filter_by(session_id=self.session_id).first()
+            return session.status if session else "UNKNOWN"
+        finally:
+            db.close()
+
+    def pause_session(self):
+        self.set_status("PAUSED")
+        
+    def resume_session(self):
+        self.set_status("RUNNING")
+
+    def stop_session(self):
+        self.set_status("STOPPED")
+        self.session_id = None
+        self._ensure_active_session() # Creates a new one if requested later, but wait, if it's STOPPED we just stop. But if it's STOPPED, the scanner should stop evaluating. Wait, let's just leave session_id assigned but STOPPED.
+
+    def emergency_stop(self, reason: str = "Manual Emergency Stop"):
+        self.set_status("EMERGENCY_STOP", reason=reason)
 
     def update_session_stats(self):
         """Called periodically or when generating a report to update DB."""

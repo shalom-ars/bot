@@ -1,11 +1,14 @@
 import asyncio
 import logging
+from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from app.config import settings
 from app.db.session import SessionLocal
 from app.db.models import Market, MarketSnapshot, Signal, BotEvent
 from app.db.schemas import MarketTick
 from app.trading.risk import RiskManager
+from app.trading.paper_engine import PaperEngine
+from app.trading.multi_tenant import multi_tenant_engine
 from app.engine.features import FeatureEngine
 from app.engine.model import ProbabilityModel
 from app.engine.strategy import StrategyEngine
@@ -63,7 +66,7 @@ class Orchestrator:
     def _sync_get_broadcast_data(self):
         db = SessionLocal()
         try:
-            active_markets = db.query(Market).filter(Market.active == True).all()
+            active_markets = db.query(Market).filter(Market.active == True).order_by(Market.last_update.desc()).limit(50).all()
             markets_data = []
             for m in active_markets:
                 markets_data.append({
@@ -238,23 +241,37 @@ class Orchestrator:
                 self.feature_engine.add_tick(tick.symbol, tick.model_dump())
                 features = self.feature_engine.get_features(tick.symbol, time_remaining)
                 if features:
-                    signal_data = self.strategy.evaluate(tick, features)
-                    db.add(Signal(**signal_data))
+                    session_status = self.paper_controller.get_status()
+                    
+                    if session_status != "EMERGENCY_STOP":
+                        signal_data = self.strategy.evaluate(tick, features)
+                        # Strip fields not in Signal model before creating
+                        _known_signal_fields = {c.key for c in Signal.__table__.columns}
+                        _safe_signal_data = {k: v for k, v in signal_data.items() if k in _known_signal_fields}
+                        db.add(Signal(**_safe_signal_data))
+                    else:
+                        signal_data = {"signal_type": "PASS"} # Skip signal generation during emergency stop
+                        
+                    # Continue monitoring existing positions regardless of state (unless completely stopped)
+                    if session_status in ["RUNNING", "PAUSED"]:
+                        self.paper_engine.update_positions(tick.market_id, tick.price)
+                        multi_tenant_engine.update_positions(tick.market_id, tick.price)
 
-                    self.paper_engine.update_positions(tick.market_id, tick.price)
-
-                    sig_type = signal_data["signal_type"]
-                    if settings.execution_mode == "paper" and sig_type in ("BUY", "SELL"):
-                        real_condition_id = market.condition_id if market and market.condition_id else tick.market_id
-                        market_info = {
-                            "condition_id": real_condition_id,
-                            "ask_depth": tick.ask_depth,
-                            "bid_depth": tick.bid_depth
-                        }
-                        success, reason = self.paper_engine.execute_signal(signal_data, market_info)
-                        if success:
-                            from app.engine.user_engine import execute_saas_user_trades
-                            execute_saas_user_trades(signal_data, market_info, tick.price)
+                    sig_type = signal_data.get("signal_type", "PASS")
+                    if settings.execution_mode == "paper":
+                        can_buy = (sig_type == "BUY" and session_status == "RUNNING")
+                        can_sell = (sig_type == "SELL" and session_status in ["RUNNING", "PAUSED"])
+                        
+                        if can_buy or can_sell:
+                            real_condition_id = market.condition_id if market and market.condition_id else tick.market_id
+                            market_info = {
+                                "condition_id": real_condition_id,
+                                "ask_depth": tick.ask_depth,
+                                "bid_depth": tick.bid_depth
+                            }
+                            success, reason = self.paper_engine.execute_signal(signal_data, market_info)
+                            if success:
+                                multi_tenant_engine.execute(signal_data, market_info)
 
             # Bulk commit once per batch (50 ticks)
             for attempt in range(5):

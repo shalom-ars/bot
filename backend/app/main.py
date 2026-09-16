@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -9,13 +11,19 @@ from app.api.websockets import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.admin import router as admin_router
+from app.db.session import engine, Base
+
+Base.metadata.create_all(bind=engine)
+
 from app.api.health import router as health_router
 from app.api.markets import router as markets_router
 from app.api.signals import router as signals_router
+from app.api.btc5m import router as btc5m_router
+from app.api.system import router as system_router
 from app.engine.scanner import orchestrator
-from app.db.session import engine, Base
 from contextlib import asynccontextmanager
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
@@ -23,6 +31,19 @@ async def lifespan(app: FastAPI):
     # Setup
     Base.metadata.create_all(bind=engine)
     logger.info("FastAPI lifecycle start. DB created.")
+    
+    from app.config import settings
+    if settings.live_trading_enabled or settings.execution_mode == "live":
+        raise RuntimeError("REAL TRADING IS DISABLED IN THIS BUILD. Phase 7 hard-block active.")
+
+    from app.research.resolution_checker import resolution_check_loop
+    asyncio.create_task(orchestrator.start())
+    asyncio.create_task(resolution_check_loop(orchestrator.paper_engine))
+
+    # BTC 5M dedicated module
+    from app.btc5m.engine import btc5m_engine
+    await btc5m_engine.start()
+    
     yield
     # Teardown
     logger.info("FastAPI lifecycle end.")
@@ -41,21 +62,14 @@ app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(markets_router, prefix="/api/markets", tags=["markets"])
 app.include_router(signals_router, prefix="/api/signals", tags=["signals"])
+app.include_router(btc5m_router, prefix="/api/btc5m", tags=["btc5m"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(health_router, prefix="/api/health", tags=["health"])
+app.include_router(system_router, prefix="/api/system", tags=["system"])
 app.include_router(api_router, prefix="/api")
 app.include_router(ws_router, prefix="/ws")
 
-@app.on_event("startup")
-async def startup_event():
-    from app.config import settings
-    # 25. FINAL SECURITY LOCK
-    if settings.live_trading_enabled or settings.execution_mode == "live":
-        raise RuntimeError("REAL TRADING IS DISABLED IN THIS BUILD. Phase 7 hard-block active.")
 
-    from app.research.resolution_checker import resolution_check_loop
-    asyncio.create_task(orchestrator.start())
-    asyncio.create_task(resolution_check_loop(orchestrator.paper_engine))
 
 @app.get("/api/status")
 async def get_status():

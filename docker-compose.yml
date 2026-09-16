@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  jonanda-bot:
+    build: .
+    image: jonanda-bot:latest
+    container_name: jonanda-bot
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:////app/data/bot.db
+      - DATA_MODE=live
+      - EXECUTION_MODE=paper
+      - LIVE_TRADING_ENABLED=false
+      - SYNTHETIC_BOOTSTRAP=false
+      - SAAS_SECRET_KEY=${SAAS_SECRET_KEY:-default_secret_key_change_me_in_production}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -110,35 +110,74 @@ class PaperEngine:
                 if pos.side == "BUY_YES" or pos.side == "BUY":
                     pnl = (resolved_price - pos.entry_price) * pos.quantity
                 elif pos.side == "BUY_NO" or pos.side == "SELL":
-                    # If NO wins (resolved_price=0.0), payout is 1.0. Profit = (1.0 - entry_price).
-                    # If YES wins (resolved_price=1.0), payout is 0.0. Profit = (0.0 - entry_price).
-                    # A general formula using YES resolved_price:
-                    # Payout for NO token = (1.0 - resolved_price)
                     pnl = ((1.0 - resolved_price) - pos.entry_price) * pos.quantity
 
-                # Update trade
                 trade = db.query(Trade).filter(Trade.market_id == market_id, Trade.status == "OPEN").first()
                 if trade:
                     trade.status = "CLOSED"
                     trade.exit_price = resolved_price
                     trade.pnl = pnl
-                    trade.reason = "Market resolved"
                     trade.exit_timestamp = datetime.utcnow()
+                    trade.resolution_reason = "RESOLVED"
                 
+                self.risk.record_trade_result(pnl)
                 db.delete(pos)
-                db.commit() # Commit db before recording risk result to ensure rehydration is correct
+                db.commit()
                 
                 # P0-001 FIX: decrement in-memory exposure immediately
                 position_cost = pos.entry_price * pos.quantity if pos.entry_price and pos.quantity else 0.0
                 self.risk.current_exposure = max(0.0, self.risk.current_exposure - position_cost)
                 self.risk.open_positions_count = max(0, self.risk.open_positions_count - 1)
                 
-                # Authoritative PnL persistence
-                self.risk.record_trade_result(pnl)
-                
                 logger.info(f"Position closed on {market_id}, PnL: {pnl}")
+                return
+                
+            # P1: Adaptive Holding Time (Max 2 hours or Take Profit)
+            hold_time_hours = (datetime.utcnow() - pos.timestamp).total_seconds() / 3600.0
+            
+            exit_reason = None
+            exit_price = current_price
+            
+            if hold_time_hours >= 2.0:
+                exit_reason = "TIME_STOP"
             else:
-                # Update unrealized pnl
+                # Take profit early if edge decays and profit > 0.05
+                if pos.side in ["BUY_YES", "BUY"]:
+                    profit_margin = current_price - pos.entry_price
+                    if profit_margin > 0.05:
+                        exit_reason = "TAKE_PROFIT"
+                elif pos.side in ["BUY_NO", "SELL"]:
+                    profit_margin = pos.entry_price - current_price
+                    if profit_margin > 0.05:
+                        exit_reason = "TAKE_PROFIT"
+                        
+            if exit_reason:
+                pnl = 0.0
+                if pos.side in ["BUY_YES", "BUY"]:
+                    pnl = (exit_price - pos.entry_price) * pos.quantity
+                elif pos.side in ["BUY_NO", "SELL"]:
+                    pnl = (pos.entry_price - exit_price) * pos.quantity
+                    
+                trade = db.query(Trade).filter(Trade.market_id == market_id, Trade.status == "OPEN").first()
+                if trade:
+                    trade.status = "CLOSED"
+                    trade.exit_price = exit_price
+                    trade.pnl = pnl
+                    trade.exit_timestamp = datetime.utcnow()
+                    trade.resolution_reason = exit_reason
+                    
+                self.risk.record_trade_result(pnl)
+                db.delete(pos)
+                db.commit()
+                
+                position_cost = pos.entry_price * pos.quantity if pos.entry_price and pos.quantity else 0.0
+                self.risk.current_exposure = max(0.0, self.risk.current_exposure - position_cost)
+                self.risk.open_positions_count = max(0, self.risk.open_positions_count - 1)
+                
+                logger.info(f"[PAPER] Exited {market_id} early due to {exit_reason} (PnL: ${pnl:.2f})")
+                return
+
+            # Update unrealized pnl
                 if pos.side == "BUY_YES" or pos.side == "BUY":
                     pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
                 elif pos.side == "BUY_NO" or pos.side == "SELL":

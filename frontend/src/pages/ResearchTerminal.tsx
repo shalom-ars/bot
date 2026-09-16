@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Activity, Wallet, ShieldAlert, Clock, Wifi, WifiOff, Database, FlaskConical } from 'lucide-react'
+import apiClient from '../api/client'
 
 function StatusBadge({ value, good, warn }: { value: string, good: string[], warn?: string[] }) {
   const isGood = good.includes(value)
@@ -23,22 +24,27 @@ export default function ResearchTerminal() {
 
   useEffect(() => {
     const fetchAll = () => {
-      fetch('http://localhost:8000/api/status')
-        .then(r => r.json()).then(setStatus).catch(console.error)
-      fetch('http://localhost:8000/api/health')
-        .then(r => r.json()).then(setHealth).catch(console.error)
-      fetch('http://localhost:8000/api/strategy/status')
-        .then(r => r.json()).then(setStrategy).catch(console.error)
-      fetch('http://localhost:8000/api/research/quality')
-        .then(r => r.json()).then(setQuality).catch(console.error)
+      apiClient.get('/status')
+        .then((r: any) => setStatus(r.data)).catch(console.error)
+      apiClient.get('/health')
+        .then((r: any) => setHealth(r.data)).catch(console.error)
+      apiClient.get('/strategy/status')
+        .then((r: any) => setStrategy(r.data)).catch(console.error)
+      apiClient.get('/research/quality')
+        .then((r: any) => setQuality(r.data)).catch(console.error)
+      
+      // Fetch initial markets
+      apiClient.get('/markets?limit=10')
+        .then((r: any) => setMarkets(r.data.markets)).catch(console.error)
     }
     fetchAll()
     const interval = setInterval(fetchAll, 5000)
 
-    fetch('http://localhost:8000/api/pnl')
-      .then(r => r.json()).then(setPnl).catch(console.error)
+    apiClient.get('/pnl')
+      .then((r: any) => setPnl(r.data)).catch(console.error)
 
-    const ws = new WebSocket('ws://localhost:8000/ws/live')
+    const wsUrl = import.meta.env.VITE_WS_URL || (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/live'
+    const ws = new WebSocket(wsUrl)
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
       if (data.type === 'markets') setMarkets(data.data)
@@ -153,8 +159,8 @@ export default function ResearchTerminal() {
                       <span className="bg-slate-700 px-2 py-1 text-xs rounded text-slate-300">{m.token}</span>
                     </div>
                     <div className="grid grid-cols-4 gap-4 text-sm mt-3">
-                      <div><p className="text-slate-500 text-xs">Price</p><p className="font-mono">{m.current_price?.toFixed(3)}</p></div>
-                      <div><p className="text-slate-500 text-xs">Spread</p><p className="font-mono text-amber-400">{(m.spread || 0).toFixed(4)}</p></div>
+                      <div><p className="text-slate-500 text-xs">Price</p><p className="font-mono">{m.spread === 1.0 ? '—' : m.current_price?.toFixed(3)}</p></div>
+                      <div><p className="text-slate-500 text-xs">Spread</p><p className="font-mono text-amber-400">{m.spread === 1.0 ? 'EMPTY BOOK' : (m.spread || 0).toFixed(4)}</p></div>
                       <div><p className="text-slate-500 text-xs">Imbalance</p><p className="font-mono text-purple-400">{((m.imbalance || 0) * 100).toFixed(1)}%</p></div>
                       <div><p className="text-slate-500 text-xs">Signal</p><p className="font-mono font-bold text-slate-400">SKIP</p></div>
                     </div>
@@ -203,14 +209,14 @@ export default function ResearchTerminal() {
             </div>
             <div className="p-4 space-y-2 text-sm">
               {[
-                { label: 'Snapshots Collected', val: quality?.snapshots_collected ?? 0 },
+                { label: 'Snapshots Collected', val: quality?.total_snapshots ?? 0 },
                 { label: 'Unique Markets',       val: quality?.unique_markets ?? 0 },
                 { label: 'Resolved Markets',     val: quality?.resolved_markets ?? 0 },
                 { label: 'Unresolved Markets',   val: quality?.unresolved_markets ?? 0 },
-                { label: 'Valid Train Samples',  val: quality?.valid_training_samples ?? 0 },
-                { label: 'Invalid Samples',      val: quality?.invalid_samples ?? 0 },
-                { label: 'Feature Completeness', val: quality ? `${(quality.feature_completeness*100).toFixed(1)}%` : '…' },
-                { label: 'Class Balance',        val: quality ? `${(quality.class_balance*100).toFixed(1)}%` : '…' },
+                { label: 'Valid Train Samples',  val: quality?.valid_samples ?? 0 },
+                { label: 'Invalid Samples',      val: quality?.invalid_samples ?? 'N/A' },
+                { label: 'Feature Completeness', val: typeof quality?.feature_completeness === 'number' ? `${(quality.feature_completeness*100).toFixed(1)}%` : 'N/A' },
+                { label: 'Class Balance',        val: typeof quality?.class_balance === 'number' ? `${(quality.class_balance*100).toFixed(1)}%` : 'N/A' },
                 { label: 'API Errors',           val: quality?.api_errors ?? 0 },
               ].map(({ label, val }) => (
                 <div key={label} className="flex justify-between py-0.5 border-b border-slate-800/60">
