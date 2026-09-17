@@ -25,6 +25,7 @@ Entry requires multi-factor confirmation:
   11. RiskManager approval
 """
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -100,26 +101,53 @@ class BTC5MSignal:
     skip_flags: list = field(default_factory=list)
 
 
-def _compute_fair_probability(price: float, momentum: float, imbalance: float, btc_price: Optional[float] = None, p2b: Optional[float] = None) -> float:
+def _compute_fair_probability(
+    price: float,
+    momentum: float,
+    imbalance: float,
+    btc_price: Optional[float] = None,
+    p2b: Optional[float] = None,
+    time_remaining_sec: float = 150.0,
+    btc_momentum_1m: Optional[float] = None
+) -> float:
     """
-    Compute rule-based fair probability for YES (UP).
+    Compute rule-based and time-decayed fair probability for YES (UP).
+    Fair NO probability is 1.0 - fair_yes.
     Factors:
-    - Base market price
-    - BTC Price vs Price-to-Beat delta (authoritative Chainlink feed)
-    - Short-term momentum
+    - Base Polymarket market price
+    - BTC vs Price-to-Beat delta scaled by time remaining (Brownian option physics)
+    - True spot BTC momentum (if available) & orderbook momentum
     - Orderbook pressure and imbalance
     """
-    nudge = 0.0
     if btc_price is not None and p2b is not None:
         diff = btc_price - p2b
-        p2b_shift = max(-0.15, min(0.15, diff / 250.0))
-        nudge += p2b_shift
+        tau = max(15.0, min(300.0, float(time_remaining_sec)))
+        
+        # 5-minute standard deviation of BTC (~$25 - $35)
+        sigma_tau = 30.0 * math.sqrt(tau / 300.0)
+        z = diff / (sigma_tau + 1e-9)
+        
+        # Logistic probability from BTC vs P2B
+        p_oracle = 1.0 / (1.0 + math.exp(-max(-8.0, min(8.0, 1.2 * z))))
+        
+        # Time-weighted blend: as expiry approaches, oracle delta dominates market price
+        w_oracle = min(0.90, max(0.40, 1.0 - (tau / 500.0)))
+        blended_price = (w_oracle * p_oracle) + ((1.0 - w_oracle) * price)
+    else:
+        blended_price = price
 
-    mom_shift = max(-0.08, min(0.08, momentum * 200.0))
-    imb_shift = max(-0.05, min(0.05, imbalance * 0.05))
-    nudge += (mom_shift + imb_shift)
+    # Micro-structure nudges
+    nudge = 0.0
+    if btc_momentum_1m is not None:
+        # e.g. -0.001 is -0.1% move in spot BTC (~$65)
+        nudge += max(-0.06, min(0.06, btc_momentum_1m * 50.0))
+    else:
+        nudge += max(-0.05, min(0.05, momentum * 100.0))
 
-    return max(0.01, min(0.99, price + nudge))
+    imb_shift = max(-0.04, min(0.04, imbalance * 0.04))
+    nudge += imb_shift
+
+    return max(0.01, min(0.99, blended_price + nudge))
 
 
 class BTC5MStrategy:
@@ -158,7 +186,14 @@ class BTC5MStrategy:
     def record_exit(self, market_id: str):
         self._active_positions.pop(market_id, None)
 
-    def _score_side(self, is_yes: bool, features: dict, btc_price: float, p2b: float) -> tuple[float, dict]:
+    def _score_side(
+        self,
+        is_yes: bool,
+        features: dict,
+        btc_price: float,
+        p2b: float,
+        time_remaining_sec: float = 150.0
+    ) -> tuple[float, dict]:
         """
         Calculate a 100-point score for a specific side.
         BTC Price vs Price-to-Beat (20)
@@ -175,21 +210,34 @@ class BTC5MStrategy:
         total = 0.0
         
         # 1. BTC Price vs P2B (20 points)
-        # If YES, BTC > P2B is good. If NO, BTC < P2B is good.
-        diff = btc_price - p2b if btc_price and p2b else 0
+        # Scaled by time remaining: a $20 lead with 1m remaining is highly decisive (18+ pts),
+        # whereas a $3 lead at candle open (280s) is small variance (10.5 pts).
+        diff = btc_price - p2b if btc_price and p2b else 0.0
+        tau = max(15.0, min(300.0, float(time_remaining_sec)))
+        sigma_tau = 30.0 * math.sqrt(tau / 300.0)
+        z = diff / (sigma_tau + 1e-9) if diff != 0.0 else 0.0
+        
         if is_yes:
-            score_p2b = min(20, max(0, 10 + (diff / 5.0))) if diff != 0 else 10
+            score_p2b = min(20.0, max(0.0, 10.0 + (z * 5.0)))
         else:
-            score_p2b = min(20, max(0, 10 - (diff / 5.0))) if diff != 0 else 10
+            score_p2b = min(20.0, max(0.0, 10.0 - (z * 5.0)))
         breakdown["BTC vs P2B"] = round(score_p2b, 1)
         total += score_p2b
         
-        # 2. Momentum (15 points)
-        mom = features.get("short_momentum_1m", 0.0)
-        if is_yes:
-            score_mom = min(15, max(0, 7.5 + (mom * 500)))
+        # 2. Momentum (15 points) - blends true spot BTC momentum and orderbook momentum
+        btc_mom = features.get("btc_momentum_1m", None)
+        clob_mom = features.get("short_momentum_1m", 0.0)
+        
+        if btc_mom is not None:
+            # 65% weight on spot BTC momentum, 35% on CLOB contract momentum
+            mom_composite = (btc_mom * 3000.0 * 0.65) + (clob_mom * 250.0 * 0.35)
         else:
-            score_mom = min(15, max(0, 7.5 - (mom * 500)))
+            mom_composite = clob_mom * 400.0
+            
+        if is_yes:
+            score_mom = min(15.0, max(0.0, 7.5 + mom_composite))
+        else:
+            score_mom = min(15.0, max(0.0, 7.5 - mom_composite))
         breakdown["Momentum"] = round(score_mom, 1)
         total += score_mom
         
@@ -197,39 +245,46 @@ class BTC5MStrategy:
         # Positive imbalance means more bids (bullish for YES)
         imb = features.get("bid_ask_imbalance", 0.0)
         if is_yes:
-            score_ob = min(15, max(0, 7.5 + (imb * 15)))
+            score_ob = min(15.0, max(0.0, 7.5 + (imb * 15.0)))
         else:
-            score_ob = min(15, max(0, 7.5 - (imb * 15)))
+            score_ob = min(15.0, max(0.0, 7.5 - (imb * 15.0)))
         breakdown["Order Book"] = round(score_ob, 1)
         total += score_ob
         
         # 4. Probability Movement (10 points)
         ret1 = features.get("return_1", 0.0) # change in mid price
         if is_yes:
-            score_prob = min(10, max(0, 5 + (ret1 * 100)))
+            score_prob = min(10.0, max(0.0, 5.0 + (ret1 * 100.0)))
         else:
-            score_prob = min(10, max(0, 5 - (ret1 * 100)))
+            score_prob = min(10.0, max(0.0, 5.0 - (ret1 * 100.0)))
         breakdown["Prob Movement"] = round(score_prob, 1)
         total += score_prob
         
         # 5. Volatility (10 points)
         # Lower volatility is better (less noise)
         vol = features.get("rolling_volatility", 0.0)
-        score_vol = min(10, max(0, 10 - (vol * 100)))
+        score_vol = min(10.0, max(0.0, 10.0 - (vol * 100.0)))
         breakdown["Volatility"] = round(score_vol, 1)
         total += score_vol
         
         # 6. Liquidity / Spread (10 points)
         spread = features.get("spread", 1.0)
-        score_spread = min(10, max(0, 10 - (spread * 200)))
+        score_spread = min(10.0, max(0.0, 10.0 - (spread * 200.0)))
         breakdown["Liquidity/Spread"] = round(score_spread, 1)
         total += score_spread
         
         # Net Edge and R:R are added externally based on actual math
-        
         return total, breakdown
 
-    def _calc_edge_and_rr(self, is_yes: bool, features: dict, current_balance: float, btc_price: Optional[float] = None, p2b: Optional[float] = None):
+    def _calc_edge_and_rr(
+        self,
+        is_yes: bool,
+        features: dict,
+        current_balance: float,
+        btc_price: Optional[float] = None,
+        p2b: Optional[float] = None,
+        time_remaining_sec: float = 150.0
+    ):
         spread = features.get("spread", 0.05)
         price = features.get("mid_price", 0.5)
         
@@ -251,7 +306,15 @@ class BTC5MStrategy:
         spread_cost = spread / 2.0
         
         # Fair prob
-        fair_yes = _compute_fair_probability(price, momentum=features.get("short_momentum_1m", 0.0), imbalance=features.get("bid_ask_imbalance", 0.0), btc_price=btc_price, p2b=p2b)
+        fair_yes = _compute_fair_probability(
+            price,
+            momentum=features.get("short_momentum_1m", 0.0),
+            imbalance=features.get("bid_ask_imbalance", 0.0),
+            btc_price=btc_price,
+            p2b=p2b,
+            time_remaining_sec=time_remaining_sec,
+            btc_momentum_1m=features.get("btc_momentum_1m")
+        )
         fair_prob = fair_yes if is_yes else (1.0 - fair_yes)
         
         risk_pct = self.settings.get("risk_per_trade", settings.risk_per_trade)
@@ -355,13 +418,13 @@ class BTC5MStrategy:
                 no_breakdown="{}"
             )
 
-        # 1. Score both sides
-        yes_base_score, yes_breakdown = self._score_side(True, features, btc_price, price_to_beat)
-        no_base_score, no_breakdown = self._score_side(False, features, btc_price, price_to_beat)
+        # 1. Score both sides with time-decayed option metrics
+        yes_base_score, yes_breakdown = self._score_side(True, features, btc_price, price_to_beat, time_remaining)
+        no_base_score, no_breakdown = self._score_side(False, features, btc_price, price_to_beat, time_remaining)
         
-        # 2. Calculate edges with BTC & P2B inputs
-        yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, risk = self._calc_edge_and_rr(True, features, current_balance, btc_price, price_to_beat)
-        no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, _ = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat)
+        # 2. Calculate edges with BTC & P2B inputs and time decay
+        yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, risk = self._calc_edge_and_rr(True, features, current_balance, btc_price, price_to_beat, time_remaining)
+        no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, _ = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat, time_remaining)
         
         min_rr = self.settings.get("min_rr", MIN_RR)
         min_score = self.settings.get("min_entry_score", MIN_ENTRY_SCORE)
@@ -369,12 +432,13 @@ class BTC5MStrategy:
         max_spr = self.settings.get("max_spread", MAX_SPREAD)
         min_liq = self.settings.get("min_liquidity", MIN_LIQUIDITY)
         min_time = self.settings.get("min_time_remaining", 30.0)
+        max_time = self.settings.get("max_time_remaining", 240.0)
 
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
         # Edge > 0.05 gives 10 points
         yes_edge_pts = min(10, max(0, yes_edge * 200))
         yes_rr_pts = 5 if yes_rr >= min_rr else 0
-        yes_time_pts = min(5, time_remaining / 60.0)
+        yes_time_pts = min(5, max(0, (time_remaining - min_time) / 40.0))
         yes_score = yes_base_score + yes_edge_pts + yes_rr_pts + yes_time_pts
         yes_breakdown["Net Edge"] = round(yes_edge_pts, 1)
         yes_breakdown["Risk/R:R"] = round(yes_rr_pts, 1)
@@ -382,7 +446,7 @@ class BTC5MStrategy:
         
         no_edge_pts = min(10, max(0, no_edge * 200))
         no_rr_pts = 5 if no_rr >= min_rr else 0
-        no_time_pts = min(5, time_remaining / 60.0)
+        no_time_pts = min(5, max(0, (time_remaining - min_time) / 40.0))
         no_score = no_base_score + no_edge_pts + no_rr_pts + no_time_pts
         no_breakdown["Net Edge"] = round(no_edge_pts, 1)
         no_breakdown["Risk/R:R"] = round(no_rr_pts, 1)
@@ -440,10 +504,12 @@ class BTC5MStrategy:
         else:
             skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {min_liq:.0f}")
             
-        if time_remaining >= min_time:
-            gate_results["time"]["pass"] = True
-        else:
+        if time_remaining < min_time:
             skip_flags.append(f"SKIP - Time {time_remaining:.0f}s < {min_time:.0f}s")
+        elif time_remaining > max_time:
+            skip_flags.append(f"SKIP - Candle open stabilization ({time_remaining:.0f}s > {max_time:.0f}s)")
+        else:
+            gate_results["time"]["pass"] = True
             
         if actual_planned_rr >= min_rr:
             gate_results["rr"]["pass"] = True

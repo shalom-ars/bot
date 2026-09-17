@@ -519,7 +519,7 @@ function InnerBTC5M() {
 
   // Live CLOB / Scanner Prices
   const dispYes = (livePrices.yes && livePrices.yes > 0.05) ? livePrices.yes : (analysis?.yes_prob || current?.best_bid || 0.5);
-  const dispNo = (livePrices.no && livePrices.no > 0.05) ? livePrices.no : (analysis?.no_prob || current?.best_ask || (1.0 - dispYes));
+  const dispNo = (livePrices.no && livePrices.no > 0.05) ? livePrices.no : (analysis?.no_prob || (current?.best_bid ? 1.0 - current.best_bid : (1.0 - dispYes)));
 
   const yesVal = Math.max(0.01, Math.min(0.99, dispYes));
   const noVal = Math.max(0.01, Math.min(0.99, dispNo));

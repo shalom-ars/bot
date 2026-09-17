@@ -43,6 +43,7 @@ class BTC5MEngine:
         self.running = False
         self.trading_active = True  # Default active for paper trading (toggleable via UI)
         self._market_states: Dict[str, str] = {}  # market_id -> state
+        self._btc_history: list = []  # rolling [(timestamp_sec, btc_price)] for spot momentum
         self.rehydrate_state()
 
     def rehydrate_state(self):
@@ -456,6 +457,18 @@ class BTC5MEngine:
             btc_price, price_to_beat = await self._get_btc5m_reference_data_async(market)
             latency_tracker.record("chainlink_ms", (time.perf_counter() - t0_ref) * 1000)
 
+            # Record spot BTC ticks and compute true 1m spot BTC momentum
+            if btc_price is not None and btc_price > 0:
+                now_ts = time.time()
+                self._btc_history.append((now_ts, btc_price))
+                cutoff = now_ts - 900.0
+                self._btc_history = [x for x in self._btc_history if x[0] >= cutoff]
+                older_ticks = [x for x in self._btc_history if x[0] <= (now_ts - 45.0)]
+                if older_ticks:
+                    ref_p = older_ticks[-1][1]
+                    if ref_p > 0:
+                        features["btc_momentum_1m"] = (btc_price - ref_p) / ref_p
+
             # Evaluate both YES and NO with explicit BTC/P2B inputs.
             t0_strat = time.perf_counter()
             signal = self.strategy.evaluate(
@@ -607,6 +620,14 @@ class BTC5MEngine:
                 model_version=signal.model_version,
                 strategy=signal.strategy,
                 reason=signal.reason,
+                yes_score=signal.yes_score,
+                no_score=signal.no_score,
+                yes_prob=signal.yes_prob,
+                no_prob=signal.no_prob,
+                predicted_side=signal.predicted_side,
+                gate_results=signal.gate_results,
+                yes_breakdown=signal.yes_breakdown,
+                no_breakdown=signal.no_breakdown,
             ))
             db.commit()
         except Exception as e:
@@ -741,19 +762,36 @@ class BTC5MEngine:
                                 if not mkt.get("closed"):
                                     # Check for early R:R exit using current CLOB best bid
                                     best_bid = None
+                                    mid_price = None
                                     from app.db.models import BTC5MPriceHistory
                                     last_hist = db.query(BTC5MPriceHistory).filter(
                                         BTC5MPriceHistory.market_id == trade.market_id
                                     ).order_by(BTC5MPriceHistory.timestamp.desc()).first()
                                     if last_hist:
-                                        if trade.side == "BUY" and last_hist.best_bid is not None:
+                                        if trade.side == "BUY":
                                             best_bid = last_hist.best_bid
-                                        elif trade.side == "SELL" and last_hist.best_ask is not None:
-                                            best_bid = 1.0 - last_hist.best_ask
-                                        elif last_hist.best_bid is not None:
+                                            if last_hist.best_bid is not None and last_hist.best_ask is not None:
+                                                mid_price = (last_hist.best_bid + last_hist.best_ask) / 2.0
+                                            else:
+                                                mid_price = best_bid
+                                        elif trade.side == "SELL":
+                                            if last_hist.best_ask is not None and last_hist.best_ask > 0:
+                                                best_bid = 1.0 - last_hist.best_ask
+                                            elif last_hist.best_bid is not None and last_hist.best_bid > 0:
+                                                best_bid = 1.0 - last_hist.best_bid
+
+                                            if last_hist.best_bid is not None and last_hist.best_ask is not None:
+                                                mid_price = 1.0 - ((last_hist.best_bid + last_hist.best_ask) / 2.0)
+                                            else:
+                                                mid_price = best_bid
+                                        else:
                                             best_bid = last_hist.best_bid
+                                            mid_price = best_bid
                                     
                                     if best_bid is not None and trade.take_profit_price and trade.stop_loss_price:
+                                        # Calculate age of trade to protect from single-tick entry-block wicks
+                                        entry_t = trade.entry_time.replace(tzinfo=timezone.utc) if (trade.entry_time and trade.entry_time.tzinfo is None) else (trade.entry_time or datetime.now(timezone.utc))
+                                        trade_age_sec = (datetime.now(timezone.utc) - entry_t).total_seconds()
                                         if best_bid >= trade.take_profit_price:
                                             # Early exit at Target
                                             trade.status = "CLOSED"
@@ -767,12 +805,12 @@ class BTC5MEngine:
                                             self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
                                             db.commit()
                                             self.strategy.record_exit(trade.market_id)
-                                            logger.info(f"[BTC5M Engine] EARLY EXIT TP trade {trade.id} | PnL: {trade.pnl:.2f}")
+                                            logger.info(f"[BTC5M Engine] EARLY EXIT TP trade {trade.id} ({trade.side}) | PnL: {trade.pnl:.2f}")
                                             found_resolution = True
                                             any_settled = True
                                             break
-                                        elif best_bid <= trade.stop_loss_price:
-                                            # Early exit at Stop
+                                        elif best_bid <= trade.stop_loss_price and trade_age_sec >= 15.0 and (mid_price is None or mid_price <= (trade.stop_loss_price + 0.03)):
+                                            # Early exit at Stop (wick-resistant and mid-price confirmed)
                                             trade.status = "CLOSED"
                                             trade.exit_time = datetime.now(timezone.utc)
                                             trade.exit_price = trade.stop_loss_price
@@ -784,7 +822,7 @@ class BTC5MEngine:
                                             self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
                                             db.commit()
                                             self.strategy.record_exit(trade.market_id)
-                                            logger.info(f"[BTC5M Engine] EARLY EXIT SL trade {trade.id} | PnL: {trade.pnl:.2f}")
+                                            logger.info(f"[BTC5M Engine] EARLY EXIT SL trade {trade.id} ({trade.side}) | PnL: {trade.pnl:.2f}")
                                             found_resolution = True
                                             any_settled = True
                                             break
