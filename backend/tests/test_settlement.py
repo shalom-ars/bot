@@ -12,12 +12,16 @@ def test_db():
     TestingSessionLocal = sessionmaker(bind=engine)
     
     import app.trading.paper_engine
+    import app.trading.risk
     old_session = app.trading.paper_engine.SessionLocal
+    old_risk_session = app.trading.risk.SessionLocal
     app.trading.paper_engine.SessionLocal = TestingSessionLocal
+    app.trading.risk.SessionLocal = TestingSessionLocal
     
     yield TestingSessionLocal()
     
     app.trading.paper_engine.SessionLocal = old_session
+    app.trading.risk.SessionLocal = old_risk_session
 
 def test_buy_yes_settlement(test_db):
     risk = RiskManager()

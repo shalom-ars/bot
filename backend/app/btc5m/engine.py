@@ -36,7 +36,8 @@ class BTC5MEngine:
     """
 
     def __init__(self, risk_manager: Optional[RiskManager] = None):
-        self.risk_manager = risk_manager or RiskManager()
+        from app.db.models import BTC5MTrade
+        self.risk_manager = risk_manager or RiskManager(trade_model=BTC5MTrade)
         self.feature_engine = BTC5MFeatureEngine()
         self.strategy = BTC5MStrategy(risk_manager=self.risk_manager)
         self.running = False
@@ -60,6 +61,14 @@ class BTC5MEngine:
                 settings_map = get_btc5m_settings(db)
                 if self.strategy:
                     self.strategy.settings = settings_map
+
+                # 2. Rehydrate RiskManager with BTC5M authoritative trades and persistent risk settings
+                if self.risk_manager:
+                    self.risk_manager.trade_model = BTC5MTrade
+                    self.risk_manager.is_btc5m = True
+                    self.risk_manager.max_consecutive_losses = int(settings_map.get("max_consecutive_losses", 5))
+                    self.risk_manager.risk_per_trade = float(settings_map.get("risk_per_trade", 0.02))
+                    self.risk_manager.rehydrate()
                 
                 # 2. Rehydrate trading_active state
                 active_setting = db.query(BTC5MSetting).filter(BTC5MSetting.key == "trading_active").first()

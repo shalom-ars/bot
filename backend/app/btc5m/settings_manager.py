@@ -22,6 +22,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "max_take_profit": "0.95",
     "stop_loss_ratio": "0.50",
     "risk_per_trade": "0.02",
+    "max_consecutive_losses": "5",
 }
 
 TYPED_FIELDS = {
@@ -36,6 +37,7 @@ TYPED_FIELDS = {
     "max_take_profit": float,
     "stop_loss_ratio": float,
     "risk_per_trade": float,
+    "max_consecutive_losses": int,
 }
 
 
@@ -43,6 +45,11 @@ def _cast_val(key: str, val: str) -> Any:
     target_type = TYPED_FIELDS.get(key, str)
     if target_type == bool:
         return str(val).strip().lower() in ("true", "1", "yes", "on")
+    if target_type == int:
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
+            return int(DEFAULT_SETTINGS.get(key, 5))
     if target_type == float:
         try:
             return float(val)
