@@ -20,6 +20,9 @@ _cached_btc_time = 0.0
 
 def _get_live_btc_price():
     global _cached_btc_price, _cached_btc_time
+    if hasattr(btc5m_engine, '_market_states') and btc5m_engine._market_states.get("latest_btc_price"):
+        return btc5m_engine._market_states["latest_btc_price"]
+
     now = time.time()
     if _cached_btc_price is not None and (now - _cached_btc_time) < 0.9:
         return _cached_btc_price
@@ -178,6 +181,8 @@ def reset_btc5m_state(db: Session = Depends(get_db)):
         btc5m_engine.risk_manager.current_exposure = 0.0
         btc5m_engine.risk_manager.unpause()
 
+    _safe_broadcast()
+
     return {"status": "success", "message": "BTC5M state reset to $500 initial virtual capital"}
 
 
@@ -186,6 +191,14 @@ import httpx
 from app.btc5m.engine import btc5m_engine
 from pydantic import BaseModel
 from typing import Optional
+
+def _safe_broadcast():
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        loop.create_task(btc5m_engine.broadcast_status())
+    except Exception:
+        pass
 
 class ToggleTradingRequest(BaseModel):
     active: bool
@@ -228,6 +241,8 @@ def update_btc5m_targeting_settings(req: UpdateSettingsRequest, db: Session = De
     if "trading_active" in updates:
         btc5m_engine.trading_active = bool(updates["trading_active"])
         
+    _safe_broadcast()
+
     return {
         "status": "success",
         "message": "Targeting settings updated and persisted successfully",
@@ -257,6 +272,8 @@ def toggle_trading(req: ToggleTradingRequest, db: Session = Depends(get_db)):
     db.add(audit)
     db.commit()
     
+    _safe_broadcast()
+
     return {"status": "success", "trading_active": btc5m_engine.trading_active}
 
 @router.post("/close_trade")
@@ -315,15 +332,16 @@ def close_btc5m_trade(db: Session = Depends(get_db)):
     db.commit()
     db.refresh(trade)
 
+    _safe_broadcast()
+
     return {
         "status": "success",
         "message": f"Trade {trade.id} closed manually at ${exit_price:.4f}",
         "trade": _format_trade(trade)
     }
 
-@router.get("/status")
-def get_btc5m_status(db: Session = Depends(get_db)):
-    """Returns the current market, next market, and active trade."""
+def build_btc5m_status_payload(db: Session) -> dict:
+    """Builds the comprehensive real-time status payload used by REST and WebSockets."""
     now = datetime.now(timezone.utc)
     # Since DB timestamps might be naive UTC, strip tzinfo for comparison
     now_naive = now.replace(tzinfo=None)
@@ -466,6 +484,11 @@ def get_btc5m_status(db: Session = Depends(get_db)):
         "live_market_analysis": live_market_analysis,
         "targeting_settings": (lambda: __import__('app.btc5m.settings_manager', fromlist=['get_btc5m_settings']).get_btc5m_settings(db))()
     }
+
+@router.get("/status")
+def get_btc5m_status(db: Session = Depends(get_db)):
+    """Returns the current market, next market, and active trade."""
+    return build_btc5m_status_payload(db)
 
 
 @router.get("/skips")

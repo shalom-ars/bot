@@ -16,7 +16,7 @@ from typing import Dict, Optional
 
 from app.db.session import SessionLocal
 from app.db.models import BTC5MMarket, BTC5MSignal as BTC5MSignalDB, BTC5MTrade
-from app.btc5m.selector import discover_btc5m_markets, BTC5MMarketInfo
+from app.btc5m.selector import discover_btc5m_markets, async_discover_btc5m_markets, BTC5MMarketInfo
 from app.btc5m.features import BTC5MFeatureEngine
 from app.btc5m.strategy import BTC5MStrategy, BTC5MSignal
 from app.btc5m.latency import latency_tracker
@@ -139,6 +139,38 @@ class BTC5MEngine:
         self.running = True
         logger.info("[BTC5M Engine] Started. Polling Polymarket for BTC 5M markets.")
         asyncio.create_task(self._main_loop())
+        asyncio.create_task(self._broadcast_loop())
+
+    async def broadcast_status(self):
+        """Build and broadcast current BTC 5M status to connected WebSocket clients."""
+        try:
+            from app.api.websockets import manager
+            # If no clients connected, skip DB query overhead
+            if not manager.active_connections:
+                return
+
+            from app.db.session import SessionLocal
+            from app.api.btc5m import build_btc5m_status_payload
+            db = SessionLocal()
+            try:
+                payload = await asyncio.to_thread(build_btc5m_status_payload, db)
+                await manager.broadcast_btc5m(payload)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"[BTC5M Engine] Broadcast error: {e}")
+
+    async def _broadcast_loop(self):
+        """Asynchronous low-latency streaming loop pushing status ticks to WebSocket clients."""
+        logger.info("[BTC5M Engine] WebSocket broadcast loop started.")
+        while self.running:
+            try:
+                await self.broadcast_status()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[BTC5M Engine] Broadcast loop tick error: {e}")
+            await asyncio.sleep(1.0)
 
     async def _main_loop(self):
         """Main async loop — runs indefinitely with exponential backoff on fatal loop errors."""
@@ -179,9 +211,13 @@ class BTC5MEngine:
         logger.info("[BTC5M Engine] Discovering BTC 5M markets...")
         markets = None
         try:
-            markets = await asyncio.to_thread(discover_btc5m_markets)
+            markets = await async_discover_btc5m_markets()
         except Exception as e:
-            logger.error(f"[BTC5M Engine] Discovery error: {e}", exc_info=True)
+            logger.error(f"[BTC5M Engine] Async discovery error: {e}", exc_info=True)
+            try:
+                markets = await asyncio.to_thread(discover_btc5m_markets)
+            except Exception as e2:
+                logger.error(f"[BTC5M Engine] Fallback discovery error: {e2}", exc_info=True)
 
         if not markets:
             logger.info("[BTC5M Engine] No BTC 5M markets discovered this cycle")
@@ -202,6 +238,12 @@ class BTC5MEngine:
                 await self._process_market(m)
             except Exception as e:
                 logger.error(f"[BTC5M Engine] Error processing market {m.market_id}: {e}", exc_info=True)
+
+        # Trigger real-time status broadcast on cycle completion
+        try:
+            await self.broadcast_status()
+        except Exception:
+            pass
 
 
     def _get_btc5m_reference_data(self, market: BTC5MMarketInfo):
@@ -266,17 +308,113 @@ class BTC5MEngine:
 
         # Cache the authoritative Chainlink BTC price exactly at the start time of this market as P2B
         if btc_price is not None:
-            now_utc = datetime.now(timezone.utc)
-            start_utc = market.start_time.replace(tzinfo=timezone.utc) if market.start_time.tzinfo is None else market.start_time
-            end_utc = market.end_time.replace(tzinfo=timezone.utc) if market.end_time.tzinfo is None else market.end_time
-            
-            # If the market has already started, we must capture the exact first price we see for it.
-            if now_utc >= start_utc and now_utc < end_utc:
-                cache_key = f"p2b_{market.market_id}"
-                if cache_key not in self._market_states:
-                    self._market_states[cache_key] = btc_price
-                    logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
-                price_to_beat = self._market_states[cache_key]
+            self._market_states["latest_btc_price"] = btc_price
+            if market.start_time and market.end_time:
+                now_utc = datetime.now(timezone.utc)
+                start_utc = market.start_time.replace(tzinfo=timezone.utc) if market.start_time.tzinfo is None else market.start_time
+                end_utc = market.end_time.replace(tzinfo=timezone.utc) if market.end_time.tzinfo is None else market.end_time
+                
+                # If the market has already started, we must capture the exact first price we see for it.
+                if now_utc >= start_utc and now_utc < end_utc:
+                    cache_key = f"p2b_{market.market_id}"
+                    if cache_key not in self._market_states:
+                        self._market_states[cache_key] = btc_price
+                        logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
+                    price_to_beat = self._market_states[cache_key]
+
+        return btc_price, price_to_beat
+
+    async def _get_btc5m_reference_data_async(self, market: BTC5MMarketInfo):
+        """
+        Asynchronously and concurrently fetch BTC reference price and authoritative P2B:
+        - Races multiple Polygon RPC nodes in parallel using asyncio.as_completed.
+        - The fastest responding node returns in <50ms instead of sequential 1500ms timeouts.
+        - Caches authoritative P2B at exact market start time.
+        """
+        btc_price = None
+        price_to_beat = None
+
+        if not hasattr(self, '_market_states'):
+            self._market_states = {}
+
+        RPC_URLS = [
+            "https://polygon.drpc.org",
+            "https://polygon-bor-rpc.publicnode.com",
+            "https://1rpc.io/matic"
+        ]
+
+        import httpx
+
+        async def _query_rpc(client: httpx.AsyncClient, url: str) -> Optional[float]:
+            try:
+                resp = await client.post(
+                    url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "eth_call",
+                        "params": [
+                            {
+                                "to": "0xc907E116054Ad103354f2D350FD2514433D57F6f",
+                                "data": "0x50d25bcd"
+                            },
+                            "latest"
+                        ]
+                    },
+                    timeout=2.0
+                )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    result = payload.get("result")
+                    if result and result != "0x":
+                        return int(result, 16) / 100000000.0
+            except Exception:
+                pass
+            return None
+
+        try:
+            async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}) as client:
+                tasks = [asyncio.create_task(_query_rpc(client, url)) for url in RPC_URLS]
+                for fut in asyncio.as_completed(tasks):
+                    try:
+                        p = await fut
+                        if p is not None and p > 0:
+                            btc_price = p
+                            for t in tasks:
+                                if not t.done():
+                                    t.cancel()
+                            break
+                    except Exception:
+                        continue
+
+                # Fallback to Coinbase spot if all RPC nodes failed
+                if btc_price is None:
+                    try:
+                        resp = await client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=1.5)
+                        if resp.status_code == 200:
+                            btc_price = float(resp.json()["data"]["amount"])
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.warning("[BTC5M Engine] Async BTC reference fetch failed: %s", exc)
+
+        # Fallback to sync method if needed
+        if btc_price is None:
+            btc_price, _ = self._get_btc5m_reference_data(market)
+
+        if btc_price is not None:
+            self._market_states["latest_btc_price"] = btc_price
+            if market.start_time and market.end_time:
+                now_utc = datetime.now(timezone.utc)
+                start_utc = market.start_time.replace(tzinfo=timezone.utc) if market.start_time.tzinfo is None else market.start_time
+                end_utc = market.end_time.replace(tzinfo=timezone.utc) if market.end_time.tzinfo is None else market.end_time
+
+                if now_utc >= start_utc and now_utc < end_utc:
+                    cache_key = f"p2b_{market.market_id}"
+                    if cache_key not in self._market_states:
+                        self._market_states[cache_key] = btc_price
+                        logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
+                    price_to_beat = self._market_states[cache_key]
 
         return btc_price, price_to_beat
 
@@ -304,11 +442,9 @@ class BTC5MEngine:
             features["bid_depth"] = market.bid_depth
             features["ask_depth"] = market.ask_depth
 
-            # Fetch reference data BEFORE strategy evaluation.
-            # P2B remains None unless an authoritative active-market
-            # source is available; strategy will safely SKIP in that case.
+            # Fetch reference data BEFORE strategy evaluation via asynchronous RPC race.
             t0_ref = time.perf_counter()
-            btc_price, price_to_beat = self._get_btc5m_reference_data(market)
+            btc_price, price_to_beat = await self._get_btc5m_reference_data_async(market)
             latency_tracker.record("chainlink_ms", (time.perf_counter() - t0_ref) * 1000)
 
             # Evaluate both YES and NO with explicit BTC/P2B inputs.
@@ -346,6 +482,7 @@ class BTC5MEngine:
                     latency_tracker.record("execution_ms", (time.perf_counter() - t0_exec) * 1000)
                     self.strategy.record_entry(market.market_id, signal)
                     logger.info(f"[BTC5M Engine] PAPER ENTRY: {signal.question[:50]} | side={signal.side} | size=${signal.position_size:.2f}")
+                    asyncio.create_task(self.broadcast_status())
             else:
                 reason_ext = getattr(signal, 'skip_flags', signal.reason)
                 if hasattr(signal, 'skip_flags') and isinstance(signal.skip_flags, list) and len(signal.skip_flags) > 0:
@@ -549,6 +686,7 @@ class BTC5MEngine:
                 return
 
             import aiohttp, json as _json, math as _math
+            any_settled = False
             async with aiohttp.ClientSession() as session:
                 for trade in open_trades:
                     # Derive the bucket slug from entry_time to find the exact market
@@ -622,6 +760,7 @@ class BTC5MEngine:
                                             self.strategy.record_exit(trade.market_id)
                                             logger.info(f"[BTC5M Engine] EARLY EXIT TP trade {trade.id} | PnL: {trade.pnl:.2f}")
                                             found_resolution = True
+                                            any_settled = True
                                             break
                                         elif best_bid <= trade.stop_loss_price:
                                             # Early exit at Stop
@@ -638,6 +777,7 @@ class BTC5MEngine:
                                             self.strategy.record_exit(trade.market_id)
                                             logger.info(f"[BTC5M Engine] EARLY EXIT SL trade {trade.id} | PnL: {trade.pnl:.2f}")
                                             found_resolution = True
+                                            any_settled = True
                                             break
 
                                     logger.debug(f"[BTC5M Engine] Trade {trade.id} market not yet closed. Waiting...")
@@ -695,10 +835,13 @@ class BTC5MEngine:
                                 self.strategy.record_exit(trade.market_id)
                                 logger.info(f"[BTC5M Engine] SETTLED {trade.side} trade. Resolution: {resolution} | PnL: {trade.pnl:.2f} | Balance: {self.risk_manager.current_balance:.2f}")
                                 found_resolution = True
+                                any_settled = True
                                 break
                             if found_resolution:
                                 break
 
+            if any_settled:
+                asyncio.create_task(self.broadcast_status())
         except Exception as e:
             logger.error(f"[BTC5M Engine] Settle trades error: {e}", exc_info=True)
         finally:

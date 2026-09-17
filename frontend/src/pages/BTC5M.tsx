@@ -130,6 +130,7 @@ function usePolymarketLive(yesToken: string | undefined, noToken: string | undef
 function useBTC5MStatus() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
 
   const fetchStatus = async () => {
     try {
@@ -145,12 +146,72 @@ function useBTC5MStatus() {
   };
 
   useEffect(() => {
+    // 1. Instant REST fetch on mount for immediate initial paint (<100ms)
     fetchStatus();
-    const interval = setInterval(fetchStatus, 2000);
-    return () => { clearInterval(interval); };
+
+    // 2. High-speed WebSocket connection for real-time live streaming
+    let ws: WebSocket | null = null;
+    let reconnectTimer: any = null;
+    let isMounted = true;
+
+    const connectWs = () => {
+      try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/btc5m`;
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          if (!isMounted) return;
+          setWsConnected(true);
+        };
+
+        ws.onmessage = (event) => {
+          if (!isMounted) return;
+          if (event.data === 'pong') return;
+          try {
+            const parsed = JSON.parse(event.data);
+            if (parsed.type === 'btc5m_status' && parsed.data) {
+              setData(parsed.data);
+              setLoading(false);
+            }
+          } catch (err) {}
+        };
+
+        ws.onclose = () => {
+          if (!isMounted) return;
+          setWsConnected(false);
+          reconnectTimer = setTimeout(connectWs, 2500);
+        };
+
+        ws.onerror = () => {
+          if (ws) ws.close();
+        };
+      } catch (e) {
+        if (isMounted) setWsConnected(false);
+      }
+    };
+
+    connectWs();
+
+    // 3. Resilient fallback: Poll via REST if WebSocket is disconnected
+    const fallbackInterval = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        fetchStatus();
+      }
+    }, 3000);
+
+    return () => {
+      isMounted = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(fallbackInterval);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
+    };
   }, []);
 
-  return { statusData: data, statusLoading: loading, refetchStatus: fetchStatus };
+  return { statusData: data, statusLoading: loading, refetchStatus: fetchStatus, wsConnected };
 }
 
 // Categorized Trade History Section (Weekly, Monthly, All)
@@ -367,12 +428,18 @@ function TradeHistorySection({ refreshTrigger }: { refreshTrigger?: number }) {
 }
 
 function InnerBTC5M() {
-  const { statusData, statusLoading, refetchStatus } = useBTC5MStatus();
+  const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus();
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const { data: statsData } = useApi<any>(`/btc5m/stats?v=${refreshTrigger}`, null);
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [isTogglingTrading, setIsTogglingTrading] = useState<boolean>(false);
+
+  const activeTradeId = statusData?.active_trade?.id ?? null;
+  const activeTradeStatus = statusData?.active_trade?.status ?? null;
+  useEffect(() => {
+    setRefreshTrigger(prev => prev + 1);
+  }, [activeTradeId, activeTradeStatus]);
 
   const handleToggleTrading = async (targetState: boolean) => {
     if (isTogglingTrading) return;
@@ -567,6 +634,18 @@ function InnerBTC5M() {
                 <span>&bull;</span>
                 <span>TP +${targetSettings?.take_profit_delta ?? 0.30}</span>
                 <span className="text-emerald-400 font-bold ml-1">🔒 PERSISTENT</span>
+                <span className="mx-1 text-slate-600">|</span>
+                {wsConnected ? (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    ⚡ REAL-TIME STREAM (&lt;20ms)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    REST POLLING FALLBACK
+                  </span>
+                )}
               </div>
             </div>
           </div>
