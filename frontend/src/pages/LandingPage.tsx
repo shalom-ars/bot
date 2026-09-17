@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Shield, TrendingUp, Activity, Lock, BarChart3, Database } from 'lucide-react';
+import BrandLogo from '../components/BrandLogo';
 
 export default function LandingPage() {
   return (
@@ -8,8 +9,9 @@ export default function LandingPage() {
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-extrabold tracking-tighter text-slate-900">JONANDA</span>
+            <div className="flex items-center gap-2.5">
+              <BrandLogo size={32} />
+              <span className="text-2xl font-extrabold tracking-tighter text-slate-900">JONANDA BOT</span>
             </div>
             <div className="hidden md:flex gap-8 text-sm font-medium text-slate-600">
               <a href="#product" className="hover:text-blue-600 transition-colors">Product</a>
@@ -81,12 +83,13 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="bg-slate-900 text-slate-400 py-12 text-sm border-t border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-2 text-white font-bold text-xl">
-            JONANDA
+          <div className="flex items-center gap-2.5 text-white font-bold text-xl">
+            <BrandLogo size={28} />
+            <span>JONANDA BOT</span>
           </div>
           <div className="text-center md:text-right max-w-lg">
-            <p className="mb-2">Disclaimer: Jonanda is a quantitative research and paper-trading platform. No profitability or investment outcome is guaranteed.</p>
-            <p>&copy; 2026 Jonanda. All rights reserved.</p>
+            <p className="mb-2">Disclaimer: Jonanda Bot is a quantitative research and paper-trading platform. No profitability or investment outcome is guaranteed.</p>
+            <p>&copy; 2026 Jonanda Bot. All rights reserved.</p>
           </div>
         </div>
       </footer>

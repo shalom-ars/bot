@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { ShieldAlert, LogOut } from 'lucide-react';
+import BrandLogo from './BrandLogo';
 
 export default function Layout() {
   const handleLogout = () => {
@@ -16,14 +17,12 @@ export default function Layout() {
       <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 flex justify-between items-center sticky top-0 z-20 shadow-xs">
         {/* Left: Brand Logo & Mode Badge */}
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-base shadow-sm">
-            ⚡
-          </div>
+          <BrandLogo size={34} glow={true} />
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-black text-slate-900 tracking-tight leading-tight">BTC 5M BOT</span>
+              <span className="text-sm font-black text-slate-900 tracking-tight leading-tight">JONANDA BOT</span>
               <span className="hidden sm:inline-block text-[9px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded tracking-wider uppercase">
-                POLYMARKET TERMINAL
+                BTC 5M TERMINAL
               </span>
             </div>
           </div>
