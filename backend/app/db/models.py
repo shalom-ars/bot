@@ -416,6 +416,14 @@ class BTC5MSignal(Base):
     imbalance       = Column(Float, nullable=True)
     ob_pressure     = Column(Float, nullable=True)
     volatility      = Column(Float, nullable=True)
+    yes_score       = Column(Float, nullable=True)
+    no_score        = Column(Float, nullable=True)
+    yes_prob        = Column(Float, nullable=True)
+    no_prob         = Column(Float, nullable=True)
+    predicted_side  = Column(String, nullable=True)
+    gate_results    = Column(String, nullable=True)
+    yes_breakdown   = Column(String, nullable=True)
+    no_breakdown    = Column(String, nullable=True)
     momentum_persistence = Column(Float, nullable=True)
     market_probability   = Column(Float, nullable=True)
     fair_probability     = Column(Float, nullable=True)
@@ -471,6 +479,75 @@ class BTC5MTrade(Base):
     pnl             = Column(Float, nullable=True)
     resolution      = Column(String, nullable=True)   # YES/NO/NONE
 
+    # ══════════════════════════════════════════════════════════════
+    # IMMUTABLE TRADE THESIS FIELDS (WRITE-ONCE AT ENTRY)
+    # ══════════════════════════════════════════════════════════════
+    locked_predicted_side = Column(String, nullable=True)  # "YES" | "NO"
+    locked_direction      = Column(String, nullable=True)  # "YES" | "NO"
+    locked_outcome        = Column(String, nullable=True)  # "UP" | "DOWN"
+    locked_token_id       = Column(String, nullable=True)  # YES or NO token ID
+    execution_side        = Column(String, default="BUY", nullable=True)  # Always "BUY"
+    entry_yes_score       = Column(Float, nullable=True)
+    entry_no_score        = Column(Float, nullable=True)
+    entry_fair_probability= Column(Float, nullable=True)
+    entry_market_probability = Column(Float, nullable=True)
+    entry_net_edge        = Column(Float, nullable=True)
+    entry_planned_rr      = Column(Float, nullable=True)
+    entry_stop_price      = Column(Float, nullable=True)
+    entry_target_price    = Column(Float, nullable=True)
+    prediction_locked_at  = Column(DateTime, nullable=True)
+    prediction_lock_version = Column(String, default="1.0", nullable=True)
+
+
+import logging
+_thesis_logger = logging.getLogger("btc5m.thesis_lock")
+
+# Immutable thesis fields protected from mutation after write-once entry
+LOCKED_TRADE_THESIS_FIELDS = frozenset([
+    "locked_predicted_side",
+    "locked_direction",
+    "locked_outcome",
+    "locked_token_id",
+    "execution_side",
+    "entry_yes_score",
+    "entry_no_score",
+    "entry_fair_probability",
+    "entry_market_probability",
+    "entry_net_edge",
+    "entry_planned_rr",
+    "entry_stop_price",
+    "entry_target_price",
+    "prediction_locked_at",
+    "entry_price",
+    "market_id",
+    "condition_id",
+    "side",
+    "strategy",
+    "model_version"
+])
+
+from sqlalchemy import event, inspect as sa_inspect
+
+@event.listens_for(BTC5MTrade, 'before_update')
+def protect_locked_trade_thesis(mapper, connection, target):
+    """
+    Guarantees that a trade's thesis is strictly WRITE-ONCE and immutable.
+    Any attempt to mutate locked prediction/entry fields is rejected,
+    preserving the original values and logging an audit event.
+    """
+    state = sa_inspect(target)
+    for attr in state.attrs:
+        if attr.key in LOCKED_TRADE_THESIS_FIELDS:
+            history = attr.history
+            if history.has_changes():
+                old_val = history.deleted[0] if history.deleted else None
+                if old_val is not None:
+                    _thesis_logger.warning(
+                        f"[SECURITY/THESIS LOCK] Rejected attempt to mutate immutable field '{attr.key}' "
+                        f"on trade id={target.id} from '{old_val}' to '{history.added[0]}'. Preserving original thesis."
+                    )
+                    setattr(target, attr.key, old_val)
+
 
 class BTC5MSkip(Base):
     """Skipped BTC 5M markets."""
@@ -492,6 +569,10 @@ class BTC5MSkip(Base):
     timestamp       = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
     actual_resolution    = Column(String, nullable=True)
     hypothetical_outcome = Column(String, nullable=True)
+    predicted_side       = Column(String, nullable=True)
+    gate_results         = Column(String, nullable=True)
+    yes_breakdown        = Column(String, nullable=True)
+    no_breakdown         = Column(String, nullable=True)
 
 class BTC5MAudit(Base):
     """Audit log for BTC 5M module."""

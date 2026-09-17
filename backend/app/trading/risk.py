@@ -58,7 +58,11 @@ class RiskManager:
                     if running_balance > self.peak_balance:
                         self.peak_balance = running_balance
                         
-                    # Calculate streak linearly
+            # Calculate streak linearly for today's trading session
+            today_closed = [t for t in all_closed if t.exit_timestamp and t.exit_timestamp >= today_start]
+            streak = 0
+            for t in today_closed:
+                if t.pnl is not None:
                     if t.pnl < 0:
                         streak += 1
                     else:
@@ -111,6 +115,12 @@ class RiskManager:
             
         self.is_paused = False
         self.pause_reason = "Allowed"
+
+    def unpause(self):
+        """Allows manual resume or reset when user starts trading via UI."""
+        self.is_paused = False
+        self.pause_reason = "Allowed"
+        self.consecutive_losses = 0
 
     def get_position_size(self):
         """Deterministic position sizing based on risk per trade limit."""

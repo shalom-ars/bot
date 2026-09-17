@@ -10,7 +10,8 @@ async def run():
         print("Testing Signup Page")
         await page.goto("http://localhost:5173/signup")
         await asyncio.sleep(1)
-        await page.fill('input[type="email"]', 'testuser4@example.com')
+        unique_email = f"testuser_{asyncio.get_event_loop().time()}@example.com"
+        await page.fill('input[type="email"]', unique_email)
         await page.fill('input[type="password"]', 'testpass')
         await page.click('button[type="submit"]')
         await asyncio.sleep(2)

@@ -11,9 +11,10 @@ from app.api.websockets import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.admin import router as admin_router
-from app.db.session import engine, Base
+from app.db.session import engine, Base, ensure_btc5m_schema
 
 Base.metadata.create_all(bind=engine)
+ensure_btc5m_schema(engine)
 
 from app.api.health import router as health_router
 from app.api.markets import router as markets_router
@@ -30,7 +31,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Setup
     Base.metadata.create_all(bind=engine)
-    logger.info("FastAPI lifecycle start. DB created.")
+    ensure_btc5m_schema(engine)
+    logger.info("FastAPI lifecycle start. DB created and BTC5M thesis schema verified.")
     
     from app.config import settings
     if settings.live_trading_enabled or settings.execution_mode == "live":

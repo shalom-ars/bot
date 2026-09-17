@@ -9,8 +9,49 @@ from app.db.session import get_db
 from app.db.models import BTC5MMarket, BTC5MSignal, BTC5MTrade
 from app.api.security import get_current_user
 from datetime import datetime, timezone, timedelta
+from app.btc5m.latency import latency_tracker
+import time
+import httpx
 
 router = APIRouter()
+
+_cached_btc_price = None
+_cached_btc_time = 0.0
+
+def _get_live_btc_price():
+    global _cached_btc_price, _cached_btc_time
+    now = time.time()
+    if _cached_btc_price is not None and (now - _cached_btc_time) < 0.9:
+        return _cached_btc_price
+    
+    price = None
+    rpc_urls = [
+        "https://polygon.drpc.org",
+        "https://polygon-bor-rpc.publicnode.com",
+        "https://1rpc.io/matic"
+    ]
+    for rpc_url in rpc_urls:
+        try:
+            with httpx.Client(timeout=1.2, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                resp = client.post(rpc_url, json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "eth_call",
+                    "params": [{"to": "0xc907E116054Ad103354f2D350FD2514433D57F6f", "data": "0x50d25bcd"}, "latest"]
+                })
+                if resp.status_code == 200:
+                    res_json = resp.json()
+                    if "result" in res_json and res_json["result"] and res_json["result"] != "0x":
+                        price = int(res_json["result"], 16) / 100000000.0
+                        break
+        except Exception:
+            continue
+
+    if price is not None:
+        _cached_btc_price = price
+        _cached_btc_time = now
+        return price
+    return _cached_btc_price
 
 
 @router.get("/markets")
@@ -42,20 +83,32 @@ def get_btc5m_signals(skip: int = 0, limit: int = 100, db: Session = Depends(get
 
 
 @router.get("/trades")
-def get_btc5m_trades(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
-    """BTC 5M paper trades."""
-    trades = db.query(BTC5MTrade).order_by(BTC5MTrade.entry_time.desc()).offset(skip).limit(limit).all()
-    total  = db.query(BTC5MTrade).count()
-    open_  = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").count()
-    closed = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED").count()
+@router.get("/trades/history")
+def get_btc5m_trades(skip: int = 0, limit: int = 100, period: str = "all", db: Session = Depends(get_db)):
+    """BTC 5M paper trades with optional weekly and monthly filtering."""
+    query = db.query(BTC5MTrade)
+    now = datetime.utcnow()
+    
+    if period == "weekly":
+        since = now - timedelta(days=7)
+        query = query.filter(BTC5MTrade.entry_time >= since)
+    elif period == "monthly":
+        since = now - timedelta(days=30)
+        query = query.filter(BTC5MTrade.entry_time >= since)
 
-    closed_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED").all()
+    trades = query.order_by(BTC5MTrade.entry_time.desc()).offset(skip).limit(limit).all()
+    total  = query.count()
+    open_  = query.filter(BTC5MTrade.status == "OPEN").count()
+    closed = query.filter(BTC5MTrade.status == "CLOSED").count()
+
+    closed_trades = query.filter(BTC5MTrade.status == "CLOSED").all()
     realized_pnl = sum((t.pnl or 0) for t in closed_trades)
     wins  = sum(1 for t in closed_trades if (t.pnl or 0) > 0)
     losses = sum(1 for t in closed_trades if (t.pnl or 0) < 0)
     win_rate = (wins / len(closed_trades) * 100) if closed_trades else 0
 
     return {
+        "period": period,
         "total": total,
         "open": open_,
         "closed": closed,
@@ -65,6 +118,67 @@ def get_btc5m_trades(skip: int = 0, limit: int = 50, db: Session = Depends(get_d
         "win_rate": round(win_rate, 2),
         "trades": [_format_trade(t) for t in trades]
     }
+
+
+@router.get("/stats")
+def get_btc5m_stats(db: Session = Depends(get_db)):
+    """Summary statistics for BTC5M paper trading bot."""
+    closed_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED").all()
+    open_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+    total_trades = len(closed_trades) + len(open_trades)
+    
+    realized_pnl = sum((t.pnl or 0.0) for t in closed_trades)
+    wins = sum(1 for t in closed_trades if (t.pnl or 0.0) > 0)
+    losses = sum(1 for t in closed_trades if (t.pnl or 0.0) < 0)
+    win_rate = (wins / len(closed_trades) * 100) if closed_trades else 0.0
+    
+    winning_pnls = [(t.pnl or 0.0) for t in closed_trades if (t.pnl or 0.0) > 0]
+    losing_pnls = [abs(t.pnl or 0.0) for t in closed_trades if (t.pnl or 0.0) < 0]
+    
+    avg_win = (sum(winning_pnls) / len(winning_pnls)) if winning_pnls else 0.0
+    avg_loss = (sum(losing_pnls) / len(losing_pnls)) if losing_pnls else 0.0
+    profit_factor = (sum(winning_pnls) / sum(losing_pnls)) if sum(losing_pnls) > 0 else (1.0 if not losing_pnls else 0.0)
+    
+    initial_balance = 500.0
+    current_balance = initial_balance + realized_pnl
+    
+    return {
+        "initial_balance": initial_balance,
+        "current_balance": round(current_balance, 2),
+        "realized_pnl": round(realized_pnl, 4),
+        "total_trades": total_trades,
+        "open_trades": len(open_trades),
+        "closed_trades": len(closed_trades),
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(win_rate, 2),
+        "avg_winning_trade": round(avg_win, 2),
+        "avg_losing_trade": round(avg_loss, 2),
+        "profit_factor": round(profit_factor, 2),
+        "actual_historical_rr": round(avg_win / avg_loss, 2) if avg_loss > 0 else 1.5,
+        "expectancy": round((win_rate/100 * avg_win) - ((1 - win_rate/100) * avg_loss), 2)
+    }
+
+
+@router.post("/reset")
+def reset_btc5m_state(db: Session = Depends(get_db)):
+    """Completely reset all BTC5M trades, signals, price history, and risk state to $500 fresh virtual balance."""
+    db.query(BTC5MTrade).delete()
+    db.query(BTC5MSignal).delete()
+    from app.db.models import BTC5MSkip, BTC5MPriceHistory
+    db.query(BTC5MSkip).delete()
+    db.query(BTC5MPriceHistory).delete()
+    db.commit()
+
+    if hasattr(btc5m_engine, '_market_states'):
+        btc5m_engine._market_states.clear()
+    if hasattr(btc5m_engine, 'risk_manager') and btc5m_engine.risk_manager:
+        btc5m_engine.risk_manager.daily_pnl = 0.0
+        btc5m_engine.risk_manager.consecutive_losses = 0
+        btc5m_engine.risk_manager.current_exposure = 0.0
+        btc5m_engine.risk_manager.unpause()
+
+    return {"status": "success", "message": "BTC5M state reset to $500 initial virtual capital"}
 
 
 import httpx
@@ -83,6 +197,8 @@ def toggle_trading(req: ToggleTradingRequest, db: Session = Depends(get_db)):
     if req.active:
         if hasattr(btc5m_engine, '_market_states'):
             btc5m_engine._market_states.clear()
+        if hasattr(btc5m_engine, 'risk_manager') and btc5m_engine.risk_manager:
+            btc5m_engine.risk_manager.unpause()
         
     from app.db.models import BTC5MAudit
     audit = BTC5MAudit(
@@ -93,6 +209,68 @@ def toggle_trading(req: ToggleTradingRequest, db: Session = Depends(get_db)):
     db.commit()
     
     return {"status": "success", "trading_active": btc5m_engine.trading_active}
+
+@router.post("/close_trade")
+def close_btc5m_trade(db: Session = Depends(get_db)):
+    """Manually terminate currently open BTC 5M paper trade immediately at the current market price."""
+    trade = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").first()
+    if not trade:
+        return {"status": "error", "message": "No active trade found to close"}
+
+    # Fetch latest available execution price for the trade's side
+    market = db.query(BTC5MMarket).filter(BTC5MMarket.market_id == trade.market_id).first()
+    best_bid = None
+    if market:
+        if trade.side == "BUY" and market.best_bid is not None:
+            best_bid = market.best_bid
+        elif trade.side == "SELL" and market.best_ask is not None:
+            best_bid = 1.0 - market.best_ask
+        elif market.best_bid is not None:
+            best_bid = market.best_bid
+
+    if best_bid is None:
+        from app.db.models import BTC5MPriceHistory
+        last_hist = db.query(BTC5MPriceHistory).filter(
+            BTC5MPriceHistory.market_id == trade.market_id
+        ).order_by(BTC5MPriceHistory.timestamp.desc()).first()
+        if last_hist:
+            if trade.side == "BUY" and last_hist.best_bid is not None:
+                best_bid = last_hist.best_bid
+            elif trade.side == "SELL" and last_hist.best_ask is not None:
+                best_bid = 1.0 - last_hist.best_ask
+
+    # Fallback to entry_price if no orderbook depth exists
+    exit_price = best_bid if best_bid is not None else trade.entry_price
+    pnl = (exit_price - trade.entry_price) * trade.quantity
+
+    trade.status = "CLOSED"
+    trade.exit_price = round(exit_price, 4)
+    trade.exit_time = datetime.utcnow()
+    trade.exit_reason = "MANUAL_CLOSE"
+    trade.resolution = "MANUAL"
+    trade.pnl = round(pnl, 4)
+
+    # Release engine strategy state and risk manager exposure
+    if hasattr(btc5m_engine, 'strategy') and btc5m_engine.strategy:
+        btc5m_engine.strategy.record_exit(trade.market_id)
+    if hasattr(btc5m_engine, 'risk_manager') and btc5m_engine.risk_manager:
+        btc5m_engine.risk_manager.record_trade_result(trade.pnl)
+        btc5m_engine.risk_manager.current_exposure = max(0.0, btc5m_engine.risk_manager.current_exposure - trade.position_size)
+
+    from app.db.models import BTC5MAudit
+    audit = BTC5MAudit(
+        action="MANUAL_CLOSE",
+        details=f"Trade {trade.id} ({trade.side} {trade.locked_predicted_side}) closed manually at ${exit_price:.4f} with PnL: ${pnl:.4f}"
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(trade)
+
+    return {
+        "status": "success",
+        "message": f"Trade {trade.id} closed manually at ${exit_price:.4f}",
+        "trade": _format_trade(trade)
+    }
 
 @router.get("/status")
 def get_btc5m_status(db: Session = Depends(get_db)):
@@ -148,55 +326,95 @@ def get_btc5m_status(db: Session = Depends(get_db)):
                 open_trade_dict["unrealized_pnl"] = None
                 open_trade_dict["pnl_pct"] = None
 
-    import httpx
-    # Fetch Chainlink Price
-    btc_price = None
-    try:
-        with httpx.Client(timeout=3.0) as client:
-            resp = client.post("https://polygon-bor-rpc.publicnode.com", json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "eth_call",
-                "params": [{"to": "0xc907E116054Ad103354f2D350FD2514433D57F6f", "data": "0x50d25bcd"}, "latest"]
-            })
-            if resp.status_code == 200:
-                res_json = resp.json()
-                if "result" in res_json and res_json["result"] != "0x":
-                    hex_answer = res_json["result"]
-                    btc_price = int(hex_answer, 16) / 100000000.0
-    except Exception as e:
-        pass
+    btc_price = _get_live_btc_price()
 
     # Fetch Price-to-Beat.
-    #
-    # IMPORTANT:
-    # Do NOT use the previous market's finalPrice as the active
-    # market's Price-to-Beat. finalPrice is settlement data.
-    #
-    # The active BTC5M Gamma payload does not reliably expose the
-    # opening Price-to-Beat field. Until an authoritative active
-    # reference value is available, keep this unavailable so the
-    # strategy safely SKIPs rather than trading on fabricated data.
+    # We now fetch this exactly at market start time from the Chainlink feed,
+    # as cached by the engine in _market_states.
     price_to_beat = None
+    if current_market:
+        cache_key = f"p2b_{current_market.market_id}"
+        if hasattr(btc5m_engine, '_market_states') and cache_key in btc5m_engine._market_states:
+            price_to_beat = btc5m_engine._market_states[cache_key]
 
     # Get latest signal scores for current market
     yes_score = 0
     no_score = 0
-    latest_sig = db.query(BTC5MSignal).order_by(BTC5MSignal.timestamp.desc()).first()
-    if latest_sig and current_market and latest_sig.market_id == current_market.market_id:
+    latest_sig = None
+    if current_market:
+        latest_sig = db.query(BTC5MSignal).filter(BTC5MSignal.market_id == current_market.market_id).order_by(BTC5MSignal.timestamp.desc()).first()
+    if not latest_sig and next_market:
+        latest_sig = db.query(BTC5MSignal).filter(BTC5MSignal.market_id == next_market.market_id).order_by(BTC5MSignal.timestamp.desc()).first()
+
+    if latest_sig:
         yes_score = getattr(latest_sig, "yes_score", 0.0)
         no_score = getattr(latest_sig, "no_score", 0.0)
+        
+        # If the signal is a SKIP, fetch scores from btc5m_skips since signals DB doesn't have score columns
+        if latest_sig.state == "SKIP":
+            from app.db.models import BTC5MSkip
+            skip_rec = db.query(BTC5MSkip).filter(BTC5MSkip.market_id == latest_sig.market_id).order_by(BTC5MSkip.timestamp.desc()).first()
+            if skip_rec:
+                yes_score = skip_rec.yes_score or 0.0
+                no_score = skip_rec.no_score or 0.0
+                setattr(latest_sig, "yes_prob", skip_rec.yes_prob)
+                setattr(latest_sig, "no_prob", skip_rec.no_prob)
+                setattr(latest_sig, "predicted_side", skip_rec.predicted_side)
+                setattr(latest_sig, "gate_results", skip_rec.gate_results)
+                setattr(latest_sig, "yes_breakdown", skip_rec.yes_breakdown)
+                setattr(latest_sig, "no_breakdown", skip_rec.no_breakdown)
+
+    analysis = None
+    if latest_sig:
+        analysis = {
+            "state": latest_sig.state,
+            "reason": latest_sig.reason,
+            "fair_probability": latest_sig.fair_probability,
+            "net_edge": latest_sig.net_edge,
+            "momentum": getattr(latest_sig, "momentum", None),
+            "volatility": getattr(latest_sig, "volatility", None),
+            "yes_score": yes_score,
+            "no_score": no_score,
+            "yes_prob": getattr(latest_sig, "yes_prob", None),
+            "no_prob": getattr(latest_sig, "no_prob", None),
+            "side": getattr(latest_sig, "side", "NONE"),
+            "predicted_side": getattr(latest_sig, "predicted_side", "NONE"),
+            "gate_results": getattr(latest_sig, "gate_results", "{}"),
+            "yes_breakdown": getattr(latest_sig, "yes_breakdown", "{}"),
+            "no_breakdown": getattr(latest_sig, "no_breakdown", "{}")
+        }
+
+    live_market_analysis = analysis.copy() if analysis else None
+
+    latency_summary = latency_tracker.get_summary()
+    is_degraded = latency_tracker.is_degraded()
+
+    health = {
+        "backend": "HEALTHY",
+        "btc5m_engine": "RUNNING" if getattr(btc5m_engine, "running", False) else "STOPPED",
+        "clob": "CONNECTED" if current_market and current_market.best_bid is not None else "DISCONNECTED",
+        "chainlink": "FRESH" if btc_price is not None else "STALE",
+        "database": "HEALTHY",
+        "p2b": "VALID" if price_to_beat is not None else "MISSING",
+        "latency_status": "DEGRADED" if is_degraded else "NORMAL",
+    }
 
     return {
         "trading_active": btc5m_engine.trading_active,
+        "health": health,
+        "latency": latency_summary,
         "current_market": _format_market(current_market) if current_market else None,
         "next_market": _format_market(next_market) if next_market else None,
         "open_trade": open_trade_dict,
+        "active_trade": open_trade_dict,
         "chainlink_btc_usd": btc_price,
         "price_to_beat": price_to_beat,
+        "direction": "UP" if btc_price and price_to_beat and btc_price > price_to_beat else ("DOWN" if btc_price and price_to_beat and btc_price < price_to_beat else "NEUTRAL"),
         "yes_score": yes_score,
         "no_score": no_score,
-        "latest_signal": latest_sig.state if latest_sig else None
+        "latest_signal": latest_sig.state if latest_sig else None,
+        "analysis": analysis,
+        "live_market_analysis": live_market_analysis
     }
 
 
@@ -282,7 +500,9 @@ def get_btc5m_stats(db: Session = Depends(get_db)):
             "min_depth_usd": 50.0,
             "min_liquidity_usd": 100.0,
             "min_time_remaining_sec": 60,
-            "min_net_edge": 0.03,
+            "min_net_edge": 0.015,
+            "min_rr": 1.5,
+            "min_entry_score": 60.0,
             "risk_per_trade_pct": 2.0,
             "model_version": "rule_based_btc5m",
         }
@@ -383,6 +603,23 @@ def _format_trade(t: BTC5MTrade) -> dict:
         "exit_time": t.exit_time.isoformat() if t.exit_time else None,
         "pnl": t.pnl,
         "resolution": t.resolution,
+        # Immutable locked thesis fields
+        "locked_predicted_side": getattr(t, "locked_predicted_side", None) or ("YES" if t.side == "BUY" else "NO"),
+        "locked_direction": getattr(t, "locked_direction", None) or ("UP" if t.side == "BUY" else "DOWN"),
+        "locked_outcome": getattr(t, "locked_outcome", None) or ("YES" if t.side == "BUY" else "NO"),
+        "locked_token_id": getattr(t, "locked_token_id", None),
+        "execution_side": getattr(t, "execution_side", None) or t.side,
+        "entry_yes_score": getattr(t, "entry_yes_score", None),
+        "entry_no_score": getattr(t, "entry_no_score", None),
+        "entry_fair_probability": getattr(t, "entry_fair_probability", None),
+        "entry_market_probability": getattr(t, "entry_market_probability", None),
+        "entry_net_edge": getattr(t, "entry_net_edge", None) or t.net_edge,
+        "entry_planned_rr": getattr(t, "entry_planned_rr", None) or t.planned_rr,
+        "entry_stop_price": getattr(t, "entry_stop_price", None) or t.stop_loss_price,
+        "entry_target_price": getattr(t, "entry_target_price", None) or t.take_profit_price,
+        "prediction_locked_at": t.prediction_locked_at.isoformat() if getattr(t, "prediction_locked_at", None) else (t.entry_time.isoformat() if t.entry_time else None),
+        "prediction_lock_version": getattr(t, "prediction_lock_version", 1),
+        "is_thesis_locked": True,
     }
 
 @router.get("/chart")
@@ -400,3 +637,28 @@ def get_btc5m_chart(market_id: str, db: Session = Depends(get_db)):
             "yes_ask": h.best_ask
         })
     return {"history": data}
+
+
+@router.get("/candles")
+def get_btc_candles(limit: int = 30):
+    """Returns real-time 1-minute BTC OHLCV candles."""
+    try:
+        with httpx.Client(timeout=4.0) as client:
+            resp = client.get(f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit={limit}")
+            if resp.status_code == 200:
+                raw = resp.json()
+                candles = []
+                for k in raw:
+                    candles.append({
+                        "timestamp": k[0],
+                        "open": float(k[1]),
+                        "high": float(k[2]),
+                        "low": float(k[3]),
+                        "close": float(k[4]),
+                        "volume": float(k[5])
+                    })
+                return {"candles": candles}
+    except Exception:
+        pass
+    return {"candles": []}
+

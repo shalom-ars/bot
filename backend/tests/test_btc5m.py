@@ -62,7 +62,7 @@ def make_strategy(balance=500.0) -> BTC5MStrategy:
     return BTC5MStrategy(risk_manager=mock_rm)
 
 
-def evaluate(strat, features_override=None, market_id="test_market_001", balance=500.0):
+def evaluate(strat, features_override=None, market_id="test_market_001", balance=500.0, btc_price=60100.0, price_to_beat=60000.0):
     features = make_features(**(features_override or {}))
     now = datetime.now(timezone.utc)
     return strat.evaluate(
@@ -73,6 +73,8 @@ def evaluate(strat, features_override=None, market_id="test_market_001", balance
         no_token_id="no_token_001",
         features=features,
         orderbook_timestamp=now,
+        btc_price=btc_price,
+        price_to_beat=price_to_beat,
         current_balance=balance,
     )
 

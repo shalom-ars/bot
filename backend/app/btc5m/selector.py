@@ -64,9 +64,7 @@ def _is_btc_market(question: str) -> bool:
     if not question:
         return False
     q = question.lower()
-    has_btc = any(kw in q for kw in BTC_KEYWORDS)
-    has_up_down = "up or down" in q or "5m" in q or "5-min" in q
-    return has_btc and has_up_down
+    return any(kw in q for kw in BTC_KEYWORDS)
 
 
 def _parse_utc(s: Optional[str]) -> Optional[datetime]:
@@ -103,6 +101,9 @@ def discover_btc5m_markets() -> List[BTC5MMarketInfo]:
     Retrieve the CURRENT rolling Polymarket "BTC Up or Down 5m" markets directly.
     Constructs the exact slug using the 5-minute Unix timestamp buckets.
     """
+    import time
+    from app.btc5m.latency import latency_tracker
+    t_start = time.perf_counter()
     now = datetime.now(timezone.utc)
     btc_candidates = []
     
@@ -189,7 +190,9 @@ def discover_btc5m_markets() -> List[BTC5MMarketInfo]:
             all_token_ids.append(c["no_token_id"])
 
     payload = json.dumps([{"token_id": t} for t in all_token_ids]).encode("utf-8")
+    t_clob = time.perf_counter()
     books_data = _fetch_json(f"{CLOB_API}/books", method="POST", payload=payload)
+    latency_tracker.record("clob_ms", (time.perf_counter() - t_clob) * 1000)
 
     clob_map: Dict[str, dict] = {}
     if books_data and isinstance(books_data, list):
@@ -279,4 +282,5 @@ def discover_btc5m_markets() -> List[BTC5MMarketInfo]:
 
     valid_count = sum(1 for r in results if r.is_valid)
     logger.info(f"[BTC5M Selector] {valid_count}/{len(results)} markets passed validation")
+    latency_tracker.record("market_discovery_ms", (time.perf_counter() - t_start) * 1000)
     return results

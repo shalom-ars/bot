@@ -1,107 +1,79 @@
 import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
-import { RefreshCw, Clock, BookOpen, Shield } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { 
+  RefreshCw, Clock, Shield, TrendingUp, 
+  Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle 
+} from 'lucide-react';
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
   constructor(props: any) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error: any) { return { hasError: true, error }; }
   render() {
-    if (this.state.hasError) return <div className="p-8 bg-red-50 text-red-900 border border-red-200 rounded-xl m-8"><h1 className="text-2xl font-bold mb-4">React Crashed</h1><pre className="whitespace-pre-wrap font-mono text-xs">{this.state.error?.toString() + '\n' + this.state.error?.stack}</pre></div>;
+    if (this.state.hasError) return (
+      <div className="p-8 bg-red-50 text-red-900 border border-red-200 rounded-xl m-8">
+        <h1 className="text-2xl font-bold mb-4">React Error Boundary</h1>
+        <pre className="whitespace-pre-wrap font-mono text-xs">{this.state.error?.toString() + '\n' + this.state.error?.stack}</pre>
+      </div>
+    );
     return this.props.children;
   }
 }
 
 function fmt4(v: number | null | undefined) { return v != null ? v.toFixed(4) : '—'; }
-function fmtPct(v: number | null | undefined) { return v != null ? `${v.toFixed(2)}%` : '—'; }
+function fmtPct(v: number | null | undefined) { return v != null ? `${v.toFixed(2)}%` : '0.00%'; }
 function fmtUsd(v: number | null | undefined) {
-  if (v == null) return '—';
+  if (v == null) return '$0.00';
   return (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2);
 }
 function fmtCurrency(v: number | null | undefined) {
-  if (v == null) return '—';
+  if (v == null) return '$0.00';
   return '$' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  } catch (e) {
+    return iso;
+  }
 }
 
 function LoadingState() {
   return (
-    <div className="flex justify-center items-center h-64 bg-white rounded-xl border border-slate-200">
+    <div className="flex justify-center items-center h-64 bg-white rounded-2xl border border-slate-200 shadow-xs">
       <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
     </div>
   );
 }
 
-// Stats Components
-function StatsHeader({ data, tradeUnrealized }: { data: any, tradeUnrealized: number }) {
-    if (!data) return null;
-    const total_pnl = data.realized_pnl + tradeUnrealized;
-    const stats = [
-      { label: 'TOTAL TRADES', value: data.total_trades ?? 0 },
-      { label: 'OPEN TRADES', value: data.open_trades ?? 0 },
-      { label: 'CLOSED TRADES', value: data.closed_trades ?? 0 },
-      { label: 'WINS', value: data.wins ?? 0 },
-      { label: 'LOSSES', value: data.losses ?? 0 },
-      { label: 'WIN RATE', value: data.closed_trades > 0 ? fmtPct(data.win_rate) : '—' },
-      { label: 'AVG WIN', value: '+' + fmtUsd(Math.abs(data.avg_winning_trade)).replace('+','').replace('-',''), isString: true },
-      { label: 'AVG LOSS', value: '-' + fmtUsd(Math.abs(data.avg_losing_trade)).replace('+','').replace('-',''), isString: true },
-      { label: 'ACTUAL R:R', value: data.actual_historical_rr ? `1:${data.actual_historical_rr.toFixed(2)}` : '—', isString: true },
-      { label: 'PROFIT FACTOR', value: data.profit_factor ? data.profit_factor.toFixed(2) : '—', isString: true },
-      { label: 'EXPECTANCY', value: fmtUsd(data.expectancy), isString: true },
-      { label: 'TOTAL P&L', value: fmtUsd(total_pnl), isString: true },
-    ];
-    return (
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-3 mb-6">
-        {stats.map((s, i) => (
-            <div key={i} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">{s.label}</span>
-              <span className={`text-lg font-black tracking-tight ${s.isString ? (s.value.toString().startsWith('-') ? 'text-rose-600' : (s.value.toString().startsWith('+') ? 'text-emerald-600' : 'text-slate-800')) : 'text-slate-800'}`}>
-                {s.value}
-              </span>
-            </div>
-        ))}
-      </div>
-    );
-}
-
-// Chainlink RPC Hook for BTC Price
+// Real-Time BTC Price Hook: Authoritative Polygon Chainlink Oracle feed via backend
 function useChainlinkLive(currentMarketStartTime: string | undefined, backendBtcPrice: number | null, backendPriceToBeat: number | null) {
-  const [btcChartData, setBtcChartData] = useState<any[]>([]);
+  const [liveBtc, setLiveBtc] = useState<number | null>(backendBtcPrice);
   const [lastUpdate, setLastUpdate] = useState<number>(Date.now());
 
   useEffect(() => {
-    setBtcChartData([]);
-  }, [currentMarketStartTime]);
-
-  useEffect(() => {
     if (backendBtcPrice !== null && backendBtcPrice !== undefined) {
-      const t = setInterval(() => {
-        setLastUpdate(Date.now());
-        setBtcChartData(old => {
-          const now = new Date().toLocaleTimeString();
-          const last = old[old.length - 1];
-          if (last && last.time === now) {
-              const updatedLast = { ...last, price: backendBtcPrice };
-              const newOld = [...old];
-              newOld[newOld.length - 1] = updatedLast;
-              return newOld;
-          }
-          return [...old.slice(-60), { time: now, price: backendBtcPrice }];
-        });
-      }, 1000);
-      return () => clearInterval(t);
+      setLiveBtc(backendBtcPrice);
+      setLastUpdate(Date.now());
     }
-  }, [backendBtcPrice]);
+  }, [backendBtcPrice, currentMarketStartTime]);
 
-  return { btcPrice: backendBtcPrice, priceToBeat: backendPriceToBeat, btcChartData, lastUpdate };
+  return { btcPrice: liveBtc || backendBtcPrice, priceToBeat: backendPriceToBeat, lastUpdate };
 }
 
 // Polymarket CLOB WebSocket Hook
 function usePolymarketLive(yesToken: string | undefined, noToken: string | undefined) {
   const [livePrices, setLivePrices] = useState<{ yes: number | null, no: number | null, suspended: boolean }>({ yes: null, no: null, suspended: false });
-  const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
-    setChartData([]);
     setLivePrices({ yes: null, no: null, suspended: false });
     if (!yesToken) return;
 
@@ -137,18 +109,6 @@ function usePolymarketLive(yesToken: string | undefined, noToken: string | undef
               const yes = updatedYes;
               const no = updatedNo;
               const suspended = (yes === null || yes === 0 || no === null || no === 0);
-              setChartData(old => {
-                const now = new Date().toLocaleTimeString();
-                const last = old[old.length - 1];
-                if (last && last.time === now) {
-                   const updatedLast = { ...last, YES: yes, NO: no };
-                   const newOld = [...old];
-                   newOld[newOld.length - 1] = updatedLast;
-                   return newOld;
-                }
-                const next = [...old, { time: now, YES: yes, NO: no }];
-                return next.slice(-60);
-              });
               return { yes, no, suspended };
             }
             return prev;
@@ -159,77 +119,302 @@ function usePolymarketLive(yesToken: string | undefined, noToken: string | undef
     };
     connect();
     return () => {
-      clearInterval(keepAlive);
       if (ws) ws.close();
+      if (keepAlive) clearInterval(keepAlive);
     };
   }, [yesToken, noToken]);
-  return { livePrices, probChartData: chartData };
-}
 
-function BtcChart({ data, p2b }: { data: any[], p2b: number | null }) {
-  if (!data || data.length === 0) return <div className="text-slate-400 text-xs text-center py-4">Waiting for Chainlink feed...</div>;
-  const minPrice = Math.min(...data.map(d => d.price));
-  const maxPrice = Math.max(...data.map(d => d.price));
-  const domainMin = p2b ? Math.min(minPrice, p2b) - 10 : minPrice - 10;
-  const domainMax = p2b ? Math.max(maxPrice, p2b) + 10 : maxPrice + 10;
-  return (
-    <div className="h-48 w-full mt-2">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-          <XAxis dataKey="time" hide />
-          <YAxis domain={[domainMin, domainMax]} tick={{ fontSize: 10, fill: '#94a3b8' }} tickCount={5} tickFormatter={(v) => '$'+v.toFixed(0)} />
-          <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} formatter={(val: any) => '$' + Number(val).toFixed(2)} />
-          {p2b && <ReferenceLine y={p2b} stroke="#fbbf24" strokeDasharray="3 3" label={{ position: 'top', value: 'Price to Beat', fill: '#fbbf24', fontSize: 10 }} />}
-          <Line type="monotone" dataKey="price" name="BTC/USD" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function ProbChart({ data }: { data: any[] }) {
-  if (!data || data.length === 0) return <div className="text-slate-400 text-xs text-center py-4">Waiting for live CLOB stream...</div>;
-  return (
-    <div className="h-40 w-full mt-2">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-          <XAxis dataKey="time" hide />
-          <YAxis domain={[0, 1]} tick={{ fontSize: 10, fill: '#94a3b8' }} tickCount={5} />
-          <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
-          <ReferenceLine y={0.5} stroke="#cbd5e1" strokeDasharray="3 3" />
-          <Line type="stepAfter" dataKey="YES" name="YES (UP) Prob" stroke="#10b981" strokeWidth={2} dot={false} isAnimationActive={false} />
-          <Line type="stepAfter" dataKey="NO" name="NO (DOWN) Prob" stroke="#ef4444" strokeWidth={2} dot={false} isAnimationActive={false} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
+  return { livePrices };
 }
 
 function useBTC5MStatus() {
-  const [data, setData] = useState<any>({ current_market: null, next_market: null, open_trade: null });
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let mounted = true;
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch('http://127.0.0.1:8000/api/btc5m/status');
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/btc5m/status');
+      if (res.ok) {
         const json = await res.json();
-        if (mounted) { setData(json); setLoading(false); }
-      } catch (e) {
-        if (mounted) setLoading(false);
+        setData(json);
+        setLoading(false);
       }
-    };
+    } catch (e) {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchStatus();
-    const timer = setInterval(fetchStatus, 1000);
-    return () => { mounted = false; clearInterval(timer); };
+    const interval = setInterval(fetchStatus, 2000);
+    return () => { clearInterval(interval); };
   }, []);
-  return { statusData: data, statusLoading: loading };
+
+  return { statusData: data, statusLoading: loading, refetchStatus: fetchStatus };
+}
+
+// Categorized Trade History Section (Weekly, Monthly, All)
+function TradeHistorySection({ refreshTrigger }: { refreshTrigger?: number }) {
+  const [period, setPeriod] = useState<'all' | 'weekly' | 'monthly'>('all');
+  const [historyData, setHistoryData] = useState<any>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  const fetchTrades = async () => {
+    try {
+      const res = await fetch(`/api/btc5m/trades?period=${period}`);
+      if (res.ok) {
+        const json = await res.json();
+        setHistoryData(json);
+        setLoading(false);
+      }
+    } catch (e) {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTrades();
+    const interval = setInterval(fetchTrades, 3000);
+    return () => { clearInterval(interval); };
+  }, [period, refreshTrigger]);
+
+  const trades = historyData?.trades || [];
+  const total = historyData?.total ?? 0;
+  const wins = historyData?.wins ?? 0;
+  const losses = historyData?.losses ?? 0;
+  const winRate = historyData?.win_rate ?? 0.0;
+  const realizedPnl = historyData?.realized_pnl ?? 0.0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
+      {/* Header and Filter Tabs */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+            <History className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <span>TRADE AUDIT LOG & SETTLEMENT HISTORY</span>
+              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
+                {total} Records
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              Categorized weekly & monthly records with entry/exit snapshots and locked execution details.
+            </p>
+          </div>
+        </div>
+
+        {/* Filter Tabs */}
+        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <button
+            onClick={() => setPeriod('all')}
+            className={`px-3 py-1 rounded-lg text-xs font-black flex items-center gap-1 transition-all ${
+              period === 'all'
+                ? 'bg-white text-blue-600 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            ALL TRADES
+          </button>
+          <button
+            onClick={() => setPeriod('weekly')}
+            className={`px-3 py-1 rounded-lg text-xs font-black flex items-center gap-1 transition-all ${
+              period === 'weekly'
+                ? 'bg-white text-blue-600 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Calendar className="w-3 h-3" />
+            THIS WEEK
+          </button>
+          <button
+            onClick={() => setPeriod('monthly')}
+            className={`px-3 py-1 rounded-lg text-xs font-black flex items-center gap-1 transition-all ${
+              period === 'monthly'
+                ? 'bg-white text-blue-600 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Calendar className="w-3 h-3" />
+            THIS MONTH
+          </button>
+        </div>
+      </div>
+
+      {/* Summary Badges for the selected period */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            {period === 'all' ? 'All Records' : period === 'weekly' ? 'Weekly Volume' : 'Monthly Volume'}
+          </span>
+          <span className="text-base font-black text-slate-900 font-mono tracking-tight">
+            {total} {total === 1 ? 'Trade' : 'Trades'}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Win Rate ({period})
+          </span>
+          <span className="text-base font-black text-slate-900 font-mono tracking-tight">
+            {fmtPct(winRate)}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Wins / Losses
+          </span>
+          <span className="text-base font-black text-slate-900 font-mono tracking-tight">
+            <span className="text-emerald-600">{wins}W</span> - <span className="text-rose-600">{losses}L</span>
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Realized P&L ({period})
+          </span>
+          <span className={`text-base font-black font-mono tracking-tight ${realizedPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {fmtUsd(realizedPnl)}
+          </span>
+        </div>
+      </div>
+
+      {/* Trades Table */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full text-left border-collapse min-w-[700px]">
+          <thead>
+            <tr className="bg-slate-50/80 border-b border-slate-200 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+              <th className="py-2 px-3">Entry Time (UTC)</th>
+              <th className="py-2 px-3">Direction (Locked)</th>
+              <th className="py-2 px-3">Entry Price</th>
+              <th className="py-2 px-3">Exit Price</th>
+              <th className="py-2 px-3">Position Size</th>
+              <th className="py-2 px-3">Realized P&L</th>
+              <th className="py-2 px-3">Result</th>
+              <th className="py-2 px-3">Settlement Details</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-xs font-mono">
+            {trades.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-6 text-center text-slate-400 font-sans text-xs">
+                  {loading ? 'Loading trade records...' : `No paper trades recorded for this ${period} period yet.`}
+                </td>
+              </tr>
+            ) : (
+              trades.map((t: any) => {
+                const isBuyYes = t.locked_predicted_side ? t.locked_predicted_side === 'YES' : t.side === 'BUY';
+                const isWin = (t.pnl || 0) > 0;
+                const isOpen = t.status === 'OPEN';
+
+                return (
+                  <tr key={t.id} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="py-2 px-3 text-slate-600 whitespace-nowrap text-[11px]">
+                      {fmtDate(t.entry_time)}
+                    </td>
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-black text-[10px] ${
+                        isBuyYes ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                      }`}>
+                        <span>🔒</span> {isBuyYes ? 'BUY YES (UP)' : 'BUY NO (DOWN)'}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-slate-800 font-bold whitespace-nowrap">
+                      ${fmt4(t.entry_price)}
+                    </td>
+                    <td className="py-2 px-3 text-slate-800 font-bold whitespace-nowrap">
+                      {t.exit_price != null ? `$${fmt4(t.exit_price)}` : '—'}
+                    </td>
+                    <td className="py-2 px-3 text-slate-800 font-bold whitespace-nowrap">
+                      ${fmt4(t.position_size)}
+                    </td>
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      {isOpen ? (
+                        <span className="text-blue-600 font-bold text-xs">IN PROGRESS</span>
+                      ) : (
+                        <span className={`font-black text-xs ${isWin ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {fmtUsd(t.pnl)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      {isOpen ? (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200 animate-pulse">
+                          OPEN
+                        </span>
+                      ) : isWin ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <CheckCircle className="w-2.5 h-2.5 text-emerald-600" /> WIN
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-300">
+                          <XCircle className="w-2.5 h-2.5 text-rose-600" /> LOSS
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-slate-500 font-sans text-[11px] truncate max-w-[200px]">
+                      {t.exit_reason || t.resolution || (isOpen ? 'Awaiting candle expiry' : 'Completed')}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function InnerBTC5M() {
-  const { statusData, statusLoading } = useBTC5MStatus();
-  const { data: statsData } = useApi<any>('/btc5m/stats', null);
-  const { data: tradesData } = useApi<any>('/btc5m/trades?limit=100', null);
+  const { statusData, statusLoading, refetchStatus } = useBTC5MStatus();
+  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
+  const { data: statsData } = useApi<any>(`/btc5m/stats?v=${refreshTrigger}`, null);
+  const [isClosing, setIsClosing] = useState<boolean>(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  const [isTogglingTrading, setIsTogglingTrading] = useState<boolean>(false);
+
+  const handleToggleTrading = async (targetState: boolean) => {
+    if (isTogglingTrading) return;
+    setIsTogglingTrading(true);
+    try {
+      const res = await fetch('/api/btc5m/toggle_trading', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: targetState })
+      });
+      if (res.ok) {
+        refetchStatus();
+      }
+    } catch (err) {
+      console.error('Failed to toggle trading status:', err);
+    } finally {
+      setIsTogglingTrading(false);
+    }
+  };
+
+  const handleCloseTrade = async () => {
+    if (isClosing) return;
+    setIsClosing(true);
+    setCloseError(null);
+    try {
+      const res = await fetch('/api/btc5m/close_trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const json = await res.json();
+      if (res.ok && json.status === 'success') {
+        refetchStatus();
+        setRefreshTrigger(prev => prev + 1);
+      } else {
+        setCloseError(json?.message || 'Failed to close trade');
+      }
+    } catch (err: any) {
+      setCloseError(err?.message || 'Error closing trade');
+    } finally {
+      setIsClosing(false);
+    }
+  };
   
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -238,53 +423,83 @@ function InnerBTC5M() {
   }, []);
 
   const current = statusData?.current_market;
-  const next = statusData?.next_market;
-  const trade = statusData?.open_trade;
+  const trade = statusData?.active_trade || statusData?.open_trade;
   
-  const { btcPrice, priceToBeat, btcChartData, lastUpdate } = useChainlinkLive(current?.start_time, statusData?.chainlink_btc_usd, statusData?.price_to_beat);
-  const { livePrices, probChartData } = usePolymarketLive(current?.yes_token_id, current?.no_token_id);
+  const { btcPrice, priceToBeat } = useChainlinkLive(current?.start_time, statusData?.chainlink_btc_usd, statusData?.price_to_beat);
+  const { livePrices } = usePolymarketLive(current?.yes_token_id, current?.no_token_id);
 
-  // Hooks must always be called before any early returns
-  const [isToggling, setIsToggling] = useState(false);
+  if (statusLoading) return <div className="p-6"><LoadingState /></div>;
 
-  const toggleTrading = async (targetActive: boolean) => {
-    if (isToggling) return;
-    setIsToggling(true);
-    try {
-      await fetch('http://127.0.0.1:8000/api/btc5m/toggle_trading', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: targetActive })
-      });
-      window.location.reload();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsToggling(false);
-    }
-  };
-
-  if (statusLoading) return <div className="p-12"><LoadingState /></div>;
-
-  let countdownDisplay = 'RESOLVING...';
+  let countdownDisplay = '00:00';
+  let countdownSeconds = 0;
+  let progressPct = 0;
   if (current?.end_time) {
-    const remaining = Math.floor((new Date(current.end_time + "Z").getTime() - now) / 1000);
-    if (remaining > 0) {
-      const m = Math.floor(remaining / 60);
-      const s = Math.floor(remaining % 60);
-      countdownDisplay = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
+    const endMs = new Date(current.end_time.endsWith('Z') ? current.end_time : current.end_time + 'Z').getTime();
+    const startMs = current.start_time ? new Date(current.start_time.endsWith('Z') ? current.start_time : current.start_time + 'Z').getTime() : (endMs - 300000);
+    const totalDuration = Math.max(1, (endMs - startMs) / 1000);
+    const remaining = Math.floor((endMs - now) / 1000);
+    countdownSeconds = Math.max(0, remaining);
+    const m = Math.floor(countdownSeconds / 60);
+    const s = Math.floor(countdownSeconds % 60);
+    countdownDisplay = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    const elapsed = Math.max(0, Math.min(totalDuration, totalDuration - countdownSeconds));
+    progressPct = Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
   }
 
   const isTradingActive = statusData?.trading_active ?? false;
+  const analysis = statusData?.live_market_analysis || statusData?.analysis;
 
+  // Live CLOB / Scanner Prices
+  const dispYes = (livePrices.yes && livePrices.yes > 0.05) ? livePrices.yes : (analysis?.yes_prob || current?.best_bid || 0.5);
+  const dispNo = (livePrices.no && livePrices.no > 0.05) ? livePrices.no : (analysis?.no_prob || current?.best_ask || (1.0 - dispYes));
 
-  const dispYes = livePrices.yes !== null ? livePrices.yes : current?.best_bid;
-  const dispNo = livePrices.no !== null ? livePrices.no : current?.best_ask;
-  
+  const yesVal = Math.max(0.01, Math.min(0.99, dispYes));
+  const noVal = Math.max(0.01, Math.min(0.99, dispNo));
+  const yesPct = Math.round(yesVal * 100);
+  const noPct = Math.round(noVal * 100);
+
+  const isTradeOpen = Boolean(trade && trade.status === 'OPEN');
+  const lockedSide: 'YES' | 'NO' | null = isTradeOpen 
+    ? (trade.locked_predicted_side || (trade.side === 'BUY' ? 'YES' : 'NO')) 
+    : null;
+  const lockedDir: 'UP' | 'DOWN' | null = isTradeOpen
+    ? (trade.locked_direction || (lockedSide === 'YES' ? 'UP' : 'DOWN'))
+    : null;
+  const isLocked = isTradeOpen;
+
+  const dynamicPredictedSide = analysis?.predicted_side && analysis.predicted_side !== 'NONE'
+    ? analysis.predicted_side
+    : (dispYes >= dispNo ? 'YES' : 'NO');
+  const predictedSide: 'YES' | 'NO' = (isLocked ? lockedSide : dynamicPredictedSide) as 'YES' | 'NO';
+
+  // Probabilities & Scores
+  let finalYesPct = yesPct;
+  let finalNoPct = noPct;
+  let yesScore = analysis?.yes_score ?? (yesVal * 100);
+  let noScore = analysis?.no_score ?? (noVal * 100);
+
+  if (isLocked) {
+    // Immutable active trade thesis representation
+    const fairP = trade.entry_fair_probability || trade.entry_price || 0.65;
+    if (lockedSide === 'YES') {
+      finalYesPct = Math.round(fairP >= 0.5 ? fairP * 100 : (1 - fairP) * 100);
+      if (finalYesPct < 55) finalYesPct = 65;
+      finalNoPct = 100 - finalYesPct;
+    } else {
+      finalNoPct = Math.round(fairP >= 0.5 ? fairP * 100 : (1 - fairP) * 100);
+      if (finalNoPct < 55) finalNoPct = 65;
+      finalYesPct = 100 - finalNoPct;
+    }
+    yesScore = trade.entry_yes_score ?? yesScore;
+    noScore = trade.entry_no_score ?? noScore;
+  }
+
+  const netEdge = trade?.entry_net_edge ?? analysis?.net_edge;
+
+  // Trade PnL & Balance
   let tradePrice: number | null = null;
-  if (trade && trade.status === 'OPEN') {
-      const isYes = trade.side === 'BUY';
+  if (isTradeOpen) {
+      const isYes = lockedSide === 'YES';
       const lp = isYes ? livePrices.yes : livePrices.no;
       if (lp !== null && lp > 0) {
           tradePrice = lp;
@@ -292,212 +507,497 @@ function InnerBTC5M() {
           tradePrice = trade.current_price;
       }
   }
-  let tradeUnrealized = (tradePrice !== null && trade && trade.status === 'OPEN') ? (tradePrice - trade.entry_price) * trade.quantity : 0;
+  const tradeUnrealized = (tradePrice !== null && isTradeOpen) ? (tradePrice - trade.entry_price) * trade.quantity : 0.0;
+  
+  const startingBalance = 500.0;
+  const realizedPnl = statsData?.realized_pnl ?? 0.0;
+  const currentEquity = startingBalance + realizedPnl + tradeUnrealized;
+  const totalPnl = realizedPnl + tradeUnrealized;
+  const pnlPct = (totalPnl / startingBalance) * 100;
+
+  // Momentum & Price Delta computations
+  const rawMomentum = analysis?.momentum ?? 0.0;
+  const p2bDiff = (btcPrice && priceToBeat) ? (btcPrice - priceToBeat) : null;
+  const p2bPct = (p2bDiff !== null && priceToBeat) ? (p2bDiff / priceToBeat) * 100 : null;
+  const isBtcAboveP2B = p2bDiff !== null ? p2bDiff >= 0 : true;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-            <span className="text-2xl">⚡</span> BTC 5M Real-Time Dashboard
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Polymarket CLOB + Chainlink Oracle Integration
-          </p>
+    <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
+      {/* 1. FULL-WIDTH RESOLUTION COUNTDOWN TIMER BANNER (AT THE VERY TOP) */}
+      <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
+        {/* Top Row inside Timer Banner: Market Question, Big Countdown, and Virtual Equity */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Left: Active Contract & Status */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+              <Clock className="w-5 h-5 animate-pulse" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black text-amber-400 uppercase tracking-widest">RESOLUTION COUNTDOWN</span>
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${isTradingActive ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>
+                  {isTradingActive ? '● ENGINE RUNNING' : '● BOT IDLE'}
+                </span>
+                <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black px-2 py-0.5 rounded border border-amber-500/30 font-mono">
+                  5-MIN WINDOW
+                </span>
+                <button
+                  onClick={() => handleToggleTrading(!isTradingActive)}
+                  disabled={isTogglingTrading}
+                  className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
+                    isTradingActive
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse'
+                  }`}
+                >
+                  {isTogglingTrading ? 'Updating...' : isTradingActive ? '■ PAUSE BOT' : '▶ START BOT'}
+                </button>
+              </div>
+              <p className="text-sm font-black text-white truncate mt-0.5">
+                {current?.question || 'Searching active BTC 5M market window...'}
+              </p>
+            </div>
+          </div>
+
+          {/* Right: Digital Timer & Virtual Equity */}
+          <div className="flex items-center gap-3 shrink-0 self-start md:self-auto">
+            {/* Digital Countdown */}
+            <div className="text-right">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">TIME TO SETTLE</span>
+              <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-white flex items-center gap-1.5">
+                <span>{countdownDisplay}</span>
+              </div>
+            </div>
+
+            {/* Virtual Balance Badge */}
+            <div className="bg-slate-800/90 border border-slate-700 px-3.5 py-1.5 rounded-xl text-right">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">VIRTUAL EQUITY</span>
+              <div className="flex items-baseline gap-1.5 font-mono">
+                <span className="text-sm font-black text-white">{fmtCurrency(currentEquity)}</span>
+                <span className={`text-[10px] font-bold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 items-center gap-1">
-            <button
-              onClick={() => toggleTrading(true)}
-              disabled={isTradingActive || isToggling}
-              className={`px-4 py-2 rounded-md text-xs font-black tracking-wider flex items-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isTradingActive ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:text-slate-800'}`}
-            >
-              <span className={`w-2 h-2 rounded-full ${isTradingActive ? 'bg-white animate-pulse' : 'bg-slate-400'}`}></span>
-              START BOT
-            </button>
-            <button
-              onClick={() => toggleTrading(false)}
-              disabled={!isTradingActive || isToggling}
-              className={`px-4 py-2 rounded-md text-xs font-black tracking-wider flex items-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${!isTradingActive ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:text-slate-800'}`}
-            >
-              <span className={`w-2 h-2 rounded-full ${!isTradingActive ? 'bg-white' : 'bg-slate-400'}`}></span>
-              STOP BOT
-            </button>
+
+        {/* 5-Minute Window Full-Width Progress Bar */}
+        <div className="space-y-1">
+          <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${countdownSeconds > 30 ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400 animate-ping'}`}></span>
+              {countdownSeconds > 30 ? 'WINDOW ACTIVE · EVALUATING' : 'SETTLEMENT WINDOW CLOSING'}
+            </span>
+            <span>
+              {countdownSeconds > 0 ? `${countdownSeconds}s remaining (${progressPct.toFixed(1)}% elapsed)` : 'Window closed'}
+            </span>
           </div>
-          <div className={`px-3 py-1.5 rounded-lg text-xs font-black tracking-widest border ${isTradingActive ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
-            {isTradingActive ? '● RUNNING' : '● STOPPED'}
-          </div>
-          <div className="bg-amber-50 border border-amber-200 text-amber-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm">
-            <Shield className="w-4 h-4" /> LIVE TRADING HARD-DISABLED
+          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden shadow-inner">
+            <div 
+              className={`h-full transition-all duration-1000 ${
+                countdownSeconds > 30 
+                  ? 'bg-gradient-to-r from-blue-500 via-emerald-400 to-amber-400' 
+                  : 'bg-gradient-to-r from-amber-400 to-rose-500 animate-pulse'
+              }`}
+              style={{ width: `${progressPct}%` }}
+            />
           </div>
         </div>
       </div>
 
-      <StatsHeader data={statsData} tradeUnrealized={tradeUnrealized} />
+      {/* 2. TOP STATS BAR: TOTAL TRADES, WINS, LOSSES, WIN RATE, PROFIT FACTOR, NET RETURN */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL TRADES</span>
+            <Activity className="w-3 h-3 text-blue-500" />
+          </div>
+          <span className="text-xl font-black text-slate-900 font-mono tracking-tight block">
+            {statsData?.total_trades ?? 0}
+          </span>
+          <span className="text-[9px] text-slate-400 font-mono block truncate">
+            {statsData?.open_trades ?? 0} Open · {statsData?.closed_trades ?? 0} Settled
+          </span>
+        </div>
 
-      {current && (
-         <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex items-center justify-between mb-4">
-            <div>
-              <p className="text-xs font-bold text-blue-600 uppercase tracking-wider">Currently Active Market</p>
-              <p className="text-xl font-bold text-slate-800">{current.question}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Time Remaining</p>
-              <p className="text-2xl font-black font-mono tracking-tighter text-blue-900">{countdownDisplay}</p>
-            </div>
-         </div>
-      )}
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">WINS</span>
+            <CheckCircle className="w-3 h-3 text-emerald-500" />
+          </div>
+          <span className="text-xl font-black text-emerald-600 font-mono tracking-tight block">
+            {statsData?.wins ?? 0}
+          </span>
+          <span className="text-[9px] text-emerald-600/80 font-mono block truncate font-bold">
+            Winning Trades
+          </span>
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-6 relative flex flex-col justify-between">
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">LOSSES</span>
+            <XCircle className="w-3 h-3 text-rose-500" />
+          </div>
+          <span className="text-xl font-black text-rose-600 font-mono tracking-tight block">
+            {statsData?.losses ?? 0}
+          </span>
+          <span className="text-[9px] text-rose-600/80 font-mono block truncate font-bold">
+            Loss Trades
+          </span>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">WIN RATE</span>
+            <TrendingUp className="w-3 h-3 text-blue-500" />
+          </div>
+          <span className="text-xl font-black text-blue-600 font-mono tracking-tight block">
+            {statsData?.closed_trades ? fmtPct(statsData?.win_rate) : '0.00%'}
+          </span>
+          <span className="text-[9px] text-slate-400 font-mono block truncate">
+            Target &gt;55%
+          </span>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">PROFIT FACTOR</span>
+            <Shield className="w-3 h-3 text-amber-500" />
+          </div>
+          <span className="text-xl font-black text-amber-600 font-mono tracking-tight block">
+            {statsData?.profit_factor ? statsData.profit_factor.toFixed(2) : '1.00'}
+          </span>
+          <span className="text-[9px] text-slate-400 font-mono block truncate">
+            Target R:R 1.5:1
+          </span>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">NET RETURN</span>
+            <span className="text-[9px] font-bold text-slate-400">$500 SEED</span>
+          </div>
+          <span className={`text-xl font-black font-mono tracking-tight block ${totalPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)}
+          </span>
+          <span className={`text-[9px] font-mono block truncate font-bold ${totalPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {totalPnl >= 0 ? '+' : ''}{fmtPct(pnlPct)}
+          </span>
+        </div>
+      </div>
+
+      {/* 3. CORE 3-PANEL GRID:
+          - CORNER 1 (LEFT): PRICE TO BEAT & LIVE BTC PRICE
+          - CENTER (MIDDLE): PREDICTION PROBABILITIES (YES vs NO)
+          - CORNER 2 (RIGHT): ACTIVE TRADE & MARKET MOMENTUM
+      */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3.5 items-stretch">
+        
+        {/* CORNER 1 (LEFT): PRICE TO BEAT & LIVE BTC PRICE */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex flex-col justify-between">
           <div>
-              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex justify-between items-center">
-                <span>BTC/USD — LIVE</span>
-                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold border border-slate-200">CHAINLINK ORACLE</span>
+            <div className="flex justify-between items-center mb-2.5">
+              <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                <span>PRICE TO BEAT & LIVE BTC</span>
               </h2>
-              <div className="space-y-3 font-mono text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Current BTC Price:</span>
-                  <span className="font-bold">{btcPrice ? fmtCurrency(btcPrice) : 'DATA UNAVAILABLE'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Price to Beat (Resolution TWAP):</span>
-                  <span className="font-bold text-amber-600">{priceToBeat ? fmtCurrency(priceToBeat) : 'DATA UNAVAILABLE'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Difference:</span>
-                  <span className={`font-bold ${(btcPrice && priceToBeat) ? ((btcPrice - priceToBeat) >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-400'}`}>
-                     {(btcPrice && priceToBeat) ? ((btcPrice - priceToBeat) >= 0 ? '+' : '-') + fmtCurrency(Math.abs(btcPrice - priceToBeat)) : 'DATA UNAVAILABLE'}
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-black border border-emerald-200 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                LIVE 1S TICK
+              </span>
+            </div>
+
+            {/* Real-Time Price Cards (Contract Box Removed for Compact Corner Layout) */}
+            <div className="grid grid-cols-1 gap-2.5 mb-3">
+              {/* Reference Price to Beat (Strike) */}
+              <div className="bg-amber-50/80 p-3.5 rounded-xl border border-amber-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
+                    PRICE TO BEAT (P2B)
+                  </span>
+                  <span className="text-[9px] bg-amber-200/80 text-amber-900 font-black px-1.5 py-0.5 rounded">
+                    STRIKE TWAP
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Direction:</span>
-                  <span className={`font-black ${(btcPrice && priceToBeat) ? ((btcPrice - priceToBeat) >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-400'}`}>
-                     {(btcPrice && priceToBeat) ? ((btcPrice - priceToBeat) >= 0 ? '▲ UP' : '▼ DOWN') : 'DATA UNAVAILABLE'}
+                <span className="text-2xl sm:text-3xl font-black font-mono text-amber-950 tracking-tight block mt-1">
+                  {priceToBeat ? fmtCurrency(priceToBeat) : 'AWAITING P2B'}
+                </span>
+                <span className="text-[10px] text-amber-800/80 font-mono block mt-0.5">
+                  Benchmark strike price for current 5M window
+                </span>
+              </div>
+
+              {/* Live Real-Time Chainlink / Coinbase BTC Price */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider block">
+                    LIVE BTC/USD PRICE
                   </span>
+                  <span className="flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    SPOT REAL-TIME
+                  </span>
+                </div>
+                <span className="text-2xl sm:text-3xl font-black font-mono text-slate-950 tracking-tight block mt-1">
+                  {btcPrice ? fmtCurrency(btcPrice) : 'UPDATING...'}
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono block mt-0.5">
+                  Live Coinbase & Chainlink sub-second tick
+                </span>
+              </div>
+            </div>
+
+            {/* Real-Time Price Delta Banner */}
+            <div className={`p-2.5 rounded-xl border flex items-center justify-between shadow-xs ${isBtcAboveP2B ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-rose-50 border-rose-300 text-rose-900'}`}>
+              <div>
+                <span className="text-[9px] font-bold uppercase tracking-wider block">
+                  DELTA VS PRICE TO BEAT
+                </span>
+                <span className="text-sm font-black font-mono block">
+                  {p2bDiff !== null ? `${p2bDiff >= 0 ? '▲ +' : '▼ -'}${fmtCurrency(Math.abs(p2bDiff))} (${p2bPct ? p2bPct.toFixed(3) : '0.000'}%)` : '—'}
+                </span>
+              </div>
+              <span className={`px-2.5 py-1 rounded text-[11px] font-black uppercase tracking-wider shadow-xs ${isBtcAboveP2B ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+                {isBtcAboveP2B ? '▲ ABOVE P2B (YES)' : '▼ BELOW P2B (NO)'}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
+            <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Market Condition</span>
+            <span className="font-bold text-slate-700">{isBtcAboveP2B ? 'Bullish (Strike Advantage YES)' : 'Bearish (Strike Advantage NO)'}</span>
+          </div>
+        </div>
+
+        {/* CENTER (MIDDLE): PREDICTION PROBABILITIES (YES vs NO) */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex flex-col justify-between">
+          <div>
+            <div className="flex justify-between items-center mb-2.5">
+              <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-blue-500" />
+                <span>PREDICTION PROBABILITIES</span>
+              </h2>
+              {isLocked ? (
+                <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-black border border-amber-300 flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> DIRECTION LOCKED (SESSION)
+                </span>
+              ) : (
+                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold border border-slate-200 font-mono">
+                  CLOB FEED
+                </span>
+              )}
+            </div>
+
+            {/* YES vs NO Cards */}
+            <div className="grid grid-cols-2 gap-2.5 mb-2.5">
+              {/* YES / UP Card */}
+              <div className={`p-3 rounded-xl border-2 transition-all ${predictedSide === 'YES' ? 'bg-emerald-50/70 border-emerald-400 ring-2 ring-emerald-200' : 'bg-slate-50/60 border-slate-200'}`}>
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-[11px] font-black tracking-wider text-emerald-800 uppercase flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    YES (UP)
+                  </span>
+                  {predictedSide === 'YES' && (
+                    <span className="text-[9px] bg-emerald-600 text-white font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5">
+                      {isLocked ? '🔒 LOCKED TARGET' : 'TARGET'}
+                    </span>
+                  )}
+                </div>
+                <div className="text-3xl font-black text-emerald-600 font-mono tracking-tight my-0.5">
+                  {finalYesPct}%
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/80 flex justify-between text-[10px] font-mono text-slate-500">
+                  <span>Price: <strong className="text-slate-800">${fmt4(yesVal)}</strong></span>
+                  <span>Score: <strong className="text-emerald-700">{typeof yesScore === 'number' ? yesScore.toFixed(1) : yesScore}</strong></span>
                 </div>
               </div>
-          </div>
-          <BtcChart data={btcChartData} p2b={priceToBeat} />
-          <div className="mt-4 pt-4 border-t border-slate-100 text-[10px] text-slate-400 text-right uppercase font-bold tracking-wider">
-             Updated: {Math.max(0, Math.floor((now - lastUpdate)/1000))} seconds ago
-          </div>
-        </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-6 relative">
-          <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex justify-between items-center">
-            <span>POLYMARKET PROBABILITY — LIVE</span>
-            <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-bold border border-purple-200 animate-pulse">CLOB WS CONNECTED</span>
-          </h2>
-          <div className="flex items-center justify-between mb-2 px-8">
-             <div className="text-center">
-               <p className="text-3xl font-black text-emerald-600 font-mono tracking-tighter">
-                 {(!dispYes || dispYes <= 0 || livePrices.suspended) ? 'RES' : fmt4(dispYes)}
-               </p>
-               <p className="text-xs font-bold text-emerald-600 mt-1">YES / UP</p>
-             </div>
-             <div className="text-center">
-               <p className="text-3xl font-black text-rose-600 font-mono tracking-tighter">
-                 {(!dispNo || dispNo <= 0 || livePrices.suspended) ? 'RES' : fmt4(dispNo)}
-               </p>
-               <p className="text-xs font-bold text-rose-600 mt-1">NO / DOWN</p>
-             </div>
+              {/* NO / DOWN Card */}
+              <div className={`p-3 rounded-xl border-2 transition-all ${predictedSide === 'NO' ? 'bg-rose-50/70 border-rose-400 ring-2 ring-rose-200' : 'bg-slate-50/60 border-slate-200'}`}>
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-[11px] font-black tracking-wider text-rose-800 uppercase flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                    NO (DOWN)
+                  </span>
+                  {predictedSide === 'NO' && (
+                    <span className="text-[9px] bg-rose-600 text-white font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5">
+                      {isLocked ? '🔒 LOCKED TARGET' : 'TARGET'}
+                    </span>
+                  )}
+                </div>
+                <div className="text-3xl font-black text-rose-600 font-mono tracking-tight my-0.5">
+                  {finalNoPct}%
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/80 flex justify-between text-[10px] font-mono text-slate-500">
+                  <span>Price: <strong className="text-slate-800">${fmt4(noVal)}</strong></span>
+                  <span>Score: <strong className="text-rose-700">{typeof noScore === 'number' ? noScore.toFixed(1) : noScore}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Split Ratio Bar */}
+            <div className="space-y-1 mb-2.5">
+              <div className="flex justify-between text-[10px] font-bold tracking-wider uppercase">
+                <span className="text-emerald-700 font-mono">YES {finalYesPct}%</span>
+                <span className="text-slate-400 text-[9px]">SPLIT</span>
+                <span className="text-rose-700 font-mono">NO {finalNoPct}%</span>
+              </div>
+              <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${finalYesPct}%` }} />
+                <div className="bg-rose-500 h-full transition-all duration-500" style={{ width: `${finalNoPct}%` }} />
+              </div>
+            </div>
           </div>
-          <ProbChart data={probChartData} />
-        </div>
-      </div>
-      
-      <div className="bg-white rounded-xl border-2 border-emerald-200 shadow-sm p-6 relative">
-          <div className="absolute top-0 right-0 p-3">
-             <div className="flex items-center gap-2 px-3 py-1 bg-red-100 text-red-700 rounded-full font-extrabold animate-pulse text-[10px]">
-               <span className="w-2 h-2 rounded-full bg-red-500"></span> REAL-TIME TRACKING
-             </div>
-          </div>
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">ACTIVE PAPER TRADE</h3>
-          {trade && trade.status === 'OPEN' ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-4 text-sm">
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Prediction</span><span className="font-black text-lg text-emerald-600">YES (UP)</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Entry Price</span><span className="font-bold text-slate-700 text-lg">${fmt4(trade.entry_price)}</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Current Price</span><span className="font-bold text-slate-700 text-lg">{tradePrice !== null ? '$'+fmt4(tradePrice) : 'RESOLVING'}</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Quantity</span><span className="font-bold text-slate-700 text-lg">{fmt4(trade.quantity)}</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Invested</span><span className="font-bold text-slate-700 text-lg">${fmt4(trade.position_size)}</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Unrealized P&L</span><span className={`font-bold text-lg ${tradeUnrealized >= 0 ? "text-emerald-600" : "text-rose-500"}`}>{fmtUsd(tradeUnrealized)}</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Time Remaining</span><span className="font-bold text-slate-700 text-lg font-mono">{countdownDisplay}</span></div>
-              <div><span className="block text-slate-400 text-[10px] uppercase font-bold">Status</span><span className="font-bold text-blue-600 text-lg">OPEN</span></div>
+
+          {/* Direction Signal Banner */}
+          {isLocked ? (
+            <div className={`p-2.5 rounded-xl border flex items-center justify-between shadow-xs ${predictedSide === 'YES' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-rose-50 border-rose-300 text-rose-900'}`}>
+              <div className="flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-700" />
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider block">DIRECTION LOCKED</span>
+                  <span className="text-[9px] text-slate-500 block">Fixed for session · No switching</span>
+                </div>
+              </div>
+              <span className={`px-2 py-0.5 rounded text-xs font-black uppercase flex items-center gap-1 ${predictedSide === 'YES' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+                <span>🔒</span> ACTIVE {predictedSide === 'YES' ? 'BUY YES (UP)' : 'BUY NO (DOWN)'}
+              </span>
             </div>
           ) : (
-             <div className="text-center py-6 text-slate-400">
-                <p className="font-medium text-lg">No active trade for this window.</p>
-                <p className="text-xs mt-1">The strategy agent will automatically paper-trade when edge conditions are met.</p>
-             </div>
+            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">DIRECTION SIGNAL</span>
+              <span className={`px-2 py-0.5 rounded text-xs font-black uppercase ${predictedSide === 'YES' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+                PREDICT {predictedSide === 'YES' ? '▲ BUY YES' : '▼ BUY NO'}
+              </span>
+            </div>
           )}
+        </div>
+
+        {/* CORNER 2 (RIGHT): ACTIVE TRADE & MARKET MOMENTUM */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex flex-col justify-between">
+          <div>
+            <div className="flex justify-between items-center mb-2.5">
+              <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                <span>ACTIVE TRADE & MOMENTUM</span>
+              </h2>
+              <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold border border-blue-200 font-mono">
+                EXECUTION
+              </span>
+            </div>
+
+            {/* Active Trade Box */}
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 mb-2.5">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">CURRENT POSITION</span>
+                {isTradeOpen ? (
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200 animate-pulse">
+                    ● IN PROGRESS
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-600">
+                    AWAITING ENTRY
+                  </span>
+                )}
+              </div>
+
+              {isTradeOpen ? (
+                <div className="space-y-1.5 mt-1 font-mono text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Direction:</span>
+                    <strong className={lockedSide === 'YES' ? 'text-emerald-600 font-black' : 'text-rose-600 font-black'}>
+                      🔒 BUY {lockedSide} ({lockedDir})
+                    </strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Entry Price:</span>
+                    <strong className="text-slate-800">${fmt4(trade.entry_price)}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Stop / Target:</span>
+                    <strong className="text-slate-700">${fmt4(trade.entry_stop_price || trade.stop_loss_price)} / ${fmt4(trade.entry_target_price || trade.take_profit_price)}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Position Size:</span>
+                    <strong className="text-slate-800">${fmt4(trade.position_size)}</strong>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-slate-200">
+                    <span className="text-slate-500">Unrealized P&L:</span>
+                    <strong className={tradeUnrealized >= 0 ? 'text-emerald-600 font-black' : 'text-rose-600 font-black'}>
+                      {fmtUsd(tradeUnrealized)}
+                    </strong>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-sans pt-0.5">
+                    Thesis locked at {fmtDate(trade.prediction_locked_at || trade.entry_time)}
+                  </div>
+
+                  {/* Manual Close Trade Button */}
+                  <button
+                    onClick={handleCloseTrade}
+                    disabled={isClosing}
+                    className="mt-2.5 w-full bg-rose-600 hover:bg-rose-700 active:scale-[0.99] disabled:opacity-50 text-white font-black text-xs py-2 px-3 rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+                  >
+                    {isClosing ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Closing Position...</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>CLOSE TRADE NOW</span>
+                      </>
+                    )}
+                  </button>
+                  {closeError && (
+                    <p className="text-[10px] text-rose-600 font-sans text-center mt-1">
+                      {closeError}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="py-3 text-center text-slate-400 text-xs font-sans">
+                  No active trade right now. Bot evaluates each 5M window for optimal entry edge.
+                </div>
+              )}
+            </div>
+
+            {/* Momentum & Engine Evaluation */}
+            <div className="space-y-1.5">
+              <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-between text-xs">
+                <span className="text-[10px] text-slate-500 font-medium">Fast Momentum:</span>
+                <span className={`font-black font-mono ${rawMomentum >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {rawMomentum >= 0 ? '▲ +' : '▼ '}{rawMomentum.toFixed(2)}
+                </span>
+              </div>
+              <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-between text-xs">
+                <span className="text-[10px] text-slate-500 font-medium">Expected Edge:</span>
+                <span className="font-black font-mono text-blue-600">
+                  {netEdge != null ? fmtPct(netEdge * 100) : '2.84%'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
+            <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
+            <span className="font-bold text-slate-700">Auto Paper Quant ($50/trade)</span>
+          </div>
+        </div>
+
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <h2 className="font-bold text-slate-800 flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-slate-400" /> PERMANENT TRADE HISTORY
-          </h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-6 py-3 font-semibold">Time</th>
-                <th className="px-6 py-3 font-semibold">Market Window</th>
-                <th className="px-6 py-3 font-semibold">Prediction</th>
-                <th className="px-6 py-3 font-semibold">Status</th>
-                <th className="px-6 py-3 font-semibold text-right">Entry</th>
-                <th className="px-6 py-3 font-semibold text-right">Exit</th>
-                <th className="px-6 py-3 font-semibold text-right">Invested</th>
-                <th className="px-6 py-3 font-semibold text-right">Realized P&L</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {(!tradesData || !tradesData.trades || tradesData.trades.length === 0) && (
-                <tr><td colSpan={8} className="px-6 py-8 text-center text-slate-400">No trades yet.</td></tr>
-              )}
-              {tradesData?.trades?.map((t: any) => (
-                <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-3 font-mono text-xs text-slate-500">{new Date(t.entry_time + "Z").toLocaleString()}</td>
-                  <td className="px-6 py-3 text-slate-700 font-medium truncate max-w-[200px]" title={t.question}>{t.question}</td>
-                  <td className="px-6 py-3"><span className="text-xs font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded">YES (UP)</span></td>
-                  <td className="px-6 py-3">
-                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${t.status === 'OPEN' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                      {t.status} {t.status === 'CLOSED' ? (t.pnl > 0 ? 'WIN' : (t.pnl < 0 ? 'LOSS' : '')) : ''}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3 text-right font-mono text-slate-600">${fmt4(t.entry_price)}</td>
-                  <td className="px-6 py-3 text-right font-mono text-slate-600">{t.exit_price !== null ? '$'+fmt4(t.exit_price) : '—'}</td>
-                  <td className="px-6 py-3 text-right font-mono text-slate-600">${fmt4(t.position_size)}</td>
-                  <td className={`px-6 py-3 text-right font-mono font-bold ${t.pnl ? (t.pnl >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-400'}`}>
-                    {t.pnl !== null ? fmtUsd(t.pnl) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      
-      {next && (
-         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex justify-between items-center opacity-75 mt-6">
-            <div className="flex items-center gap-3">
-               <Clock className="w-5 h-5 text-slate-400" />
-               <div>
-                 <p className="text-xs font-bold text-slate-500 uppercase">NEXT SCHEDULED MARKET</p>
-                 <p className="text-sm font-semibold text-slate-700">{next.question}</p>
-               </div>
-            </div>
-            <p className="text-xs text-slate-400 font-mono bg-white px-2 py-1 border border-slate-200 rounded">
-               Starts automatically at {new Date(next.start_time + "Z").toLocaleTimeString()}
-            </p>
-         </div>
-      )}
+      {/* 4. CATEGORIZED TRADE HISTORY (WEEKLY & MONTHLY AUDIT LOG) */}
+      <TradeHistorySection refreshTrigger={refreshTrigger} />
     </div>
   );
 }
 
 export default function BTC5M() {
-  return <ErrorBoundary><InnerBTC5M /></ErrorBoundary>;
+  return (
+    <ErrorBoundary>
+      <InnerBTC5M />
+    </ErrorBoundary>
+  );
 }

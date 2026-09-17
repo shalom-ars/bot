@@ -30,3 +30,68 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def ensure_btc5m_schema(db_engine):
+    """
+    Ensures that btc5m_trades has all required immutable thesis columns
+    and backfills any legacy rows in SQLite.
+    """
+    from sqlalchemy import text, inspect
+    inspector = inspect(db_engine)
+    if "btc5m_trades" not in inspector.get_table_names():
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns("btc5m_trades")}
+    
+    new_cols = [
+        ("locked_predicted_side", "VARCHAR"),
+        ("locked_direction", "VARCHAR"),
+        ("locked_outcome", "VARCHAR"),
+        ("locked_token_id", "VARCHAR"),
+        ("execution_side", "VARCHAR DEFAULT 'BUY'"),
+        ("entry_yes_score", "FLOAT"),
+        ("entry_no_score", "FLOAT"),
+        ("entry_fair_probability", "FLOAT"),
+        ("entry_market_probability", "FLOAT"),
+        ("entry_net_edge", "FLOAT"),
+        ("entry_planned_rr", "FLOAT"),
+        ("entry_stop_price", "FLOAT"),
+        ("entry_target_price", "FLOAT"),
+        ("prediction_locked_at", "DATETIME"),
+        ("prediction_lock_version", "VARCHAR DEFAULT '1.0'")
+    ]
+
+    with db_engine.connect() as conn:
+        for col_name, col_type in new_cols:
+            if col_name not in existing_columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE btc5m_trades ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+        # Backfill legacy trades where locked fields are NULL
+        try:
+            conn.execute(text("""
+                UPDATE btc5m_trades
+                SET 
+                    locked_predicted_side = CASE WHEN side = 'BUY' THEN 'YES' ELSE 'NO' END,
+                    locked_direction = CASE WHEN side = 'BUY' THEN 'YES' ELSE 'NO' END,
+                    locked_outcome = CASE WHEN side = 'BUY' THEN 'UP' ELSE 'DOWN' END,
+                    locked_token_id = CASE WHEN side = 'BUY' THEN yes_token_id ELSE no_token_id END,
+                    execution_side = 'BUY',
+                    entry_yes_score = yes_score,
+                    entry_no_score = no_score,
+                    entry_net_edge = net_edge,
+                    entry_planned_rr = planned_rr,
+                    entry_stop_price = stop_loss_price,
+                    entry_target_price = take_profit_price,
+                    prediction_locked_at = entry_time,
+                    prediction_lock_version = '1.0'
+                WHERE locked_predicted_side IS NULL
+            """))
+            conn.commit()
+        except Exception:
+            pass
+

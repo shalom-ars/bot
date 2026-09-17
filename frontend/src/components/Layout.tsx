@@ -1,112 +1,64 @@
-import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, LineChart, Activity, Wallet, FileTerminal, LogOut, ShieldAlert, Bitcoin } from 'lucide-react';
+import { Outlet } from 'react-router-dom';
+import { ShieldAlert, LogOut } from 'lucide-react';
 
 export default function Layout() {
-  const location = useLocation();
-
-  const navItems = [
-    { name: 'Overview', path: '/app', icon: LayoutDashboard },
-    { name: 'Markets', path: '/app/markets', icon: LineChart },
-    { name: 'Signals', path: '/app/signals', icon: Activity },
-    { name: 'Portfolio', path: '/app/portfolio', icon: Wallet },
-    { name: 'Research Terminal', path: '/app/research', icon: FileTerminal },
-    { name: '₿ BTC 5M', path: '/app/btc5m', icon: Bitcoin },
-  ];
-  
-  const secondaryNav = [
-    { name: 'Positions', path: '/app/positions' },
-    { name: 'Trades', path: '/app/trades' },
-    { name: 'Performance', path: '/app/performance' },
-    { name: 'Risk', path: '/app/risk' },
-    { name: 'Order Book', path: '/app/orderbook' },
-    { name: 'Alerts', path: '/app/alerts' },
-    { name: 'Settings', path: '/app/settings' },
-  ];
+  const handleLogout = () => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {}
+    window.location.href = '/login';
+  };
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900">
-      {/* Sidebar */}
-      <div className="w-64 bg-white border-r border-slate-200 flex flex-col overflow-y-auto">
-        <div className="p-6">
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">JONANDA</h1>
-          <p className="text-xs text-slate-500 font-medium tracking-wide mt-1 uppercase">Quant Intelligence</p>
-        </div>
-        
-        <nav className="px-4 space-y-1 mb-6">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.name}
-                to={item.path}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                  isActive 
-                    ? 'bg-blue-50 text-blue-700 font-semibold' 
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                {item.name}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <nav className="flex-1 px-4 space-y-1">
-          <p className="px-3 text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Management</p>
-          {secondaryNav.map((item) => {
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.name}
-                to={item.path}
-                className={`block px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                  isActive 
-                    ? 'text-blue-700 font-semibold' 
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                {item.name}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="p-4 border-t border-slate-200">
-          <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 mb-4">
-            <div className="flex items-center gap-2 text-rose-700 font-bold mb-1">
-              <ShieldAlert className="w-4 h-4" />
-              <span className="text-sm">PAPER TRADING</span>
-            </div>
-            <p className="text-xs text-rose-600 font-medium">REAL MONEY: DISABLED</p>
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      {/* Top Navbar - Full Width, No Sidebar */}
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 flex justify-between items-center sticky top-0 z-20 shadow-xs">
+        {/* Left: Brand Logo & Mode Badge */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-base shadow-sm">
+            ⚡
           </div>
-          <Link to="/" className="flex items-center gap-2 text-slate-500 hover:text-slate-900 px-2 text-sm font-medium">
-            <LogOut className="w-4 h-4" />
-            Sign Out
-          </Link>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 overflow-auto bg-slate-50">
-        <header className="bg-white border-b border-slate-200 px-8 py-4 flex justify-between items-center sticky top-0 z-10">
-          <h2 className="text-xl font-bold text-slate-800 capitalize">
-            {location.pathname.split('/').pop() || 'Overview'}
-          </h2>
-          <div className="flex items-center gap-4">
-            <span className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full border border-blue-200">
-              PRO PLAN
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-black text-slate-900 tracking-tight leading-tight">BTC 5M BOT</span>
+              <span className="hidden sm:inline-block text-[9px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded tracking-wider uppercase">
+                POLYMARKET TERMINAL
+              </span>
+            </div>
+          </div>
+          <div className="hidden md:flex items-center gap-1.5 ml-2 pl-3 border-l border-slate-200 text-xs">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+              <ShieldAlert className="w-3 h-3 text-rose-600" />
+              <span>PAPER TRADING · $500 SEED</span>
             </span>
-            <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-600 font-bold">
-              U
-            </div>
           </div>
-        </header>
-        <main className="p-8">
-          <Outlet />
-        </main>
-      </div>
+        </div>
+
+        {/* Right: PRO PLAN Badge, User Avatar & Logout Button */}
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <span className="bg-blue-50 text-blue-700 text-xs font-black px-3 py-1 rounded-full border border-blue-200 flex items-center gap-1.5 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+            PRO PLAN
+          </span>
+          <div className="w-7 h-7 bg-slate-800 text-white rounded-full flex items-center justify-center font-black text-xs shadow-xs">
+            U
+          </div>
+          <button
+            onClick={handleLogout}
+            className="px-3 py-1.5 rounded-xl text-xs font-black text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+            title="Sign out of your session"
+          >
+            <LogOut className="w-3.5 h-3.5 text-rose-600" />
+            <span>LOGOUT</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content - Takes Full Width */}
+      <main className="flex-1 p-3 sm:p-5 w-full">
+        <Outlet />
+      </main>
     </div>
   );
 }

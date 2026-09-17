@@ -10,6 +10,7 @@ Runs concurrently with the main Polymarket scanner.
 """
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -18,6 +19,7 @@ from app.db.models import BTC5MMarket, BTC5MSignal as BTC5MSignalDB, BTC5MTrade
 from app.btc5m.selector import discover_btc5m_markets, BTC5MMarketInfo
 from app.btc5m.features import BTC5MFeatureEngine
 from app.btc5m.strategy import BTC5MStrategy, BTC5MSignal
+from app.btc5m.latency import latency_tracker
 from app.trading.risk import RiskManager
 from app.config import settings
 
@@ -38,7 +40,7 @@ class BTC5MEngine:
         self.feature_engine = BTC5MFeatureEngine()
         self.strategy = BTC5MStrategy(risk_manager=self.risk_manager)
         self.running = False
-        self.trading_active = False  # Controlled via UI
+        self.trading_active = True  # Default active for paper trading (toggleable via UI)
         self._market_states: Dict[str, str] = {}  # market_id -> state
 
     async def start(self):
@@ -47,30 +49,48 @@ class BTC5MEngine:
         asyncio.create_task(self._main_loop())
 
     async def _main_loop(self):
-        """Main async loop — runs indefinitely."""
+        """Main async loop — runs indefinitely with exponential backoff on fatal loop errors."""
+        backoff = 5
         while self.running:
             try:
                 await self._cycle()
+                backoff = 5
+            except asyncio.CancelledError:
+                logger.info("[BTC5M Engine] Main loop cancelled.")
+                break
             except Exception as e:
                 logger.error(f"[BTC5M Engine] Cycle error: {e}", exc_info=True)
+                await asyncio.sleep(backoff)
+                backoff = min(60, backoff * 2)
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
     async def _cycle(self):
         """
         One full cycle:
         1. Settle open trades
-        2. Discover BTC 5M markets from Polymarket.
-        3. For each valid market: compute features, evaluate strategy.
-        4. Persist signals to DB.
-        5. Execute paper trades for ENTER signals.
+        2. Settle skips for hypothetical outcomes
+        3. Discover BTC 5M markets from Polymarket.
+        4. For each valid market: compute features, evaluate strategy.
+        5. Persist signals to DB.
+        6. Execute paper trades for ENTER signals (when trading_active).
         """
-        await self._settle_trades()
-        await self._settle_skips()
+        try:
+            await self._settle_trades()
+        except Exception as e:
+            logger.error(f"[BTC5M Engine] Settle trades error: {e}", exc_info=True)
+
+        try:
+            await self._settle_skips()
+        except Exception as e:
+            logger.error(f"[BTC5M Engine] Settle skips error: {e}", exc_info=True)
 
         logger.info("[BTC5M Engine] Discovering BTC 5M markets...")
+        markets = None
+        try:
+            markets = await asyncio.to_thread(discover_btc5m_markets)
+        except Exception as e:
+            logger.error(f"[BTC5M Engine] Discovery error: {e}", exc_info=True)
 
-        # Discovery is synchronous HTTP — run in thread
-        markets = await asyncio.to_thread(discover_btc5m_markets)
         if not markets:
             logger.info("[BTC5M Engine] No BTC 5M markets discovered this cycle")
             return
@@ -78,13 +98,18 @@ class BTC5MEngine:
         valid = [m for m in markets if m.is_valid]
         logger.info(f"[BTC5M Engine] {len(valid)}/{len(markets)} markets valid. Processing...")
 
-        # Persist discovered markets to DB
-        await asyncio.to_thread(self._persist_markets, markets)
+        try:
+            t0_db = time.perf_counter()
+            await asyncio.to_thread(self._persist_markets, markets)
+            latency_tracker.record("db_write_ms", (time.perf_counter() - t0_db) * 1000)
+        except Exception as e:
+            logger.error(f"[BTC5M Engine] Persist markets error: {e}", exc_info=True)
 
-        # Process each market concurrently but safely
-        # Process sequentially to prevent double entries on same tick
         for m in valid[:MAX_CONCURRENT_MARKETS]:
-            await self._process_market(m)
+            try:
+                await self._process_market(m)
+            except Exception as e:
+                logger.error(f"[BTC5M Engine] Error processing market {m.market_id}: {e}", exc_info=True)
 
 
     def _get_btc5m_reference_data(self, market: BTC5MMarketInfo):
@@ -98,35 +123,69 @@ class BTC5MEngine:
         btc_price = None
         price_to_beat = None
 
+        if not hasattr(self, '_market_states'):
+            self._market_states = {}
+
+        RPC_URLS = [
+            "https://polygon.drpc.org",
+            "https://polygon-bor-rpc.publicnode.com",
+            "https://1rpc.io/matic"
+        ]
         try:
             import httpx
+            for rpc_url in RPC_URLS:
+                try:
+                    with httpx.Client(timeout=1.5, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                        resp = client.post(
+                            rpc_url,
+                            json={
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "method": "eth_call",
+                                "params": [
+                                    {
+                                        "to": "0xc907E116054Ad103354f2D350FD2514433D57F6f",
+                                        "data": "0x50d25bcd"
+                                    },
+                                    "latest"
+                                ]
+                            }
+                        )
+                        if resp.status_code == 200:
+                            payload = resp.json()
+                            result = payload.get("result")
+                            if result and result != "0x":
+                                btc_price = int(result, 16) / 100000000.0
+                                break
+                except Exception:
+                    continue
 
-            with httpx.Client(timeout=3.0) as client:
-                resp = client.post(
-                    "https://polygon-bor-rpc.publicnode.com",
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "eth_call",
-                        "params": [
-                            {
-                                "to": "0xc907E116054Ad103354f2D350FD2514433D57F6f",
-                                "data": "0x50d25bcd"
-                            },
-                            "latest"
-                        ]
-                    }
-                )
-
-                if resp.status_code == 200:
-                    payload = resp.json()
-                    result = payload.get("result")
-                    if result and result != "0x":
-                        btc_price = int(result, 16) / 100000000.0
+            # Fallback to Coinbase spot price matching global live BTC
+            if btc_price is None:
+                try:
+                    with httpx.Client(timeout=1.5, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                        resp = client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot")
+                        if resp.status_code == 200:
+                            btc_price = float(resp.json()["data"]["amount"])
+                except Exception:
+                    pass
         except Exception as exc:
             logger.warning("[BTC5M Engine] BTC reference fetch failed: %s", exc)
 
-        # Never infer active P2B from previous finalPrice/current BTC.
+        # Cache the authoritative Chainlink BTC price exactly at the start time of this market as P2B
+        if btc_price is not None:
+            now_utc = datetime.now(timezone.utc)
+            start_utc = market.start_time.replace(tzinfo=timezone.utc) if market.start_time.tzinfo is None else market.start_time
+            end_utc = market.end_time.replace(tzinfo=timezone.utc) if market.end_time.tzinfo is None else market.end_time
+            
+            # If the market has already started, we must capture the exact first price we see for it.
+            if now_utc >= start_utc and now_utc < end_utc:
+                cache_key = f"p2b_{market.market_id}"
+                if cache_key not in self._market_states:
+                    self._market_states[cache_key] = btc_price
+                    logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
+                price_to_beat = self._market_states[cache_key]
+
         return btc_price, price_to_beat
 
     async def _process_market(self, market: BTC5MMarketInfo):
@@ -156,9 +215,12 @@ class BTC5MEngine:
             # Fetch reference data BEFORE strategy evaluation.
             # P2B remains None unless an authoritative active-market
             # source is available; strategy will safely SKIP in that case.
+            t0_ref = time.perf_counter()
             btc_price, price_to_beat = self._get_btc5m_reference_data(market)
+            latency_tracker.record("chainlink_ms", (time.perf_counter() - t0_ref) * 1000)
 
             # Evaluate both YES and NO with explicit BTC/P2B inputs.
+            t0_strat = time.perf_counter()
             signal = self.strategy.evaluate(
                 market_id=market.market_id,
                 condition_id=market.condition_id,
@@ -171,15 +233,27 @@ class BTC5MEngine:
                 price_to_beat=price_to_beat,
                 current_balance=current_balance,
             )
+            latency_tracker.record("strategy_ms", (time.perf_counter() - t0_strat) * 1000)
 
             # Persist signal
+            t0_sig = time.perf_counter()
             await asyncio.to_thread(self._persist_signal, signal)
+            latency_tracker.record("db_write_ms", (time.perf_counter() - t0_sig) * 1000)
 
             # Execute paper trade if ENTER
             if signal.state == "ENTER" and not settings.live_trading_enabled:
-                await asyncio.to_thread(self._execute_paper_trade, signal, current_balance)
-                self.strategy.record_entry(market.market_id, signal)
-                logger.info(f"[BTC5M Engine] PAPER ENTRY: {signal.question[:50]} | side={signal.side} | size=${signal.position_size:.2f}")
+                if not self.trading_active:
+                    logger.info(f"[BTC5M Engine] ENTER signal received, but BOT IS STOPPED (trading_active=False). Blocking trade entry.")
+                    try:
+                        self._record_skip(signal, "SKIP - Trading paused (Bot is STOPPED)")
+                    except Exception as e:
+                        logger.error(f"Error recording stopped skip: {e}")
+                else:
+                    t0_exec = time.perf_counter()
+                    await asyncio.to_thread(self._execute_paper_trade, signal, current_balance)
+                    latency_tracker.record("execution_ms", (time.perf_counter() - t0_exec) * 1000)
+                    self.strategy.record_entry(market.market_id, signal)
+                    logger.info(f"[BTC5M Engine] PAPER ENTRY: {signal.question[:50]} | side={signal.side} | size=${signal.position_size:.2f}")
             else:
                 reason_ext = getattr(signal, 'skip_flags', signal.reason)
                 if hasattr(signal, 'skip_flags') and isinstance(signal.skip_flags, list) and len(signal.skip_flags) > 0:
@@ -189,7 +263,9 @@ class BTC5MEngine:
                 # Record the skip to the DB
                 if signal.state == "SKIP":
                     try:
+                        t0_skip = time.perf_counter()
                         self._record_skip(signal, reason_ext)
+                        latency_tracker.record("db_write_ms", (time.perf_counter() - t0_skip) * 1000)
                     except Exception as e:
                         logger.error(f"Error recording skip: {e}")
 
@@ -306,7 +382,15 @@ class BTC5MEngine:
         db = SessionLocal()
         try:
             quantity = signal.position_size / (signal.entry_price + 1e-9)
-            db.add(BTC5MTrade(
+
+            # Core Rule — Immutable Trade Thesis Mapping
+            is_yes = (signal.predicted_side == "YES") or (signal.side == "BUY" and signal.predicted_side != "NO")
+            locked_pred = "YES" if is_yes else "NO"
+            locked_dir = "UP" if is_yes else "DOWN"
+            locked_outcome = "YES" if is_yes else "NO"
+            locked_token = signal.yes_token_id if is_yes else (signal.no_token_id or signal.yes_token_id)
+
+            trade = BTC5MTrade(
                 market_id=signal.market_id,
                 condition_id=signal.condition_id,
                 question=signal.question,
@@ -323,6 +407,8 @@ class BTC5MEngine:
                 momentum_at_entry=signal.momentum,
                 imbalance_at_entry=signal.imbalance,
                 time_remaining_at_entry=signal.time_remaining_sec,
+                yes_score=signal.yes_score,
+                no_score=signal.no_score,
                 planned_risk=signal.planned_risk,
                 planned_reward=signal.planned_reward,
                 planned_rr=signal.planned_rr,
@@ -333,7 +419,24 @@ class BTC5MEngine:
                 entry_reason=signal.reason,
                 status="OPEN",
                 entry_time=signal.timestamp,
-            ))
+                # Immutable Thesis Fields (Write-Once)
+                locked_predicted_side=locked_pred,
+                locked_direction=locked_dir,
+                locked_outcome=locked_outcome,
+                locked_token_id=locked_token,
+                execution_side="BUY",
+                entry_yes_score=signal.yes_score,
+                entry_no_score=signal.no_score,
+                entry_fair_probability=signal.fair_probability,
+                entry_market_probability=signal.market_probability,
+                entry_net_edge=signal.net_edge,
+                entry_planned_rr=signal.planned_rr,
+                entry_stop_price=signal.stop_loss_price,
+                entry_target_price=signal.take_profit_price,
+                prediction_locked_at=signal.timestamp,
+                prediction_lock_version="1.0"
+            )
+            db.add(trade)
             db.commit()
 
             # Update RiskManager state
@@ -403,8 +506,13 @@ class BTC5MEngine:
                                     last_hist = db.query(BTC5MPriceHistory).filter(
                                         BTC5MPriceHistory.market_id == trade.market_id
                                     ).order_by(BTC5MPriceHistory.timestamp.desc()).first()
-                                    if last_hist and last_hist.best_bid is not None:
-                                        best_bid = last_hist.best_bid
+                                    if last_hist:
+                                        if trade.side == "BUY" and last_hist.best_bid is not None:
+                                            best_bid = last_hist.best_bid
+                                        elif trade.side == "SELL" and last_hist.best_ask is not None:
+                                            best_bid = 1.0 - last_hist.best_ask
+                                        elif last_hist.best_bid is not None:
+                                            best_bid = last_hist.best_bid
                                     
                                     if best_bid is not None and trade.take_profit_price and trade.stop_loss_price:
                                         if best_bid >= trade.take_profit_price:
@@ -473,7 +581,8 @@ class BTC5MEngine:
                                 trade.resolution = resolution
                                 trade.exit_time = datetime.now(timezone.utc)
 
-                                is_win = (trade.side == "BUY" and resolution == "YES") or (trade.side == "SELL" and resolution == "NO")
+                                trade_pred = trade.locked_predicted_side or ("YES" if trade.side == "BUY" else "NO")
+                                is_win = (trade_pred == resolution)
 
                                 if is_win:
                                     revenue = trade.quantity * 1.0
@@ -523,7 +632,11 @@ class BTC5MEngine:
                 volatility=signal.volatility,
                 time_remaining=signal.time_remaining_sec,
                 planned_rr=signal.planned_rr,
-                skip_reason=reason
+                skip_reason=reason,
+                predicted_side=getattr(signal, "predicted_side", "NONE"),
+                gate_results=getattr(signal, "gate_results", "{}"),
+                yes_breakdown=getattr(signal, "yes_breakdown", "{}"),
+                no_breakdown=getattr(signal, "no_breakdown", "{}")
             )
             db.add(skip)
             db.commit()

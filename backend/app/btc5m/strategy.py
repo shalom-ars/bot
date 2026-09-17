@@ -41,10 +41,12 @@ MAX_SPREAD            = 0.05   # 5% max spread for trade eligibility
 MIN_DEPTH             = 50.0   # Minimum ask_depth in $ for order fill
 MIN_LIQUIDITY         = 100.0  # Minimum total liquidity
 MIN_TIME_REMAINING    = 60.0   # At least 60 seconds before resolution
-MIN_NET_EDGE          = 0.03   # Minimum net edge (same as global min_edge)
+MIN_NET_EDGE          = 0.015  # Minimum net edge (lowered to 1.5% to permit trades with smaller statistical edge)
 MAX_SPREAD_STABILITY  = 0.02   # Spread must be stable (low std)
 MIN_MOMENTUM_PERSIST  = 0.40   # Momentum must be persistent (40% consistent direction)
 STALENESS_THRESHOLD_S = 10.0   # Data older than 10s is stale
+MIN_ENTRY_SCORE       = 60.0   # Score threshold (readjusted to permit more high-edge trades)
+MIN_RR                = 1.5    # Minimum Risk-Reward threshold (readjusted to 1.5)
 
 
 @dataclass
@@ -90,23 +92,33 @@ class BTC5MSignal:
     no_score: float = 0.0
     yes_prob: float = 0.0
     no_prob: float = 0.0
+    predicted_side: str = "NONE"
+    gate_results: str = "{}"
+    yes_breakdown: str = "{}"
+    no_breakdown: str = "{}"
     # Risk-level skip flags
     skip_flags: list = field(default_factory=list)
 
 
-def _compute_fair_probability(price: float, momentum: float, imbalance: float) -> float:
+def _compute_fair_probability(price: float, momentum: float, imbalance: float, btc_price: Optional[float] = None, p2b: Optional[float] = None) -> float:
     """
-    Rule-based fair probability estimate.
-    When ML model is untrained, we use a conservative adjustment:
-      fair_prob = market_price + directional_nudge
-    The nudge is small and only applied when momentum and imbalance agree.
-    Clearly labeled as rule_based, not ML.
+    Compute rule-based fair probability for YES (UP).
+    Factors:
+    - Base market price
+    - BTC Price vs Price-to-Beat delta (authoritative Chainlink feed)
+    - Short-term momentum
+    - Orderbook pressure and imbalance
     """
     nudge = 0.0
-    if momentum > 0 and imbalance > 0:
-        nudge = min(0.03, abs(momentum) * 0.5 + abs(imbalance) * 0.02)
-    elif momentum < 0 and imbalance < 0:
-        nudge = -min(0.03, abs(momentum) * 0.5 + abs(imbalance) * 0.02)
+    if btc_price is not None and p2b is not None:
+        diff = btc_price - p2b
+        p2b_shift = max(-0.15, min(0.15, diff / 250.0))
+        nudge += p2b_shift
+
+    mom_shift = max(-0.08, min(0.08, momentum * 200.0))
+    imb_shift = max(-0.05, min(0.05, imbalance * 0.05))
+    nudge += (mom_shift + imb_shift)
+
     return max(0.01, min(0.99, price + nudge))
 
 
@@ -121,6 +133,12 @@ class BTC5MStrategy:
         self._active_positions: dict = {}  # market_id -> entry info
         self.last_btc_price = None
         self.last_price_to_beat = None
+
+    def record_entry(self, market_id: str, signal: BTC5MSignal):
+        self._active_positions[market_id] = signal
+
+    def record_exit(self, market_id: str):
+        self._active_positions.pop(market_id, None)
 
     def _score_side(self, is_yes: bool, features: dict, btc_price: float, p2b: float) -> tuple[float, dict]:
         """
@@ -193,7 +211,7 @@ class BTC5MStrategy:
         
         return total, breakdown
 
-    def _calc_edge_and_rr(self, is_yes: bool, features: dict, current_balance: float):
+    def _calc_edge_and_rr(self, is_yes: bool, features: dict, current_balance: float, btc_price: Optional[float] = None, p2b: Optional[float] = None):
         spread = features.get("spread", 0.05)
         price = features.get("mid_price", 0.5)
         
@@ -215,22 +233,21 @@ class BTC5MStrategy:
         spread_cost = spread / 2.0
         
         # Fair prob
-        momentum = features.get("short_momentum_1m", 0.0)
-        imbalance = features.get("bid_ask_imbalance", 0.0)
-        fair_yes = _compute_fair_probability(price, momentum, imbalance)
+        fair_yes = _compute_fair_probability(price, momentum=features.get("short_momentum_1m", 0.0), imbalance=features.get("bid_ask_imbalance", 0.0), btc_price=btc_price, p2b=p2b)
         fair_prob = fair_yes if is_yes else (1.0 - fair_yes)
         
         planned_risk = current_balance * settings.risk_per_trade
         take_profit_price = min(0.95, entry_price + 0.30) # Dynamic target
-        reward_per_share = take_profit_price - entry_price
+        reward_per_share = max(0.01, take_profit_price - entry_price)
         risk_per_share = reward_per_share / 2.0
-        stop_loss_price = entry_price - risk_per_share
+        stop_loss_price = max(0.01, entry_price - risk_per_share)
         
         net_reward = (take_profit_price - entry_price) - fees - slippage_cost - spread_cost
         net_risk = (entry_price - stop_loss_price) + fees + slippage_cost + spread_cost
         
         actual_planned_rr = net_reward / net_risk if net_risk > 0 else 0
-        net_edge = net_reward - net_risk
+        raw_edge = fair_prob - entry_price
+        net_edge = raw_edge - spread_cost - slippage_cost - fees
         
         return entry_price, fair_prob, actual_planned_rr, net_edge, stop_loss_price, take_profit_price, planned_risk
 
@@ -309,25 +326,60 @@ class BTC5MStrategy:
                 no_score=0.0,
                 yes_prob=0.0,
                 no_prob=0.0,
+                predicted_side="NONE",
+                gate_results="{}",
+                yes_breakdown="{}",
+                no_breakdown="{}"
             )
 
         # 1. Score both sides
         yes_base_score, yes_breakdown = self._score_side(True, features, btc_price, price_to_beat)
         no_base_score, no_breakdown = self._score_side(False, features, btc_price, price_to_beat)
         
-        # 2. Calculate edges
-        yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, risk = self._calc_edge_and_rr(True, features, current_balance)
-        no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, _ = self._calc_edge_and_rr(False, features, current_balance)
+        # 2. Calculate edges with BTC & P2B inputs
+        yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, risk = self._calc_edge_and_rr(True, features, current_balance, btc_price, price_to_beat)
+        no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, _ = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat)
         
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
         # Edge > 0.05 gives 10 points
-        yes_score = yes_base_score + min(10, max(0, yes_edge * 200)) + (5 if yes_rr >= 2.0 else 0) + min(5, time_remaining / 60.0)
-        no_score = no_base_score + min(10, max(0, no_edge * 200)) + (5 if no_rr >= 2.0 else 0) + min(5, time_remaining / 60.0)
+        yes_edge_pts = min(10, max(0, yes_edge * 200))
+        yes_rr_pts = 5 if yes_rr >= MIN_RR else 0
+        yes_time_pts = min(5, time_remaining / 60.0)
+        yes_score = yes_base_score + yes_edge_pts + yes_rr_pts + yes_time_pts
+        yes_breakdown["Net Edge"] = round(yes_edge_pts, 1)
+        yes_breakdown["Risk/R:R"] = round(yes_rr_pts, 1)
+        yes_breakdown["Time"] = round(yes_time_pts, 1)
         
-        # 3. Determine winner
-        best_side = "YES" if yes_score >= no_score else "NO"
+        no_edge_pts = min(10, max(0, no_edge * 200))
+        no_rr_pts = 5 if no_rr >= MIN_RR else 0
+        no_time_pts = min(5, time_remaining / 60.0)
+        no_score = no_base_score + no_edge_pts + no_rr_pts + no_time_pts
+        no_breakdown["Net Edge"] = round(no_edge_pts, 1)
+        no_breakdown["Risk/R:R"] = round(no_rr_pts, 1)
+        no_breakdown["Time"] = round(no_time_pts, 1)
         
-        is_yes = (best_side == "YES")
+        import json
+        # 3. Determine Prediction (Independent of 70 threshold)
+        if yes_score > no_score:
+            predicted_side = "YES"
+        elif no_score > yes_score:
+            predicted_side = "NO"
+        else:
+            predicted_side = "YES" if yes_edge > no_edge else ("NO" if no_edge > yes_edge else "NONE")
+
+        # 4. Entry Checks
+        gate_results = {
+            "score": {"pass": False, "value": f"{max(yes_score, no_score):.1f}"},
+            "net_edge": {"pass": False, "value": f"0.00%"},
+            "spread": {"pass": False, "value": f"{spread*100:.2f}%"},
+            "liquidity": {"pass": False, "value": f"{liquidity:.0f}"},
+            "rr": {"pass": False, "value": "UNAVAILABLE"},
+            "time": {"pass": False, "value": f"{time_remaining:.0f}s"}
+        }
+
+        # Select target params based on prediction
+        is_yes = (predicted_side == "YES" or predicted_side == "NONE")
+        selected_score = yes_score if is_yes else no_score
         entry_price = yes_ep if is_yes else no_ep
         fair_prob = yes_fair if is_yes else no_fair
         actual_planned_rr = yes_rr if is_yes else no_rr
@@ -335,24 +387,47 @@ class BTC5MStrategy:
         stop_loss_price = yes_sl if is_yes else no_sl
         take_profit_price = yes_tp if is_yes else no_tp
         
-        # 4. Entry Filters
-        if time_remaining < 30:
-            skip_flags.append("SKIP - Too close to resolution (<30s)")
+        gate_results["net_edge"]["value"] = f"{net_edge*100:.2f}%"
+        gate_results["rr"]["value"] = f"{actual_planned_rr:.2f}"
         
-        if liquidity < MIN_LIQUIDITY:
-            skip_flags.append(f"SKIP - Insufficient liquidity ({liquidity:.1f})")
+        if selected_score >= MIN_ENTRY_SCORE:
+            gate_results["score"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - Predicted {predicted_side}, but score {selected_score:.1f} < {MIN_ENTRY_SCORE:.0f}")
             
-        if spread > MAX_SPREAD:
-            skip_flags.append(f"SKIP - Spread too high ({spread:.3f})")
+        if net_edge >= MIN_NET_EDGE:
+            gate_results["net_edge"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - Net edge {net_edge*100:.2f}% < {MIN_NET_EDGE*100:.2f}%")
             
-        if actual_planned_rr < 2.0:
-            skip_flags.append(f"SKIP - R:R below 1:2 (Achievable Net R:R is {actual_planned_rr:.2f})")
+        if spread <= MAX_SPREAD:
+            gate_results["spread"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - Spread {spread*100:.2f}% > {MAX_SPREAD*100:.2f}%")
             
-        if net_edge < MIN_NET_EDGE:
-            skip_flags.append(f"SKIP - Net edge too low ({net_edge:.3f})")
+        if liquidity >= MIN_LIQUIDITY:
+            gate_results["liquidity"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {MIN_LIQUIDITY:.0f}")
+            
+        if time_remaining >= 30:
+            gate_results["time"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - Time {time_remaining:.0f}s < 30s")
+            
+        if actual_planned_rr >= MIN_RR:
+            gate_results["rr"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {MIN_RR}")
             
         if not btc_price or not price_to_beat:
             skip_flags.append("SKIP - Missing Price-to-Beat or Current BTC Price (Stale data)")
+            
+        if predicted_side == "NONE":
+            skip_flags.append("SKIP - No directional evidence (YES/NO tie)")
+            
+        best_side = predicted_side
+        final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")
 
         # DB Open trades check
         from app.db.session import SessionLocal
@@ -360,20 +435,41 @@ class BTC5MStrategy:
         db = SessionLocal()
         try:
             open_count = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").count()
+            already_traded = db.query(BTC5MTrade).filter(BTC5MTrade.market_id == market_id).count()
         finally:
             db.close()
 
         if open_count >= 1:
             skip_flags.append("SKIP - Max 1 open position allowed")
+
+        if already_traded >= 1:
+            skip_flags.append("SKIP - Duplicate trade prevention: Market already traded")
+            
+        if current_balance <= 0:
+            skip_flags.append("SKIP - Risk limit (Zero or negative balance)")
             
         state = "SKIP" if skip_flags else "READY"
         reason = skip_flags[0] if skip_flags else f"Prediction: {best_side} (Score: {max(yes_score, no_score):.1f})"
         
+        # Override side properly
+        final_side = "BUY" if best_side == "YES" else ("SELL" if best_side == "NO" else "NONE")
+        
         if state == "READY" and self.risk_manager:
-            risk_decision = self.risk_manager.evaluate_trade({}, {})
-            if not risk_decision.approved:
+            risk_decision = self.risk_manager.evaluate_trade(
+                {"market_id": market_id},
+                {"condition_id": condition_id, "ask_depth": ask_depth}
+            )
+            is_approved = False
+            if isinstance(risk_decision, dict):
+                is_approved = (risk_decision.get("decision") in ("ACCEPT", "APPROVE") or risk_decision.get("approved") is True)
+                risk_reason = risk_decision.get("reason", "Rejected by RiskManager")
+            else:
+                is_approved = getattr(risk_decision, "approved", False)
+                risk_reason = getattr(risk_decision, "reason", "Rejected by RiskManager")
+
+            if not is_approved:
                 state = "SKIP"
-                reason = f"SKIP - Risk limit ({risk_decision.reason})"
+                reason = f"SKIP - Risk limit ({risk_reason})"
                 skip_flags.append(reason)
                 
         if state == "READY":
@@ -387,7 +483,7 @@ class BTC5MStrategy:
             no_token_id=no_token_id,
             timestamp=now,
             state=state,
-            side="BUY",
+            side=final_side,
             entry_price=entry_price,
             bid=yes_bid,
             ask=yes_ask,
@@ -407,7 +503,7 @@ class BTC5MStrategy:
             fees=0,
             net_edge=net_edge,
             risk_pct=settings.risk_per_trade,
-            position_size=risk / entry_price if entry_price > 0 else 0,
+            position_size=risk,
             time_remaining_sec=time_remaining,
             planned_risk=risk,
             planned_reward=risk * actual_planned_rr,
@@ -421,5 +517,9 @@ class BTC5MStrategy:
             yes_score=yes_score,
             no_score=no_score,
             yes_prob=yes_fair,
-            no_prob=1.0 - yes_fair
+            no_prob=1.0 - yes_fair,
+            predicted_side=predicted_side,
+            gate_results=json.dumps(gate_results),
+            yes_breakdown=json.dumps(yes_breakdown),
+            no_breakdown=json.dumps(no_breakdown)
         )

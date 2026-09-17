@@ -1,6 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
-import Dashboard from './pages/Dashboard';
 import ResearchTerminal from './pages/ResearchTerminal';
 import Login from './pages/auth/Login';
 import Signup from './pages/auth/Signup';
@@ -27,7 +26,7 @@ export default function App() {
 
         {/* Dashboard Routes */}
         <Route path="/app" element={<Layout />}>
-          <Route index element={<Dashboard />} />
+          <Route index element={<BTC5M />} />
           <Route path="research" element={<ResearchTerminal />} />
           <Route path="markets" element={<Markets />} />
           <Route path="markets/:id" element={<MarketDetail />} />
