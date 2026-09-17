@@ -42,8 +42,100 @@ class BTC5MEngine:
         self.running = False
         self.trading_active = True  # Default active for paper trading (toggleable via UI)
         self._market_states: Dict[str, str] = {}  # market_id -> state
+        self.rehydrate_state()
+
+    def rehydrate_state(self):
+        """
+        Rehydrate active bot status, targeting settings, and open trade thesis from SQLite database.
+        Ensures complete persistence across server restarts and updates.
+        """
+        try:
+            db = SessionLocal()
+            try:
+                from app.db.models import BTC5MSetting, BTC5MAudit, BTC5MTrade
+                from app.btc5m.settings_manager import get_btc5m_settings, ensure_btc5m_settings
+                
+                # 1. Ensure and load persistent targeting settings
+                ensure_btc5m_settings(db)
+                settings_map = get_btc5m_settings(db)
+                if self.strategy:
+                    self.strategy.settings = settings_map
+                
+                # 2. Rehydrate trading_active state
+                active_setting = db.query(BTC5MSetting).filter(BTC5MSetting.key == "trading_active").first()
+                if active_setting:
+                    self.trading_active = (active_setting.value.lower() in ("true", "1", "yes", "on"))
+                else:
+                    last_audit = db.query(BTC5MAudit).filter(BTC5MAudit.action.in_(["START", "STOP"])).order_by(BTC5MAudit.timestamp.desc()).first()
+                    if last_audit:
+                        self.trading_active = (last_audit.action == "START")
+                    else:
+                        self.trading_active = True
+                
+                # 3. Rehydrate active open trades into strategy memory
+                open_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+                for trade in open_trades:
+                    sig = BTC5MSignal(
+                        market_id=trade.market_id,
+                        condition_id=getattr(trade, "condition_id", ""),
+                        question=trade.question,
+                        yes_token_id=getattr(trade, "yes_token_id", ""),
+                        no_token_id=getattr(trade, "no_token_id", ""),
+                        timestamp=trade.entry_time or datetime.now(timezone.utc),
+                        state="HOLD",
+                        side=trade.execution_side or trade.side,
+                        entry_price=trade.entry_price,
+                        bid=trade.entry_price,
+                        ask=trade.entry_price,
+                        spread=trade.spread_at_entry or 0.01,
+                        bid_depth=1000.0,
+                        ask_depth=1000.0,
+                        momentum=trade.momentum_at_entry or 0.0,
+                        imbalance=trade.imbalance_at_entry or 0.0,
+                        ob_pressure=0.0,
+                        volatility=0.01,
+                        momentum_persistence=0.5,
+                        market_probability=trade.entry_market_probability or trade.entry_price,
+                        fair_probability=trade.entry_fair_probability or trade.entry_price,
+                        raw_edge=trade.entry_net_edge or 0.0,
+                        spread_cost=0.005,
+                        slippage_cost=0.0,
+                        fees=0.0,
+                        net_edge=trade.entry_net_edge or 0.0,
+                        risk_pct=0.02,
+                        position_size=trade.position_size,
+                        time_remaining_sec=trade.time_remaining_at_entry or 150.0,
+                        planned_risk=trade.planned_risk or 0.0,
+                        planned_reward=trade.planned_reward or 0.0,
+                        planned_rr=trade.entry_planned_rr or trade.planned_rr or 1.5,
+                        stop_loss_price=trade.entry_stop_price or trade.stop_loss_price or 0.0,
+                        take_profit_price=trade.entry_target_price or trade.take_profit_price or 1.0,
+                        model_version=trade.model_version or "1.0",
+                        strategy=trade.strategy or "BTC_5M",
+                        reason=f"REHYDRATED_LOCKED_THESIS: {trade.locked_predicted_side or trade.side}",
+                        skip_flags=[],
+                        yes_score=trade.entry_yes_score or 0.0,
+                        no_score=trade.entry_no_score or 0.0,
+                        yes_prob=trade.entry_fair_probability or 0.5,
+                        no_prob=1.0 - (trade.entry_fair_probability or 0.5),
+                        predicted_side=trade.locked_predicted_side or ("YES" if trade.side == "BUY" else "NO"),
+                        gate_results="{}",
+                        yes_breakdown="{}",
+                        no_breakdown="{}"
+                    )
+                    self.strategy.record_entry(trade.market_id, sig)
+                    if self.risk_manager:
+                        self.risk_manager.current_exposure = trade.position_size
+                    logger.info(f"[BTC5M Engine] Rehydrated OPEN trade #{trade.id} ({sig.predicted_side}) on market {trade.market_id}")
+
+                logger.info(f"[BTC5M Engine] Rehydration complete. trading_active={self.trading_active}, open_positions={len(open_trades)}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[BTC5M Engine] Error during state rehydration: {e}", exc_info=True)
 
     async def start(self):
+        self.rehydrate_state()
         self.running = True
         logger.info("[BTC5M Engine] Started. Polling Polymarket for BTC 5M markets.")
         asyncio.create_task(self._main_loop())

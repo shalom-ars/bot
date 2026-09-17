@@ -185,13 +185,62 @@ import httpx
 
 from app.btc5m.engine import btc5m_engine
 from pydantic import BaseModel
+from typing import Optional
 
 class ToggleTradingRequest(BaseModel):
     active: bool
 
+class UpdateSettingsRequest(BaseModel):
+    min_entry_score: Optional[float] = None
+    min_net_edge: Optional[float] = None
+    min_rr: Optional[float] = None
+    max_spread: Optional[float] = None
+    min_liquidity: Optional[float] = None
+    min_time_remaining: Optional[float] = None
+    take_profit_delta: Optional[float] = None
+    max_take_profit: Optional[float] = None
+    stop_loss_ratio: Optional[float] = None
+    risk_per_trade: Optional[float] = None
+    trading_active: Optional[bool] = None
+
+@router.get("/settings")
+def get_btc5m_targeting_settings(db: Session = Depends(get_db)):
+    """Retrieve current persistent targeting settings and bot status."""
+    from app.btc5m.settings_manager import get_btc5m_settings
+    settings_data = get_btc5m_settings(db)
+    settings_data["trading_active"] = btc5m_engine.trading_active
+    return {
+        "status": "success",
+        "settings": settings_data
+    }
+
+@router.post("/settings")
+def update_btc5m_targeting_settings(req: UpdateSettingsRequest, db: Session = Depends(get_db)):
+    """Update targeting settings and persist them to SQLite across restarts."""
+    from app.btc5m.settings_manager import update_btc5m_settings
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        return {"status": "error", "message": "No valid settings fields provided"}
+    
+    updated = update_btc5m_settings(db, updates, user_info="API")
+    if hasattr(btc5m_engine, 'strategy') and btc5m_engine.strategy:
+        btc5m_engine.strategy.settings = updated
+    if "trading_active" in updates:
+        btc5m_engine.trading_active = bool(updates["trading_active"])
+        
+    return {
+        "status": "success",
+        "message": "Targeting settings updated and persisted successfully",
+        "settings": updated
+    }
+
 @router.post("/toggle_trading")
 def toggle_trading(req: ToggleTradingRequest, db: Session = Depends(get_db)):
     btc5m_engine.trading_active = req.active
+    
+    # Persist in btc5m_settings so it survives reboots
+    from app.btc5m.settings_manager import update_btc5m_settings
+    update_btc5m_settings(db, {"trading_active": req.active}, user_info="UI_TOGGLE")
     
     # Force engine to clear cached markets if starting fresh
     if req.active:
@@ -414,7 +463,8 @@ def get_btc5m_status(db: Session = Depends(get_db)):
         "no_score": no_score,
         "latest_signal": latest_sig.state if latest_sig else None,
         "analysis": analysis,
-        "live_market_analysis": live_market_analysis
+        "live_market_analysis": live_market_analysis,
+        "targeting_settings": (lambda: __import__('app.btc5m.settings_manager', fromlist=['get_btc5m_settings']).get_btc5m_settings(db))()
     }
 
 

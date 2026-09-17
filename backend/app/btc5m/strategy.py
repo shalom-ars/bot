@@ -128,11 +128,29 @@ class BTC5MStrategy:
     Evaluates both YES (UP) and NO (DOWN) using a 100-point scoring system.
     """
 
-    def __init__(self, risk_manager=None):
+    def __init__(self, risk_manager=None, settings_dict: Optional[dict] = None):
         self.risk_manager = risk_manager
         self._active_positions: dict = {}  # market_id -> entry info
         self.last_btc_price = None
         self.last_price_to_beat = None
+        self.settings: dict = settings_dict or {}
+        if not self.settings:
+            self.rehydrate_settings()
+
+    def rehydrate_settings(self):
+        """Load persistent targeting settings from DB, falling back to defaults."""
+        try:
+            from app.db.session import SessionLocal
+            from app.btc5m.settings_manager import get_btc5m_settings
+            db = SessionLocal()
+            try:
+                self.settings = get_btc5m_settings(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"[BTC5M Strategy] Using default settings: {e}")
+            from app.btc5m.settings_manager import DEFAULT_SETTINGS, _cast_val
+            self.settings = {k: _cast_val(k, v) for k, v in DEFAULT_SETTINGS.items()}
 
     def record_entry(self, market_id: str, signal: BTC5MSignal):
         self._active_positions[market_id] = signal
@@ -236,10 +254,15 @@ class BTC5MStrategy:
         fair_yes = _compute_fair_probability(price, momentum=features.get("short_momentum_1m", 0.0), imbalance=features.get("bid_ask_imbalance", 0.0), btc_price=btc_price, p2b=p2b)
         fair_prob = fair_yes if is_yes else (1.0 - fair_yes)
         
-        planned_risk = current_balance * settings.risk_per_trade
-        take_profit_price = min(0.95, entry_price + 0.30) # Dynamic target
+        risk_pct = self.settings.get("risk_per_trade", settings.risk_per_trade)
+        planned_risk = current_balance * risk_pct
+        tp_delta = self.settings.get("take_profit_delta", 0.30)
+        max_tp = self.settings.get("max_take_profit", 0.95)
+        sl_ratio = self.settings.get("stop_loss_ratio", 0.50)
+
+        take_profit_price = min(max_tp, entry_price + tp_delta) # Dynamic target
         reward_per_share = max(0.01, take_profit_price - entry_price)
-        risk_per_share = reward_per_share / 2.0
+        risk_per_share = reward_per_share * sl_ratio
         stop_loss_price = max(0.01, entry_price - risk_per_share)
         
         net_reward = (take_profit_price - entry_price) - fees - slippage_cost - spread_cost
@@ -340,10 +363,17 @@ class BTC5MStrategy:
         yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, risk = self._calc_edge_and_rr(True, features, current_balance, btc_price, price_to_beat)
         no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, _ = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat)
         
+        min_rr = self.settings.get("min_rr", MIN_RR)
+        min_score = self.settings.get("min_entry_score", MIN_ENTRY_SCORE)
+        min_edge = self.settings.get("min_net_edge", MIN_NET_EDGE)
+        max_spr = self.settings.get("max_spread", MAX_SPREAD)
+        min_liq = self.settings.get("min_liquidity", MIN_LIQUIDITY)
+        min_time = self.settings.get("min_time_remaining", 30.0)
+
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
         # Edge > 0.05 gives 10 points
         yes_edge_pts = min(10, max(0, yes_edge * 200))
-        yes_rr_pts = 5 if yes_rr >= MIN_RR else 0
+        yes_rr_pts = 5 if yes_rr >= min_rr else 0
         yes_time_pts = min(5, time_remaining / 60.0)
         yes_score = yes_base_score + yes_edge_pts + yes_rr_pts + yes_time_pts
         yes_breakdown["Net Edge"] = round(yes_edge_pts, 1)
@@ -351,7 +381,7 @@ class BTC5MStrategy:
         yes_breakdown["Time"] = round(yes_time_pts, 1)
         
         no_edge_pts = min(10, max(0, no_edge * 200))
-        no_rr_pts = 5 if no_rr >= MIN_RR else 0
+        no_rr_pts = 5 if no_rr >= min_rr else 0
         no_time_pts = min(5, time_remaining / 60.0)
         no_score = no_base_score + no_edge_pts + no_rr_pts + no_time_pts
         no_breakdown["Net Edge"] = round(no_edge_pts, 1)
@@ -390,35 +420,35 @@ class BTC5MStrategy:
         gate_results["net_edge"]["value"] = f"{net_edge*100:.2f}%"
         gate_results["rr"]["value"] = f"{actual_planned_rr:.2f}"
         
-        if selected_score >= MIN_ENTRY_SCORE:
+        if selected_score >= min_score:
             gate_results["score"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - Predicted {predicted_side}, but score {selected_score:.1f} < {MIN_ENTRY_SCORE:.0f}")
+            skip_flags.append(f"SKIP - Predicted {predicted_side}, but score {selected_score:.1f} < {min_score:.0f}")
             
-        if net_edge >= MIN_NET_EDGE:
+        if net_edge >= min_edge:
             gate_results["net_edge"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - Net edge {net_edge*100:.2f}% < {MIN_NET_EDGE*100:.2f}%")
+            skip_flags.append(f"SKIP - Net edge {net_edge*100:.2f}% < {min_edge*100:.2f}%")
             
-        if spread <= MAX_SPREAD:
+        if spread <= max_spr:
             gate_results["spread"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - Spread {spread*100:.2f}% > {MAX_SPREAD*100:.2f}%")
+            skip_flags.append(f"SKIP - Spread {spread*100:.2f}% > {max_spr*100:.2f}%")
             
-        if liquidity >= MIN_LIQUIDITY:
+        if liquidity >= min_liq:
             gate_results["liquidity"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {MIN_LIQUIDITY:.0f}")
+            skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {min_liq:.0f}")
             
-        if time_remaining >= 30:
+        if time_remaining >= min_time:
             gate_results["time"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - Time {time_remaining:.0f}s < 30s")
+            skip_flags.append(f"SKIP - Time {time_remaining:.0f}s < {min_time:.0f}s")
             
-        if actual_planned_rr >= MIN_RR:
+        if actual_planned_rr >= min_rr:
             gate_results["rr"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {MIN_RR}")
+            skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
             
         if not btc_price or not price_to_beat:
             skip_flags.append("SKIP - Missing Price-to-Beat or Current BTC Price (Stale data)")

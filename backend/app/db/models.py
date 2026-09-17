@@ -581,3 +581,12 @@ class BTC5MAudit(Base):
     action      = Column(String) # "START" or "STOP"
     timestamp   = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
     details     = Column(String)
+
+
+class BTC5MSetting(Base):
+    """Persistent key-value targeting and configuration settings for BTC 5M module."""
+    __tablename__ = "btc5m_settings"
+    key         = Column(String(64), primary_key=True, index=True)
+    value       = Column(String(256), nullable=False)
+    updated_at  = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+

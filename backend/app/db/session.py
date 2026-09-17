@@ -34,10 +34,21 @@ def get_db():
 
 def ensure_btc5m_schema(db_engine):
     """
-    Ensures that btc5m_trades has all required immutable thesis columns
+    Ensures that btc5m_trades has all required immutable thesis columns,
+    ensures btc5m_settings table exists and is seeded with targeting defaults,
     and backfills any legacy rows in SQLite.
     """
     from sqlalchemy import text, inspect
+    from app.db.models import BTC5MSetting
+    from app.btc5m.settings_manager import ensure_btc5m_settings
+
+    # Ensure btc5m_settings table exists
+    BTC5MSetting.__table__.create(db_engine, checkfirst=True)
+    
+    Session = sessionmaker(bind=db_engine)
+    with Session() as db:
+        ensure_btc5m_settings(db)
+
     inspector = inspect(db_engine)
     if "btc5m_trades" not in inspector.get_table_names():
         return

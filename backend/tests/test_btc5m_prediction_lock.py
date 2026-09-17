@@ -505,3 +505,115 @@ def test_manual_close_trade_terminates_active_trade(db_session):
     res2 = close_btc5m_trade(db=db_session)
     assert res2["status"] == "error"
 
+
+# 17. Targeting settings persist across engine re-instantiation
+def test_targeting_settings_persisted_across_reinstantiation(db_session):
+    from app.btc5m.settings_manager import update_btc5m_settings, get_btc5m_settings
+    from app.btc5m.strategy import BTC5MStrategy
+    
+    # Update settings
+    updates = {
+        "min_entry_score": 67.5,
+        "min_net_edge": 0.025,
+        "min_rr": 1.8,
+        "take_profit_delta": 0.35,
+        "stop_loss_ratio": 0.45
+    }
+    updated = update_btc5m_settings(db_session, updates, user_info="TEST")
+    assert updated["min_entry_score"] == 67.5
+    assert updated["min_rr"] == 1.8
+    assert updated["take_profit_delta"] == 0.35
+
+    # Instantiate strategy with these persisted settings
+    strat = BTC5MStrategy(settings_dict=updated)
+    assert strat.settings["min_entry_score"] == 67.5
+    assert strat.settings["min_rr"] == 1.8
+    assert strat.settings["take_profit_delta"] == 0.35
+    assert strat.settings["stop_loss_ratio"] == 0.45
+
+
+# 18. Bot active status persists across reboots
+def test_trading_active_persisted_across_reinstantiation(db_session):
+    from app.btc5m.settings_manager import update_btc5m_settings, get_btc5m_settings
+    
+    # Toggle to False
+    update_btc5m_settings(db_session, {"trading_active": False}, user_info="TEST")
+    s_off = get_btc5m_settings(db_session)
+    assert s_off["trading_active"] is False
+
+    # Toggle to True
+    update_btc5m_settings(db_session, {"trading_active": True}, user_info="TEST")
+    s_on = get_btc5m_settings(db_session)
+    assert s_on["trading_active"] is True
+
+
+# 19. Open trade and thesis lock rehydrated into strategy memory
+def test_open_trade_and_thesis_lock_rehydrated_into_active_positions(db_session):
+    trade = create_sample_trade(db_session, side="BUY", predicted_side="YES", entry_price=0.62)
+    
+    from app.btc5m.strategy import BTC5MStrategy, BTC5MSignal
+    strat = BTC5MStrategy()
+    
+    # Simulate engine rehydration logic
+    open_trades = db_session.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+    assert len(open_trades) == 1
+    
+    for t in open_trades:
+        sig = BTC5MSignal(
+            market_id=t.market_id,
+            condition_id="",
+            question=t.question,
+            yes_token_id="",
+            no_token_id="",
+            timestamp=t.entry_time,
+            state="HOLD",
+            side=t.execution_side or t.side,
+            entry_price=t.entry_price,
+            bid=t.entry_price,
+            ask=t.entry_price,
+            spread=0.01,
+            bid_depth=1000.0,
+            ask_depth=1000.0,
+            momentum=0.0,
+            imbalance=0.0,
+            ob_pressure=0.0,
+            volatility=0.01,
+            momentum_persistence=0.5,
+            market_probability=t.entry_price,
+            fair_probability=t.entry_fair_probability or t.entry_price,
+            raw_edge=0.0,
+            spread_cost=0.005,
+            slippage_cost=0.0,
+            fees=0.0,
+            net_edge=0.05,
+            risk_pct=0.02,
+            position_size=t.position_size,
+            time_remaining_sec=120.0,
+            planned_risk=t.planned_risk or 0.0,
+            planned_reward=t.planned_reward or 0.0,
+            planned_rr=t.planned_rr or 1.5,
+            stop_loss_price=t.entry_stop_price or 0.52,
+            take_profit_price=t.entry_target_price or 0.92,
+            model_version="1.0",
+            strategy="BTC_5M",
+            reason=f"REHYDRATED_LOCKED_THESIS: {t.locked_predicted_side}",
+            skip_flags=[],
+            yes_score=t.entry_yes_score or 75.0,
+            no_score=t.entry_no_score or 25.0,
+            yes_prob=0.7,
+            no_prob=0.3,
+            predicted_side=t.locked_predicted_side,
+            gate_results="{}",
+            yes_breakdown="{}",
+            no_breakdown="{}"
+        )
+        strat.record_entry(t.market_id, sig)
+        
+    assert trade.market_id in strat._active_positions
+    rehydrated_sig = strat._active_positions[trade.market_id]
+    assert rehydrated_sig.predicted_side == "YES"
+    assert round(rehydrated_sig.stop_loss_price, 2) == 0.52
+    assert round(rehydrated_sig.take_profit_price, 2) == 0.82
+    assert "REHYDRATED_LOCKED_THESIS: YES" in rehydrated_sig.reason
+
+

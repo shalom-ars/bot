@@ -447,6 +447,7 @@ function InnerBTC5M() {
   }
 
   const isTradingActive = statusData?.trading_active ?? false;
+  const targetSettings = statusData?.targeting_settings;
   const analysis = statusData?.live_market_analysis || statusData?.analysis;
 
   // Live CLOB / Scanner Prices
@@ -556,6 +557,17 @@ function InnerBTC5M() {
               <p className="text-sm font-black text-white truncate mt-0.5">
                 {current?.question || 'Searching active BTC 5M market window...'}
               </p>
+              <div className="flex items-center gap-2 mt-1 text-[9px] font-mono text-slate-400 flex-wrap">
+                <span className="text-amber-400 font-bold uppercase">TARGETING:</span>
+                <span>Score &ge; {targetSettings?.min_entry_score ?? 60}</span>
+                <span>&bull;</span>
+                <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.015) * 100).toFixed(1)}%</span>
+                <span>&bull;</span>
+                <span>R:R &ge; {targetSettings?.min_rr ?? 1.5}:1</span>
+                <span>&bull;</span>
+                <span>TP +${targetSettings?.take_profit_delta ?? 0.30}</span>
+                <span className="text-emerald-400 font-bold ml-1">🔒 PERSISTENT</span>
+              </div>
             </div>
           </div>
 
