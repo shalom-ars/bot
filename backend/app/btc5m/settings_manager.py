@@ -24,6 +24,32 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "stop_loss_ratio": "0.50",
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
+    "mode": "dynamic",
+    "tp_dollar": "3.00",
+    "sl_dollar": "2.00",
+    "side_bias": "ANY",
+    "only_short": "false",
+}
+
+DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = {
+    "trading_active": "true",
+    "min_entry_score": "60.0",
+    "min_net_edge": "0.015",
+    "min_rr": "1.5",
+    "max_spread": "0.05",
+    "min_liquidity": "100.0",
+    "min_time_remaining": "30.0",
+    "max_time_remaining": "240.0",
+    "take_profit_delta": "0.30",
+    "max_take_profit": "0.95",
+    "stop_loss_ratio": "0.50",
+    "risk_per_trade": "0.02",
+    "max_consecutive_losses": "5",
+    "mode": "fixed_dollar",
+    "tp_dollar": "3.00",
+    "sl_dollar": "2.00",
+    "side_bias": "NO",
+    "only_short": "true",
 }
 
 TYPED_FIELDS = {
@@ -40,6 +66,11 @@ TYPED_FIELDS = {
     "stop_loss_ratio": float,
     "risk_per_trade": float,
     "max_consecutive_losses": int,
+    "mode": str,
+    "tp_dollar": float,
+    "sl_dollar": float,
+    "side_bias": str,
+    "only_short": bool,
 }
 
 
@@ -60,56 +91,66 @@ def _cast_val(key: str, val: str) -> Any:
     return str(val)
 
 
-def ensure_btc5m_settings(db: Session) -> None:
-    """Ensure all default keys exist in btc5m_settings."""
+def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
+    """Ensure all default keys exist in btc5m_settings for the specified instance."""
     existing = {s.key for s in db.query(BTC5MSetting).all()}
     added = False
-    for k, v in DEFAULT_SETTINGS.items():
-        if k not in existing:
-            db.add(BTC5MSetting(key=k, value=v))
+    prefix = "" if instance_id in ("instance_1", "default") else f"{instance_id}:"
+    defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
+    for k, v in defaults.items():
+        db_key = f"{prefix}{k}"
+        if db_key not in existing:
+            db.add(BTC5MSetting(key=db_key, value=v))
             added = True
     if added:
         try:
             db.commit()
-            logger.info("[BTC5M Settings] Seeded default targeting settings in database.")
+            logger.info(f"[BTC5M Settings] Seeded default targeting settings for {instance_id} in database.")
         except Exception as e:
             db.rollback()
-            logger.warning(f"[BTC5M Settings] Failed to seed default settings: {e}")
+            logger.warning(f"[BTC5M Settings] Failed to seed default settings for {instance_id}: {e}")
 
 
-def get_btc5m_settings(db: Session) -> Dict[str, Any]:
-    """Retrieve all targeting settings typed appropriately."""
+def get_btc5m_settings(db: Session, instance_id: str = "instance_1") -> Dict[str, Any]:
+    """Retrieve all targeting settings typed appropriately for the specified instance."""
     rows = db.query(BTC5MSetting).all()
     if not rows:
-        ensure_btc5m_settings(db)
+        ensure_btc5m_settings(db, instance_id)
         rows = db.query(BTC5MSetting).all()
 
+    prefix = "" if instance_id in ("instance_1", "default") else f"{instance_id}:"
+    defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
     result = {}
     row_map = {r.key: r.value for r in rows}
-    for k, default_str in DEFAULT_SETTINGS.items():
-        raw_val = row_map.get(k, default_str)
+    for k, default_str in defaults.items():
+        db_key = f"{prefix}{k}"
+        # Look for prefixed key first, fall back to un-prefixed, then default
+        raw_val = row_map.get(db_key, row_map.get(k, default_str))
         result[k] = _cast_val(k, raw_val)
     return result
 
 
-def update_btc5m_settings(db: Session, updates: Dict[str, Any], user_info: str = "SYSTEM") -> Dict[str, Any]:
+def update_btc5m_settings(db: Session, updates: Dict[str, Any], user_info: str = "SYSTEM", instance_id: str = "instance_1") -> Dict[str, Any]:
     """Update settings in database persistently and return updated typed settings."""
+    prefix = "" if instance_id in ("instance_1", "default") else f"{instance_id}:"
+    defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
     for k, v in updates.items():
-        if k not in DEFAULT_SETTINGS:
+        if k not in defaults:
             continue
+        db_key = f"{prefix}{k}"
         str_val = str(v).lower() if isinstance(v, bool) else str(v)
-        setting = db.query(BTC5MSetting).filter(BTC5MSetting.key == k).first()
+        setting = db.query(BTC5MSetting).filter(BTC5MSetting.key == db_key).first()
         if setting:
             setting.value = str_val
             setting.updated_at = datetime.now(timezone.utc)
         else:
-            db.add(BTC5MSetting(key=k, value=str_val))
+            db.add(BTC5MSetting(key=db_key, value=str_val))
 
     audit = BTC5MAudit(
         action="SETTINGS_UPDATE",
-        details=f"Targeting settings updated by {user_info}: {list(updates.keys())}"
+        details=f"Targeting settings for {instance_id} updated by {user_info}: {list(updates.keys())}"
     )
     db.add(audit)
     db.commit()
-    logger.info(f"[BTC5M Settings] Persisted updated targeting settings: {updates}")
-    return get_btc5m_settings(db)
+    logger.info(f"[BTC5M Settings] Persisted updated targeting settings for {instance_id}: {updates}")
+    return get_btc5m_settings(db, instance_id)

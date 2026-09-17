@@ -35,11 +35,33 @@ class BTC5MEngine:
     and paper trade execution for BTC 5M markets.
     """
 
-    def __init__(self, risk_manager: Optional[RiskManager] = None):
+    def __init__(
+        self,
+        instance_id: str = "instance_1",
+        name: str = "Primary Bot",
+        mode: str = "dynamic",
+        tp_dollar: Optional[float] = None,
+        sl_dollar: Optional[float] = None,
+        only_short: bool = False,
+        risk_manager: Optional[RiskManager] = None
+    ):
+        self.instance_id = instance_id
+        self.name = name
+        self.mode = mode
+        self.tp_dollar = tp_dollar
+        self.sl_dollar = sl_dollar
+        self.only_short = only_short
         from app.db.models import BTC5MTrade
         self.risk_manager = risk_manager or RiskManager(trade_model=BTC5MTrade)
         self.feature_engine = BTC5MFeatureEngine()
-        self.strategy = BTC5MStrategy(risk_manager=self.risk_manager)
+        self.strategy = BTC5MStrategy(
+            risk_manager=self.risk_manager,
+            instance_id=self.instance_id,
+            mode=self.mode,
+            tp_dollar=self.tp_dollar,
+            sl_dollar=self.sl_dollar,
+            only_short=self.only_short
+        )
         self.running = False
         self.trading_active = True  # Default active for paper trading (toggleable via UI)
         self._market_states: Dict[str, str] = {}  # market_id -> state
@@ -58,10 +80,11 @@ class BTC5MEngine:
                 from app.btc5m.settings_manager import get_btc5m_settings, ensure_btc5m_settings
                 
                 # 1. Ensure and load persistent targeting settings
-                ensure_btc5m_settings(db)
-                settings_map = get_btc5m_settings(db)
+                ensure_btc5m_settings(db, instance_id=self.instance_id)
+                settings_map = get_btc5m_settings(db, instance_id=self.instance_id)
                 if self.strategy:
                     self.strategy.settings = settings_map
+                    self.strategy._sync_instance_params()
 
                 # 2. Rehydrate RiskManager with BTC5M authoritative trades and persistent risk settings
                 if self.risk_manager:
@@ -72,7 +95,8 @@ class BTC5MEngine:
                     self.risk_manager.rehydrate()
                 
                 # 2. Rehydrate trading_active state
-                active_setting = db.query(BTC5MSetting).filter(BTC5MSetting.key == "trading_active").first()
+                active_key = "trading_active" if self.instance_id in ("instance_1", "default") else f"{self.instance_id}:trading_active"
+                active_setting = db.query(BTC5MSetting).filter(BTC5MSetting.key == active_key).first()
                 if active_setting:
                     self.trading_active = (active_setting.value.lower() in ("true", "1", "yes", "on"))
                 else:
@@ -83,7 +107,10 @@ class BTC5MEngine:
                         self.trading_active = True
                 
                 # 3. Rehydrate active open trades into strategy memory
-                open_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+                open_trades = db.query(BTC5MTrade).filter(
+                    BTC5MTrade.status == "OPEN",
+                    BTC5MTrade.instance_id == self.instance_id
+                ).all()
                 for trade in open_trades:
                     sig = BTC5MSignal(
                         market_id=trade.market_id,
@@ -163,12 +190,12 @@ class BTC5MEngine:
             from app.api.btc5m import build_btc5m_status_payload
             db = SessionLocal()
             try:
-                payload = await asyncio.to_thread(build_btc5m_status_payload, db)
-                await manager.broadcast_btc5m(payload)
+                payload = await asyncio.to_thread(build_btc5m_status_payload, db, self.instance_id)
+                await manager.broadcast_btc5m(payload, instance_id=self.instance_id)
             finally:
                 db.close()
         except Exception as e:
-            logger.debug(f"[BTC5M Engine] Broadcast error: {e}")
+            logger.debug(f"[BTC5M Engine {self.instance_id}] Broadcast error: {e}")
 
     async def _broadcast_loop(self):
         """Asynchronous low-latency streaming loop pushing status ticks to WebSocket clients."""
@@ -628,11 +655,12 @@ class BTC5MEngine:
                 gate_results=signal.gate_results,
                 yes_breakdown=signal.yes_breakdown,
                 no_breakdown=signal.no_breakdown,
+                instance_id=self.instance_id,
             ))
             db.commit()
         except Exception as e:
             db.rollback()
-            logger.error(f"[BTC5M Engine] DB persist signal error: {e}")
+            logger.error(f"[BTC5M Engine {self.instance_id}] DB persist signal error: {e}")
         finally:
             db.close()
 
@@ -650,6 +678,7 @@ class BTC5MEngine:
             locked_token = signal.yes_token_id if is_yes else (signal.no_token_id or signal.yes_token_id)
 
             trade = BTC5MTrade(
+                instance_id=self.instance_id,
                 market_id=signal.market_id,
                 condition_id=signal.condition_id,
                 question=signal.question,
@@ -703,7 +732,7 @@ class BTC5MEngine:
 
         except Exception as e:
             db.rollback()
-            logger.error(f"[BTC5M Engine] Execute paper trade error: {e}")
+            logger.error(f"[BTC5M Engine {self.instance_id}] Execute paper trade error: {e}")
         finally:
             db.close()
 
@@ -711,7 +740,10 @@ class BTC5MEngine:
         """Find OPEN paper trades, query Polymarket Gamma API via YES token ID, and settle if closed."""
         db = SessionLocal()
         try:
-            open_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+            open_trades = db.query(BTC5MTrade).filter(
+                BTC5MTrade.status == "OPEN",
+                BTC5MTrade.instance_id == self.instance_id
+            ).all()
             if not open_trades:
                 return
 
@@ -986,5 +1018,26 @@ class BTC5MEngine:
         finally:
             db.close()
 
-# Singleton instance
-btc5m_engine = BTC5MEngine()
+# Primary Bot (Instance 1: Dynamic R:R All-Weather)
+btc5m_engine = BTC5MEngine(
+    instance_id="instance_1",
+    name="Bot 1 (Dynamic R:R)"
+)
+
+# Secondary Bot (Instance 2: Short Specialist $3 TP / $2 SL)
+btc5m_engine_2 = BTC5MEngine(
+    instance_id="instance_2",
+    name="Bot 2 (Short Specialist $3 TP / $2 SL)",
+    mode="fixed_dollar",
+    tp_dollar=3.0,
+    sl_dollar=2.0,
+    only_short=True
+)
+
+ENGINES: Dict[str, BTC5MEngine] = {
+    "instance_1": btc5m_engine,
+    "instance_2": btc5m_engine_2
+}
+
+def get_engine(instance_id: str = "instance_1") -> BTC5MEngine:
+    return ENGINES.get(instance_id, btc5m_engine)

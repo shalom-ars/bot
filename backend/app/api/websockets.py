@@ -20,7 +20,7 @@ class ConnectionManager:
             "markets": set(),
             "btc5m": set(),
         }
-        self._last_btc5m_payload: Optional[dict] = None
+        self._last_btc5m_payloads: Dict[str, dict] = {}
 
     async def connect(self, websocket: WebSocket, channel: str = "all"):
         await websocket.accept()
@@ -55,18 +55,19 @@ class ConnectionManager:
         for dead in dead_connections:
             self.disconnect(dead, channel)
 
-    async def broadcast_btc5m(self, status_data: dict):
+    async def broadcast_btc5m(self, status_data: dict, instance_id: str = "instance_1"):
         """Dedicated high-frequency broadcast for BTC 5M market, price, trade, and signal ticks."""
-        self._last_btc5m_payload = status_data
+        self._last_btc5m_payloads[instance_id] = status_data
         message = {
             "type": "btc5m_status",
             "channel": "btc5m",
+            "instance_id": instance_id,
             "data": status_data
         }
         await self.broadcast(message, channel="btc5m")
 
-    def get_last_btc5m_payload(self) -> Optional[dict]:
-        return self._last_btc5m_payload
+    def get_last_btc5m_payload(self, instance_id: str = "instance_1") -> Optional[dict]:
+        return self._last_btc5m_payloads.get(instance_id) or self._last_btc5m_payloads.get("instance_1")
 
 manager = ConnectionManager()
 
@@ -89,20 +90,22 @@ async def websocket_endpoint(websocket: WebSocket):
 async def btc5m_websocket_endpoint(websocket: WebSocket):
     """
     Dedicated high-speed WebSocket stream for BTC 5M real-time data:
-    - Instant push on connection with latest cached snapshot (<5ms latency)
-    - Real-time ticks for BTC Price, Price-to-Beat, Orderbook Mid/Spread
+    - Instant push on connection with latest cached snapshots (<5ms latency)
+    - Real-time ticks for BTC Price, Price-to-Beat, Orderbook Mid/Spread per bot instance
     - Immediate event notifications for Trade Entries, Exits, and Parameter Updates
     """
     await manager.connect(websocket, channel="btc5m")
     try:
-        # If we have a cached status payload, send it immediately on connection
-        last_data = manager.get_last_btc5m_payload()
-        if last_data:
-            await websocket.send_text(json.dumps({
-                "type": "btc5m_status",
-                "channel": "btc5m",
-                "data": last_data
-            }))
+        # If we have cached status payloads for any instances, send them immediately on connection
+        if manager._last_btc5m_payloads:
+            for inst_id, last_data in manager._last_btc5m_payloads.items():
+                if last_data:
+                    await websocket.send_text(json.dumps({
+                        "type": "btc5m_status",
+                        "channel": "btc5m",
+                        "instance_id": inst_id,
+                        "data": last_data
+                    }))
 
         while True:
             data = await websocket.receive_text()

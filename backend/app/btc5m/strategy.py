@@ -97,6 +97,7 @@ class BTC5MSignal:
     gate_results: str = "{}"
     yes_breakdown: str = "{}"
     no_breakdown: str = "{}"
+    instance_id: str = "instance_1"
     # Risk-level skip flags
     skip_flags: list = field(default_factory=list)
 
@@ -154,31 +155,61 @@ class BTC5MStrategy:
     """
     BTC 5-Minute Prediction Market Strategy.
     Evaluates both YES (UP) and NO (DOWN) using a 100-point scoring system.
+    Supports multi-instance configurations (e.g. Dynamic R:R vs Fixed Dollar Short Specialist).
     """
 
-    def __init__(self, risk_manager=None, settings_dict: Optional[dict] = None):
+    def __init__(
+        self,
+        risk_manager=None,
+        settings_dict: Optional[dict] = None,
+        instance_id: str = "instance_1",
+        mode: str = "dynamic",
+        tp_dollar: Optional[float] = None,
+        sl_dollar: Optional[float] = None,
+        only_short: bool = False
+    ):
         self.risk_manager = risk_manager
+        self.instance_id = instance_id
+        self.mode = mode
+        self.tp_dollar = tp_dollar
+        self.sl_dollar = sl_dollar
+        self.only_short = only_short
         self._active_positions: dict = {}  # market_id -> entry info
         self.last_btc_price = None
         self.last_price_to_beat = None
         self.settings: dict = settings_dict or {}
         if not self.settings:
             self.rehydrate_settings()
+        else:
+            self._sync_instance_params()
+
+    def _sync_instance_params(self):
+        if self.settings.get("mode"):
+            self.mode = self.settings.get("mode")
+        if self.settings.get("tp_dollar") is not None:
+            self.tp_dollar = float(self.settings.get("tp_dollar"))
+        if self.settings.get("sl_dollar") is not None:
+            self.sl_dollar = float(self.settings.get("sl_dollar"))
+        if self.settings.get("only_short") is not None:
+            self.only_short = bool(self.settings.get("only_short"))
 
     def rehydrate_settings(self):
-        """Load persistent targeting settings from DB, falling back to defaults."""
+        """Load persistent targeting settings from DB for this instance, falling back to defaults."""
         try:
             from app.db.session import SessionLocal
             from app.btc5m.settings_manager import get_btc5m_settings
             db = SessionLocal()
             try:
-                self.settings = get_btc5m_settings(db)
+                self.settings = get_btc5m_settings(db, instance_id=self.instance_id)
+                self._sync_instance_params()
             finally:
                 db.close()
         except Exception as e:
-            logger.warning(f"[BTC5M Strategy] Using default settings: {e}")
-            from app.btc5m.settings_manager import DEFAULT_SETTINGS, _cast_val
-            self.settings = {k: _cast_val(k, v) for k, v in DEFAULT_SETTINGS.items()}
+            logger.warning(f"[BTC5M Strategy] Using default settings for {self.instance_id}: {e}")
+            from app.btc5m.settings_manager import DEFAULT_SETTINGS, DEFAULT_SETTINGS_INSTANCE_2, _cast_val
+            defaults = DEFAULT_SETTINGS_INSTANCE_2 if self.instance_id == "instance_2" else DEFAULT_SETTINGS
+            self.settings = {k: _cast_val(k, v) for k, v in defaults.items()}
+            self._sync_instance_params()
 
     def record_entry(self, market_id: str, signal: BTC5MSignal):
         self._active_positions[market_id] = signal
@@ -319,14 +350,27 @@ class BTC5MStrategy:
         
         risk_pct = self.settings.get("risk_per_trade", settings.risk_per_trade)
         planned_risk = current_balance * risk_pct
-        tp_delta = self.settings.get("take_profit_delta", 0.30)
-        max_tp = self.settings.get("max_take_profit", 0.95)
-        sl_ratio = self.settings.get("stop_loss_ratio", 0.50)
+        position_size = planned_risk
+        quantity = position_size / (entry_price + 1e-9)
 
-        take_profit_price = min(max_tp, entry_price + tp_delta) # Dynamic target
-        reward_per_share = max(0.01, take_profit_price - entry_price)
-        risk_per_share = reward_per_share * sl_ratio
-        stop_loss_price = max(0.01, entry_price - risk_per_share)
+        is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
+        if is_fixed:
+            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 3.0))
+            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 2.0))
+            take_profit_price = min(0.99, entry_price + (tp_dollar / max(0.1, quantity)))
+            stop_loss_price = max(0.01, entry_price - (sl_dollar / max(0.1, quantity)))
+            reward_per_share = max(0.001, take_profit_price - entry_price)
+            risk_per_share = max(0.001, entry_price - stop_loss_price)
+            planned_risk = sl_dollar
+        else:
+            tp_delta = self.settings.get("take_profit_delta", 0.30)
+            max_tp = self.settings.get("max_take_profit", 0.95)
+            sl_ratio = self.settings.get("stop_loss_ratio", 0.50)
+
+            take_profit_price = min(max_tp, entry_price + tp_delta) # Dynamic target
+            reward_per_share = max(0.01, take_profit_price - entry_price)
+            risk_per_share = reward_per_share * sl_ratio
+            stop_loss_price = max(0.01, entry_price - risk_per_share)
         
         net_reward = (take_profit_price - entry_price) - fees - slippage_cost - spread_cost
         net_risk = (entry_price - stop_loss_price) + fees + slippage_cost + spread_cost
@@ -525,13 +569,23 @@ class BTC5MStrategy:
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")
 
-        # DB Open trades check
+        is_only_short = self.only_short or (self.settings.get("only_short") is True) or (self.settings.get("side_bias") == "NO")
+        if is_only_short and best_side != "NO":
+            skip_flags.insert(0, "SKIP - Instance specialized for Short (NO/DOWN) positions only")
+
+        # DB Open trades check scoped to this instance
         from app.db.session import SessionLocal
         from app.db.models import BTC5MTrade
         db = SessionLocal()
         try:
-            open_count = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").count()
-            already_traded = db.query(BTC5MTrade).filter(BTC5MTrade.market_id == market_id).count()
+            open_count = db.query(BTC5MTrade).filter(
+                BTC5MTrade.status == "OPEN",
+                BTC5MTrade.instance_id == self.instance_id
+            ).count()
+            already_traded = db.query(BTC5MTrade).filter(
+                BTC5MTrade.market_id == market_id,
+                BTC5MTrade.instance_id == self.instance_id
+            ).count()
         finally:
             db.close()
 
@@ -617,5 +671,6 @@ class BTC5MStrategy:
             predicted_side=predicted_side,
             gate_results=json.dumps(gate_results),
             yes_breakdown=json.dumps(yes_breakdown),
-            no_breakdown=json.dumps(no_breakdown)
+            no_breakdown=json.dumps(no_breakdown),
+            instance_id=self.instance_id
         )

@@ -42,9 +42,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(orchestrator.start())
     asyncio.create_task(resolution_check_loop(orchestrator.paper_engine))
 
-    # BTC 5M dedicated module
-    from app.btc5m.engine import btc5m_engine
+    # BTC 5M dedicated module — Dual Parallel Instances
+    from app.btc5m.engine import btc5m_engine, btc5m_engine_2
     await btc5m_engine.start()
+    await btc5m_engine_2.start()
     
     yield
     # Teardown

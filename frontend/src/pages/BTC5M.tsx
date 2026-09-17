@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Clock, Shield, TrendingUp, 
-  Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle 
+  Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
+  Bot, Crosshair
 } from 'lucide-react';
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
@@ -127,14 +128,14 @@ function usePolymarketLive(yesToken: string | undefined, noToken: string | undef
   return { livePrices };
 }
 
-function useBTC5MStatus() {
+function useBTC5MStatus(instanceId: string = 'instance_1') {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [wsConnected, setWsConnected] = useState<boolean>(false);
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/btc5m/status');
+      const res = await fetch(`/api/btc5m/status?instance_id=${instanceId}`);
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -146,7 +147,8 @@ function useBTC5MStatus() {
   };
 
   useEffect(() => {
-    // 1. Instant REST fetch on mount for immediate initial paint (<100ms)
+    // 1. Instant REST fetch on mount and on instanceId change for immediate initial paint (<100ms)
+    setLoading(true);
     fetchStatus();
 
     // 2. High-speed WebSocket connection for real-time live streaming
@@ -171,8 +173,10 @@ function useBTC5MStatus() {
           try {
             const parsed = JSON.parse(event.data);
             if (parsed.type === 'btc5m_status' && parsed.data) {
-              setData(parsed.data);
-              setLoading(false);
+              if (!parsed.instance_id || parsed.instance_id === instanceId) {
+                setData(parsed.data);
+                setLoading(false);
+              }
             }
           } catch (err) {}
         };
@@ -209,20 +213,20 @@ function useBTC5MStatus() {
         ws.close();
       }
     };
-  }, []);
+  }, [instanceId]);
 
   return { statusData: data, statusLoading: loading, refetchStatus: fetchStatus, wsConnected };
 }
 
 // Categorized Trade History Section (Weekly, Monthly, All)
-function TradeHistorySection({ refreshTrigger }: { refreshTrigger?: number }) {
+function TradeHistorySection({ refreshTrigger, instanceId = 'instance_1' }: { refreshTrigger?: number, instanceId?: string }) {
   const [period, setPeriod] = useState<'all' | 'weekly' | 'monthly'>('all');
   const [historyData, setHistoryData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   const fetchTrades = async () => {
     try {
-      const res = await fetch(`/api/btc5m/trades?period=${period}`);
+      const res = await fetch(`/api/btc5m/trades?period=${period}&instance_id=${instanceId}`);
       if (res.ok) {
         const json = await res.json();
         setHistoryData(json);
@@ -237,7 +241,7 @@ function TradeHistorySection({ refreshTrigger }: { refreshTrigger?: number }) {
     fetchTrades();
     const interval = setInterval(fetchTrades, 3000);
     return () => { clearInterval(interval); };
-  }, [period, refreshTrigger]);
+  }, [period, refreshTrigger, instanceId]);
 
   const trades = historyData?.trades || [];
   const total = historyData?.total ?? 0;
@@ -428,9 +432,10 @@ function TradeHistorySection({ refreshTrigger }: { refreshTrigger?: number }) {
 }
 
 function InnerBTC5M() {
-  const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus();
+  const [selectedInstance, setSelectedInstance] = useState<'instance_1' | 'instance_2'>('instance_1');
+  const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus(selectedInstance);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
-  const { data: statsData } = useApi<any>(`/btc5m/stats?v=${refreshTrigger}`, null);
+  const { data: statsData } = useApi<any>(`/btc5m/stats?instance_id=${selectedInstance}&v=${refreshTrigger}`, null);
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [isTogglingTrading, setIsTogglingTrading] = useState<boolean>(false);
@@ -448,7 +453,7 @@ function InnerBTC5M() {
       const res = await fetch('/api/btc5m/toggle_trading', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: targetState })
+        body: JSON.stringify({ active: targetState, instance_id: selectedInstance })
       });
       if (res.ok) {
         refetchStatus();
@@ -465,7 +470,7 @@ function InnerBTC5M() {
     setIsClosing(true);
     setCloseError(null);
     try {
-      const res = await fetch('/api/btc5m/close_trade', {
+      const res = await fetch(`/api/btc5m/close_trade?instance_id=${selectedInstance}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -591,6 +596,47 @@ function InnerBTC5M() {
 
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
+      {/* BOT INSTANCE SWITCHER BAR */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2 flex flex-col sm:flex-row items-center justify-between gap-2 shadow-sm">
+        <div className="flex items-center gap-1.5 w-full sm:w-auto">
+          <button
+            onClick={() => setSelectedInstance('instance_1')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              selectedInstance === 'instance_1'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            <span>BOT 1: Dynamic R:R (All-Weather)</span>
+            {selectedInstance === 'instance_1' && isTradingActive && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
+            )}
+          </button>
+          <button
+            onClick={() => setSelectedInstance('instance_2')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              selectedInstance === 'instance_2'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Crosshair className="w-4 h-4" />
+            <span>BOT 2: Short Specialist ($3 TP / $2 SL)</span>
+            {selectedInstance === 'instance_2' && isTradingActive && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
+            )}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 px-2 self-end sm:self-auto">
+          <span className="text-slate-500 uppercase text-[9px] font-bold">Active Instance:</span>
+          <span className="text-amber-400 font-bold">
+            {selectedInstance === 'instance_1' ? 'Engine 1 (Dynamic YES/NO)' : 'Engine 2 (NO/DOWN Only, $3 TP / $2 SL)'}
+          </span>
+        </div>
+      </div>
+
       {/* 1. FULL-WIDTH RESOLUTION COUNTDOWN TIMER BANNER (AT THE VERY TOP) */}
       <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
         {/* Top Row inside Timer Banner: Market Question, Big Countdown, and Virtual Equity */}
@@ -626,13 +672,27 @@ function InnerBTC5M() {
               </p>
               <div className="flex items-center gap-2 mt-1 text-[9px] font-mono text-slate-400 flex-wrap">
                 <span className="text-amber-400 font-bold uppercase">TARGETING:</span>
-                <span>Score &ge; {targetSettings?.min_entry_score ?? 60}</span>
-                <span>&bull;</span>
-                <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.015) * 100).toFixed(1)}%</span>
-                <span>&bull;</span>
-                <span>R:R &ge; {targetSettings?.min_rr ?? 1.5}:1</span>
-                <span>&bull;</span>
-                <span>TP +${targetSettings?.take_profit_delta ?? 0.30}</span>
+                {selectedInstance === 'instance_2' ? (
+                  <>
+                    <span className="text-indigo-300 font-bold">SIDE: SHORT (NO/DOWN ONLY)</span>
+                    <span>&bull;</span>
+                    <span className="text-emerald-400 font-bold">TP +$3.00</span>
+                    <span>&bull;</span>
+                    <span className="text-rose-400 font-bold">SL -$2.00</span>
+                    <span>&bull;</span>
+                    <span>Score &ge; {targetSettings?.min_entry_score ?? 60}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Score &ge; {targetSettings?.min_entry_score ?? 60}</span>
+                    <span>&bull;</span>
+                    <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.015) * 100).toFixed(1)}%</span>
+                    <span>&bull;</span>
+                    <span>R:R &ge; {targetSettings?.min_rr ?? 1.5}:1</span>
+                    <span>&bull;</span>
+                    <span>TP +${targetSettings?.take_profit_delta ?? 0.30}</span>
+                  </>
+                )}
                 <span className="text-emerald-400 font-bold ml-1">🔒 PERSISTENT</span>
                 <span className="mx-1 text-slate-600">|</span>
                 {wsConnected ? (
@@ -1073,14 +1133,16 @@ function InnerBTC5M() {
 
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
             <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
-            <span className="font-bold text-slate-700">Auto Paper Quant ($50/trade)</span>
+            <span className="font-bold text-slate-700">
+              {selectedInstance === 'instance_2' ? 'Fixed $3 TP / $2 SL (Short Only)' : 'Dynamic R:R All-Weather ($50/trade)'}
+            </span>
           </div>
         </div>
 
       </div>
 
       {/* 4. CATEGORIZED TRADE HISTORY (WEEKLY & MONTHLY AUDIT LOG) */}
-      <TradeHistorySection refreshTrigger={refreshTrigger} />
+      <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={selectedInstance} />
     </div>
   );
 }

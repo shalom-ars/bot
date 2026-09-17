@@ -70,7 +70,8 @@ def ensure_btc5m_schema(db_engine):
         ("entry_stop_price", "FLOAT"),
         ("entry_target_price", "FLOAT"),
         ("prediction_locked_at", "DATETIME"),
-        ("prediction_lock_version", "VARCHAR DEFAULT '1.0'")
+        ("prediction_lock_version", "VARCHAR DEFAULT '1.0'"),
+        ("instance_id", "VARCHAR DEFAULT 'instance_1'")
     ]
 
     with db_engine.connect() as conn:
@@ -78,6 +79,16 @@ def ensure_btc5m_schema(db_engine):
             if col_name not in existing_columns:
                 try:
                     conn.execute(text(f"ALTER TABLE btc5m_trades ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+        # Check btc5m_signals columns
+        if "btc5m_signals" in inspector.get_table_names():
+            signal_cols = {col["name"] for col in inspector.get_columns("btc5m_signals")}
+            if "instance_id" not in signal_cols:
+                try:
+                    conn.execute(text("ALTER TABLE btc5m_signals ADD COLUMN instance_id VARCHAR DEFAULT 'instance_1'"))
                     conn.commit()
                 except Exception:
                     pass

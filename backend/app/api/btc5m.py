@@ -87,9 +87,11 @@ def get_btc5m_signals(skip: int = 0, limit: int = 100, db: Session = Depends(get
 
 @router.get("/trades")
 @router.get("/trades/history")
-def get_btc5m_trades(skip: int = 0, limit: int = 100, period: str = "all", db: Session = Depends(get_db)):
-    """BTC 5M paper trades with optional weekly and monthly filtering."""
+def get_btc5m_trades(skip: int = 0, limit: int = 100, period: str = "all", instance_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """BTC 5M paper trades with optional weekly, monthly, and instance filtering."""
     query = db.query(BTC5MTrade)
+    if instance_id:
+        query = query.filter(BTC5MTrade.instance_id == instance_id)
     now = datetime.utcnow()
     
     if period == "weekly":
@@ -124,10 +126,15 @@ def get_btc5m_trades(skip: int = 0, limit: int = 100, period: str = "all", db: S
 
 
 @router.get("/stats")
-def get_btc5m_stats(db: Session = Depends(get_db)):
-    """Summary statistics for BTC5M paper trading bot."""
-    closed_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED").all()
-    open_trades = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+def get_btc5m_stats(instance_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """Summary statistics for BTC5M paper trading bot with optional instance filtering."""
+    closed_query = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED")
+    open_query = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN")
+    if instance_id:
+        closed_query = closed_query.filter(BTC5MTrade.instance_id == instance_id)
+        open_query = open_query.filter(BTC5MTrade.instance_id == instance_id)
+    closed_trades = closed_query.all()
+    open_trades = open_query.all()
     total_trades = len(closed_trades) + len(open_trades)
     
     realized_pnl = sum((t.pnl or 0.0) for t in closed_trades)
@@ -188,42 +195,72 @@ def reset_btc5m_state(db: Session = Depends(get_db)):
 
 import httpx
 
-from app.btc5m.engine import btc5m_engine
+from app.btc5m.engine import btc5m_engine, btc5m_engine_2, get_engine, ENGINES
 from pydantic import BaseModel
 from typing import Optional
 
-def _safe_broadcast():
+def _safe_broadcast(instance_id: str = "instance_1"):
     try:
         import asyncio
+        eng = get_engine(instance_id)
         loop = asyncio.get_running_loop()
-        loop.create_task(btc5m_engine.broadcast_status())
+        loop.create_task(eng.broadcast_status())
     except Exception:
         pass
 
 class ToggleTradingRequest(BaseModel):
     active: bool
+    instance_id: Optional[str] = "instance_1"
 
 class UpdateSettingsRequest(BaseModel):
+    instance_id: Optional[str] = "instance_1"
     min_entry_score: Optional[float] = None
     min_net_edge: Optional[float] = None
     min_rr: Optional[float] = None
     max_spread: Optional[float] = None
     min_liquidity: Optional[float] = None
     min_time_remaining: Optional[float] = None
+    max_time_remaining: Optional[float] = None
     take_profit_delta: Optional[float] = None
     max_take_profit: Optional[float] = None
     stop_loss_ratio: Optional[float] = None
     risk_per_trade: Optional[float] = None
     trading_active: Optional[bool] = None
+    mode: Optional[str] = None
+    tp_dollar: Optional[float] = None
+    sl_dollar: Optional[float] = None
+    side_bias: Optional[str] = None
+    only_short: Optional[bool] = None
 
-@router.get("/settings")
-def get_btc5m_targeting_settings(db: Session = Depends(get_db)):
-    """Retrieve current persistent targeting settings and bot status."""
-    from app.btc5m.settings_manager import get_btc5m_settings
-    settings_data = get_btc5m_settings(db)
-    settings_data["trading_active"] = btc5m_engine.trading_active
+@router.get("/instances")
+def get_btc5m_instances():
+    """List all registered BTC 5M bot instances with operational state."""
     return {
         "status": "success",
+        "instances": [
+            {
+                "instance_id": eng.instance_id,
+                "name": eng.name,
+                "mode": eng.mode,
+                "only_short": eng.only_short,
+                "tp_dollar": eng.tp_dollar,
+                "sl_dollar": eng.sl_dollar,
+                "trading_active": eng.trading_active
+            }
+            for eng in ENGINES.values()
+        ]
+    }
+
+@router.get("/settings")
+def get_btc5m_targeting_settings(instance_id: str = "instance_1", db: Session = Depends(get_db)):
+    """Retrieve current persistent targeting settings and bot status for instance."""
+    from app.btc5m.settings_manager import get_btc5m_settings
+    eng = get_engine(instance_id)
+    settings_data = get_btc5m_settings(db, instance_id=instance_id)
+    settings_data["trading_active"] = eng.trading_active
+    return {
+        "status": "success",
+        "instance_id": instance_id,
         "settings": settings_data
     }
 
@@ -231,57 +268,67 @@ def get_btc5m_targeting_settings(db: Session = Depends(get_db)):
 def update_btc5m_targeting_settings(req: UpdateSettingsRequest, db: Session = Depends(get_db)):
     """Update targeting settings and persist them to SQLite across restarts."""
     from app.btc5m.settings_manager import update_btc5m_settings
-    updates = {k: v for k, v in req.dict().items() if v is not None}
+    inst_id = req.instance_id or "instance_1"
+    eng = get_engine(inst_id)
+    updates = {k: v for k, v in req.dict().items() if v is not None and k != "instance_id"}
     if not updates:
         return {"status": "error", "message": "No valid settings fields provided"}
     
-    updated = update_btc5m_settings(db, updates, user_info="API")
-    if hasattr(btc5m_engine, 'strategy') and btc5m_engine.strategy:
-        btc5m_engine.strategy.settings = updated
+    updated = update_btc5m_settings(db, updates, user_info=f"API_{inst_id}", instance_id=inst_id)
+    if hasattr(eng, 'strategy') and eng.strategy:
+        eng.strategy.settings = updated
+        eng.strategy._sync_instance_params()
     if "trading_active" in updates:
-        btc5m_engine.trading_active = bool(updates["trading_active"])
+        eng.trading_active = bool(updates["trading_active"])
         
-    _safe_broadcast()
+    _safe_broadcast(inst_id)
 
     return {
         "status": "success",
-        "message": "Targeting settings updated and persisted successfully",
+        "instance_id": inst_id,
+        "message": f"Targeting settings for {inst_id} updated and persisted successfully",
         "settings": updated
     }
 
 @router.post("/toggle_trading")
 def toggle_trading(req: ToggleTradingRequest, db: Session = Depends(get_db)):
-    btc5m_engine.trading_active = req.active
+    inst_id = req.instance_id or "instance_1"
+    eng = get_engine(inst_id)
+    eng.trading_active = req.active
     
     # Persist in btc5m_settings so it survives reboots
     from app.btc5m.settings_manager import update_btc5m_settings
-    update_btc5m_settings(db, {"trading_active": req.active}, user_info="UI_TOGGLE")
+    update_btc5m_settings(db, {"trading_active": req.active}, user_info=f"UI_TOGGLE_{inst_id}", instance_id=inst_id)
     
     # Force engine to clear cached markets if starting fresh
     if req.active:
-        if hasattr(btc5m_engine, '_market_states'):
-            btc5m_engine._market_states.clear()
-        if hasattr(btc5m_engine, 'risk_manager') and btc5m_engine.risk_manager:
-            btc5m_engine.risk_manager.unpause()
+        if hasattr(eng, '_market_states'):
+            eng._market_states.clear()
+        if hasattr(eng, 'risk_manager') and eng.risk_manager:
+            eng.risk_manager.unpause()
         
     from app.db.models import BTC5MAudit
     audit = BTC5MAudit(
         action="START" if req.active else "STOP",
-        details="Bot started manually via UI" if req.active else "Bot stopped manually via UI"
+        details=f"Bot {inst_id} started manually via UI" if req.active else f"Bot {inst_id} stopped manually via UI"
     )
     db.add(audit)
     db.commit()
     
-    _safe_broadcast()
+    _safe_broadcast(inst_id)
 
-    return {"status": "success", "trading_active": btc5m_engine.trading_active}
+    return {"status": "success", "instance_id": inst_id, "trading_active": eng.trading_active}
 
 @router.post("/close_trade")
-def close_btc5m_trade(db: Session = Depends(get_db)):
-    """Manually terminate currently open BTC 5M paper trade immediately at the current market price."""
-    trade = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").first()
+def close_btc5m_trade(instance_id: str = "instance_1", db: Session = Depends(get_db)):
+    """Manually terminate currently open BTC 5M paper trade immediately at the current market price for the specified bot instance."""
+    eng = get_engine(instance_id)
+    trade = db.query(BTC5MTrade).filter(
+        BTC5MTrade.status == "OPEN",
+        BTC5MTrade.instance_id == instance_id
+    ).first()
     if not trade:
-        return {"status": "error", "message": "No active trade found to close"}
+        return {"status": "error", "message": f"No active trade found to close for {instance_id}"}
 
     # Fetch latest available execution price for the trade's side
     market = db.query(BTC5MMarket).filter(BTC5MMarket.market_id == trade.market_id).first()
@@ -317,22 +364,22 @@ def close_btc5m_trade(db: Session = Depends(get_db)):
     trade.pnl = round(pnl, 4)
 
     # Release engine strategy state and risk manager exposure
-    if hasattr(btc5m_engine, 'strategy') and btc5m_engine.strategy:
-        btc5m_engine.strategy.record_exit(trade.market_id)
-    if hasattr(btc5m_engine, 'risk_manager') and btc5m_engine.risk_manager:
-        btc5m_engine.risk_manager.record_trade_result(trade.pnl)
-        btc5m_engine.risk_manager.current_exposure = max(0.0, btc5m_engine.risk_manager.current_exposure - trade.position_size)
+    if hasattr(eng, 'strategy') and eng.strategy:
+        eng.strategy.record_exit(trade.market_id)
+    if hasattr(eng, 'risk_manager') and eng.risk_manager:
+        eng.risk_manager.record_trade_result(trade.pnl)
+        eng.risk_manager.current_exposure = max(0.0, eng.risk_manager.current_exposure - trade.position_size)
 
     from app.db.models import BTC5MAudit
     audit = BTC5MAudit(
         action="MANUAL_CLOSE",
-        details=f"Trade {trade.id} ({trade.side} {trade.locked_predicted_side}) closed manually at ${exit_price:.4f} with PnL: ${pnl:.4f}"
+        details=f"Trade {trade.id} ({trade.side} {trade.locked_predicted_side}) on {instance_id} closed manually at ${exit_price:.4f} with PnL: ${pnl:.4f}"
     )
     db.add(audit)
     db.commit()
     db.refresh(trade)
 
-    _safe_broadcast()
+    _safe_broadcast(instance_id)
 
     return {
         "status": "success",
@@ -340,11 +387,13 @@ def close_btc5m_trade(db: Session = Depends(get_db)):
         "trade": _format_trade(trade)
     }
 
-def build_btc5m_status_payload(db: Session) -> dict:
-    """Builds the comprehensive real-time status payload used by REST and WebSockets."""
+def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> dict:
+    """Builds the comprehensive real-time status payload used by REST and WebSockets for a specific bot instance."""
     now = datetime.now(timezone.utc)
     # Since DB timestamps might be naive UTC, strip tzinfo for comparison
     now_naive = now.replace(tzinfo=None)
+
+    eng = get_engine(instance_id)
 
     current_market = db.query(BTC5MMarket).filter(
         BTC5MMarket.start_time <= now_naive,
@@ -355,7 +404,10 @@ def build_btc5m_status_payload(db: Session) -> dict:
         BTC5MMarket.start_time > now_naive
     ).order_by(BTC5MMarket.start_time.asc()).first()
 
-    open_trade = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").first()
+    open_trade = db.query(BTC5MTrade).filter(
+        BTC5MTrade.status == "OPEN",
+        BTC5MTrade.instance_id == instance_id
+    ).first()
     
     open_trade_dict = _format_trade(open_trade) if open_trade else None
     if open_trade_dict:
@@ -395,23 +447,28 @@ def build_btc5m_status_payload(db: Session) -> dict:
 
     btc_price = _get_live_btc_price()
 
-    # Fetch Price-to-Beat.
-    # We now fetch this exactly at market start time from the Chainlink feed,
-    # as cached by the engine in _market_states.
     price_to_beat = None
     if current_market:
         cache_key = f"p2b_{current_market.market_id}"
-        if hasattr(btc5m_engine, '_market_states') and cache_key in btc5m_engine._market_states:
+        if hasattr(eng, '_market_states') and cache_key in eng._market_states:
+            price_to_beat = eng._market_states[cache_key]
+        elif hasattr(btc5m_engine, '_market_states') and cache_key in btc5m_engine._market_states:
             price_to_beat = btc5m_engine._market_states[cache_key]
 
-    # Get latest signal scores for current market
+    # Get latest signal scores for current market scoped to instance
     yes_score = 0
     no_score = 0
     latest_sig = None
     if current_market:
-        latest_sig = db.query(BTC5MSignal).filter(BTC5MSignal.market_id == current_market.market_id).order_by(BTC5MSignal.timestamp.desc()).first()
+        latest_sig = db.query(BTC5MSignal).filter(
+            BTC5MSignal.market_id == current_market.market_id,
+            BTC5MSignal.instance_id == instance_id
+        ).order_by(BTC5MSignal.timestamp.desc()).first()
     if not latest_sig and next_market:
-        latest_sig = db.query(BTC5MSignal).filter(BTC5MSignal.market_id == next_market.market_id).order_by(BTC5MSignal.timestamp.desc()).first()
+        latest_sig = db.query(BTC5MSignal).filter(
+            BTC5MSignal.market_id == next_market.market_id,
+            BTC5MSignal.instance_id == instance_id
+        ).order_by(BTC5MSignal.timestamp.desc()).first()
 
     if latest_sig:
         yes_score = getattr(latest_sig, "yes_score", 0.0)
@@ -458,7 +515,7 @@ def build_btc5m_status_payload(db: Session) -> dict:
 
     health = {
         "backend": "HEALTHY",
-        "btc5m_engine": "RUNNING" if getattr(btc5m_engine, "running", False) else "STOPPED",
+        "btc5m_engine": "RUNNING" if getattr(eng, "running", False) else "STOPPED",
         "clob": "CONNECTED" if current_market and current_market.best_bid is not None else "DISCONNECTED",
         "chainlink": "FRESH" if btc_price is not None else "STALE",
         "database": "HEALTHY",
@@ -467,7 +524,13 @@ def build_btc5m_status_payload(db: Session) -> dict:
     }
 
     return {
-        "trading_active": btc5m_engine.trading_active,
+        "instance_id": instance_id,
+        "instance_name": eng.name,
+        "mode": eng.mode,
+        "only_short": eng.only_short,
+        "tp_dollar": eng.tp_dollar,
+        "sl_dollar": eng.sl_dollar,
+        "trading_active": eng.trading_active,
         "health": health,
         "latency": latency_summary,
         "current_market": _format_market(current_market) if current_market else None,
@@ -482,13 +545,13 @@ def build_btc5m_status_payload(db: Session) -> dict:
         "latest_signal": latest_sig.state if latest_sig else None,
         "analysis": analysis,
         "live_market_analysis": live_market_analysis,
-        "targeting_settings": (lambda: __import__('app.btc5m.settings_manager', fromlist=['get_btc5m_settings']).get_btc5m_settings(db))()
+        "targeting_settings": (lambda: __import__('app.btc5m.settings_manager', fromlist=['get_btc5m_settings']).get_btc5m_settings(db, instance_id=instance_id))()
     }
 
 @router.get("/status")
-def get_btc5m_status(db: Session = Depends(get_db)):
-    """Returns the current market, next market, and active trade."""
-    return build_btc5m_status_payload(db)
+def get_btc5m_status(instance_id: str = "instance_1", db: Session = Depends(get_db)):
+    """Returns the current market, next market, and active trade for specified instance."""
+    return build_btc5m_status_payload(db, instance_id=instance_id)
 
 
 @router.get("/skips")

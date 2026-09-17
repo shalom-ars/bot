@@ -438,12 +438,14 @@ class BTC5MSignal(Base):
     model_version   = Column(String, nullable=True)
     strategy        = Column(String, nullable=True)
     reason          = Column(String)
+    instance_id     = Column(String, default="instance_1", index=True)
 
 
 class BTC5MTrade(Base):
     """Paper trades executed by the BTC 5M strategy."""
     __tablename__ = "btc5m_trades"
     id              = Column(Integer, primary_key=True, index=True)
+    instance_id     = Column(String, default="instance_1", index=True)
     market_id       = Column(String, index=True)
     condition_id    = Column(String, nullable=True)
     question        = Column(String)
