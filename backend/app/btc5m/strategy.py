@@ -379,7 +379,7 @@ class BTC5MStrategy:
         raw_edge = fair_prob - entry_price
         net_edge = raw_edge - spread_cost - slippage_cost - fees
         
-        return entry_price, fair_prob, actual_planned_rr, net_edge, stop_loss_price, take_profit_price, planned_risk
+        return entry_price, fair_prob, actual_planned_rr, net_edge, stop_loss_price, take_profit_price, planned_risk, position_size
 
     def evaluate(
         self,
@@ -467,9 +467,10 @@ class BTC5MStrategy:
         no_base_score, no_breakdown = self._score_side(False, features, btc_price, price_to_beat, time_remaining)
         
         # 2. Calculate edges with BTC & P2B inputs and time decay
-        yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, risk = self._calc_edge_and_rr(True, features, current_balance, btc_price, price_to_beat, time_remaining)
-        no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, _ = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat, time_remaining)
+        yes_ep, yes_fair, yes_rr, yes_edge, yes_sl, yes_tp, yes_risk, yes_pos_size = self._calc_edge_and_rr(True, features, current_balance, btc_price, price_to_beat, time_remaining)
+        no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, no_risk, no_pos_size = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat, time_remaining)
         
+        risk_pct = self.settings.get("risk_per_trade", settings.risk_per_trade)
         min_rr = self.settings.get("min_rr", MIN_RR)
         min_score = self.settings.get("min_entry_score", MIN_ENTRY_SCORE)
         min_edge = self.settings.get("min_net_edge", MIN_NET_EDGE)
@@ -524,6 +525,8 @@ class BTC5MStrategy:
         net_edge = yes_edge if is_yes else no_edge
         stop_loss_price = yes_sl if is_yes else no_sl
         take_profit_price = yes_tp if is_yes else no_tp
+        selected_risk = yes_risk if is_yes else no_risk
+        selected_pos_size = yes_pos_size if is_yes else no_pos_size
         
         gate_results["net_edge"]["value"] = f"{net_edge*100:.2f}%"
         gate_results["rr"]["value"] = f"{actual_planned_rr:.2f}"
@@ -555,7 +558,8 @@ class BTC5MStrategy:
         else:
             gate_results["time"]["pass"] = True
             
-        if actual_planned_rr >= min_rr:
+        is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
+        if is_fixed or actual_planned_rr >= min_rr:
             gate_results["rr"]["pass"] = True
         else:
             skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
@@ -652,11 +656,11 @@ class BTC5MStrategy:
             slippage_cost=0,
             fees=0,
             net_edge=net_edge,
-            risk_pct=settings.risk_per_trade,
-            position_size=risk,
+            risk_pct=risk_pct,
+            position_size=selected_pos_size,
             time_remaining_sec=time_remaining,
-            planned_risk=risk,
-            planned_reward=risk * actual_planned_rr,
+            planned_risk=selected_risk,
+            planned_reward=selected_risk * actual_planned_rr,
             planned_rr=actual_planned_rr,
             stop_loss_price=stop_loss_price,
             take_profit_price=take_profit_price,

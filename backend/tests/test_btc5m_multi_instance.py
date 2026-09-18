@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from unittest.mock import MagicMock, patch
 from app.btc5m.engine import BTC5MEngine, btc5m_engine, btc5m_engine_2, get_engine
 from app.btc5m.strategy import BTC5MStrategy
@@ -44,7 +44,7 @@ def test_fixed_dollar_tp_sl_calculation():
     }
     
     # Evaluate NO side (is_yes=False)
-    ep, fair, rr, edge, sl, tp, risk = strat._calc_edge_and_rr(
+    ep, fair, rr, edge, sl, tp, risk, pos_size = strat._calc_edge_and_rr(
         is_yes=False,
         features=features,
         current_balance=500.0,
@@ -52,6 +52,7 @@ def test_fixed_dollar_tp_sl_calculation():
         p2b=95050.0,
         time_remaining_sec=120.0
     )
+    assert pos_size == 10.0  # 2% of $500
     
     # ep = 1.0 - 0.49 = 0.51
     # Quantity = (500 * 0.02) / 0.51 = 10 / 0.51 = 19.6078

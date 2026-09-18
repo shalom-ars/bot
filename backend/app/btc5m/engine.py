@@ -52,7 +52,7 @@ class BTC5MEngine:
         self.sl_dollar = sl_dollar
         self.only_short = only_short
         from app.db.models import BTC5MTrade
-        self.risk_manager = risk_manager or RiskManager(trade_model=BTC5MTrade)
+        self.risk_manager = risk_manager or RiskManager(trade_model=BTC5MTrade, instance_id=self.instance_id)
         self.feature_engine = BTC5MFeatureEngine()
         self.strategy = BTC5MStrategy(
             risk_manager=self.risk_manager,

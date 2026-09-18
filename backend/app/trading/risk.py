@@ -9,8 +9,9 @@ from app.db.models import Trade, Position, RiskDecisionLog, BTC5MTrade
 logger = logging.getLogger(__name__)
 
 class RiskManager:
-    def __init__(self, trade_model=None, position_model=None):
+    def __init__(self, trade_model=None, position_model=None, instance_id=None):
         # Configuration
+        self.instance_id = instance_id
         self.starting_balance = settings.starting_balance
         self.max_daily_loss = getattr(settings, 'max_daily_loss', 0.05)
         self.risk_per_trade = getattr(settings, 'risk_per_trade', 0.02)
@@ -49,14 +50,20 @@ class RiskManager:
 
             if self.is_btc5m:
                 # 1. Daily PnL for BTC5M
-                daily_trades = db.query(BTC5MTrade).filter(
+                daily_query = db.query(BTC5MTrade).filter(
                     BTC5MTrade.status == "CLOSED",
                     BTC5MTrade.exit_time >= today_start
-                ).all()
+                )
+                if self.instance_id:
+                    daily_query = daily_query.filter(BTC5MTrade.instance_id == self.instance_id)
+                daily_trades = daily_query.all()
                 self.daily_pnl = sum(t.pnl for t in daily_trades if t.pnl is not None)
 
                 # 2. Historical Balance & Peak Balance & Drawdown
-                all_closed = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED").order_by(BTC5MTrade.exit_time.asc()).all()
+                all_query = db.query(BTC5MTrade).filter(BTC5MTrade.status == "CLOSED")
+                if self.instance_id:
+                    all_query = all_query.filter(BTC5MTrade.instance_id == self.instance_id)
+                all_closed = all_query.order_by(BTC5MTrade.exit_time.asc()).all()
                 running_balance = self.starting_balance
                 self.peak_balance = self.starting_balance
 
@@ -88,7 +95,10 @@ class RiskManager:
                 self.consecutive_losses = streak
 
                 # 3. Current exposure & Existing open positions
-                open_positions = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN").all()
+                open_query = db.query(BTC5MTrade).filter(BTC5MTrade.status == "OPEN")
+                if self.instance_id:
+                    open_query = open_query.filter(BTC5MTrade.instance_id == self.instance_id)
+                open_positions = open_query.all()
                 self.open_positions_count = len(open_positions)
                 self.current_exposure = sum(
                     (p.position_size if p.position_size is not None else ((p.entry_price or 0.0) * (p.quantity or 0.0)))
@@ -221,10 +231,13 @@ class RiskManager:
             
             # Check duplicate position
             if self.is_btc5m:
-                existing = db.query(BTC5MTrade).filter(
+                dup_query = db.query(BTC5MTrade).filter(
                     BTC5MTrade.market_id == market_id,
                     BTC5MTrade.status == "OPEN"
-                ).first()
+                )
+                if self.instance_id:
+                    dup_query = dup_query.filter(BTC5MTrade.instance_id == self.instance_id)
+                existing = dup_query.first()
             else:
                 existing = db.query(Position).filter(Position.market_id == market_id).first()
 
