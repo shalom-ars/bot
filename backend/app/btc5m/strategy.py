@@ -477,7 +477,9 @@ class BTC5MStrategy:
         max_spr = self.settings.get("max_spread", MAX_SPREAD)
         min_liq = self.settings.get("min_liquidity", MIN_LIQUIDITY)
         min_time = self.settings.get("min_time_remaining", 30.0)
-        max_time = self.settings.get("max_time_remaining", 240.0)
+        is_instance_1 = (self.instance_id == "instance_1" or getattr(self, "instance_id", None) is None)
+        default_max_time = 300.0 if is_instance_1 else 240.0
+        max_time = float(self.settings.get("max_time_remaining", default_max_time))
 
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
         # Edge > 0.05 gives 10 points

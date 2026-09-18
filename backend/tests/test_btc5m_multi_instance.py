@@ -156,3 +156,53 @@ def test_trade_isolation_between_instances():
 
         # Instance 2 evaluates NO successfully
         assert signal.instance_id == "instance_2"
+
+
+def test_instance_1_immediate_entry_at_window_start():
+    """
+    Verify that Instance 1 initiates trades immediately at the start of the 5-minute window
+    (e.g., at time_remaining = 295s, within first 5 seconds of window open) without delay
+    or 'Candle open stabilization' skip.
+    """
+    strat_1 = BTC5MStrategy(
+        instance_id="instance_1",
+        mode="dynamic"
+    )
+
+    features = {
+        "mid_price": 0.50,
+        "bid": 0.49,
+        "ask": 0.51,
+        "spread": 0.02,
+        "bid_depth": 5000.0,
+        "ask_depth": 5000.0,
+        "rolling_volatility": 0.001,
+        "time_remaining_sec": 295.0,  # 5 seconds after candle opens!
+        "short_momentum_1m": 0.04,
+        "bid_ask_imbalance": 0.15
+    }
+
+    with patch("app.db.session.SessionLocal") as mock_sl:
+        mock_db = MagicMock()
+        mock_sl.return_value = mock_db
+        mock_filter = mock_db.query().filter()
+        mock_filter.count.return_value = 0
+
+        signal = strat_1.evaluate(
+            market_id="mkt_window_start",
+            condition_id="cond_window_start",
+            question="BTC Up or Down 5M?",
+            yes_token_id="tok_yes",
+            no_token_id="tok_no",
+            features=features,
+            orderbook_timestamp=None,
+            btc_price=95250.0,
+            price_to_beat=95000.0,
+            current_balance=500.0
+        )
+
+        import json
+        gates = json.loads(signal.gate_results) if isinstance(signal.gate_results, str) else signal.gate_results
+        assert gates["time"]["pass"] is True, "Time gate must pass immediately at window start for instance_1"
+        assert "Candle open stabilization" not in signal.reason
+        assert signal.state == "ENTER"

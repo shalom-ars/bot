@@ -25,7 +25,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL_SECONDS = 30   # How often to re-scan for BTC 5M markets
+POLL_INTERVAL_SECONDS = 3   # High-frequency polling (3s) to ensure immediate execution at 5-minute window start
 MAX_CONCURRENT_MARKETS = 20  # Safety cap
 
 

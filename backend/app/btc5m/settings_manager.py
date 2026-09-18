@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: Dict[str, str] = {
     "trading_active": "true",
-    "min_entry_score": "60.0",
-    "min_net_edge": "0.015",
-    "min_rr": "1.5",
+    "min_entry_score": "55.0",
+    "min_net_edge": "0.005",
+    "min_rr": "1.2",
     "max_spread": "0.05",
     "min_liquidity": "100.0",
     "min_time_remaining": "30.0",
-    "max_time_remaining": "240.0",
+    "max_time_remaining": "300.0",
     "take_profit_delta": "0.30",
     "max_take_profit": "0.95",
     "stop_loss_ratio": "0.50",
