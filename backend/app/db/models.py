@@ -500,6 +500,50 @@ class BTC5MTrade(Base):
     prediction_locked_at  = Column(DateTime, nullable=True)
     prediction_lock_version = Column(String, default="1.0", nullable=True)
 
+    # ══════════════════════════════════════════════════════════════
+    # SMART EXIT SYSTEM FIELDS
+    # ══════════════════════════════════════════════════════════════
+    exit_decision_state     = Column(String, default="HOLD", index=True)  # HOLD/EXIT_REVIEW/CONFIRMED_EXIT/HARD_EXIT/TP/SL/RESOLVED
+    soft_stop_touched_at    = Column(DateTime, nullable=True)
+    exit_review_started_at  = Column(DateTime, nullable=True)
+    last_exit_review_reason = Column(String, nullable=True)
+    thesis_failure_score    = Column(Float, nullable=True)
+    hard_stop_price         = Column(Float, nullable=True)
+
+
+class BTC5MExitAudit(Base):
+    """
+    Persistent audit record for every exit evaluation event:
+    SOFT_STOP_TOUCHED, EXIT_REVIEW_STARTED, EXIT_REVIEW_HOLD,
+    EXIT_REVIEW_CONFIRMED, HARD_STOP_TRIGGERED, TAKE_PROFIT, RESOLUTION_EXIT
+    """
+    __tablename__ = "btc5m_exit_audits"
+    id                      = Column(Integer, primary_key=True, index=True)
+    trade_id                = Column(Integer, ForeignKey("btc5m_trades.id", ondelete="CASCADE"), index=True, nullable=True)
+    instance_id             = Column(String, default="instance_1", index=True)
+    market_id               = Column(String, index=True)
+    event_type              = Column(String, index=True)
+    timestamp               = Column(DateTime, default=datetime.utcnow, index=True)
+    locked_predicted_side   = Column(String, nullable=True)
+    current_live_prediction = Column(String, nullable=True)
+    btc_price               = Column(Float, nullable=True)
+    p2b                     = Column(Float, nullable=True)
+    delta                   = Column(Float, nullable=True)
+    momentum                = Column(Float, nullable=True)
+    probability             = Column(Float, nullable=True)
+    orderbook_imbalance     = Column(Float, nullable=True)
+    volatility              = Column(Float, nullable=True)
+    remaining_time          = Column(Float, nullable=True)
+    entry_price             = Column(Float, nullable=True)
+    current_price           = Column(Float, nullable=True)
+    unrealized_pnl          = Column(Float, nullable=True)
+    original_stop           = Column(Float, nullable=True)
+    hard_stop               = Column(Float, nullable=True)
+    current_exit_decision   = Column(String, nullable=True)
+    thesis_failure_score    = Column(Float, nullable=True)
+    reason                  = Column(String)
+    details_json            = Column(String, nullable=True)
+
 
 import logging
 _thesis_logger = logging.getLogger("btc5m.thesis_lock")

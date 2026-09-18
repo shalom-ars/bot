@@ -157,7 +157,9 @@ async def test_wick_resistant_stop_loss():
     2. Trade age >= 15s but mid_price does not confirm the stop breach.
     And triggers when both age >= 15s and mid_price confirms.
     """
+    from app.db.models import BTC5MMarket, BTC5MSetting
     engine = BTC5MEngine()
+    engine.risk_manager.is_paused = False
     
     # 1. Trade entered only 5 seconds ago
     recent_entry = datetime.now(timezone.utc) - timedelta(seconds=5)
@@ -170,6 +172,8 @@ async def test_wick_resistant_stop_loss():
         locked_predicted_side="NO",
         entry_price=0.60,
         stop_loss_price=0.45,
+        hard_stop_price=0.30,
+        planned_risk=20.0,
         take_profit_price=0.85,
         quantity=100.0,
         position_size=60.0,
@@ -177,7 +181,7 @@ async def test_wick_resistant_stop_loss():
         status="OPEN"
     )
 
-    # NO best bid is 0.40 (below SL 0.45)
+    # NO best bid is 0.40 (below SL 0.45, but above hard stop 0.30)
     # For NO, best_bid = 1.0 - last_hist.best_ask
     # If last_hist.best_ask = 0.60, best_bid = 0.40
     # mid_price = 1.0 - (0.50 + 0.60)/2 = 0.45
@@ -188,13 +192,30 @@ async def test_wick_resistant_stop_loss():
         timestamp=datetime.now(timezone.utc)
     )
 
+    current_hist = [hist_wick]
+
     with patch("app.btc5m.engine.SessionLocal") as mock_db, \
          patch("aiohttp.ClientSession.get") as mock_get:
         
         mock_session = MagicMock()
         mock_db.return_value = mock_session
-        mock_session.query.return_value.filter.return_value.all.return_value = [trade]
-        mock_session.query.return_value.filter.return_value.order_by.return_value.first.return_value = hist_wick
+
+        def mock_query(model):
+            q = MagicMock()
+            if model == BTC5MTrade:
+                q.filter.return_value.all.return_value = [trade]
+            elif model == BTC5MMarket:
+                q.filter.return_value.first.return_value = None
+            elif model == BTC5MPriceHistory:
+                q.filter.return_value.order_by.return_value.first.return_value = current_hist[0]
+            elif model == BTC5MSetting:
+                q.filter.return_value.all.return_value = []
+            else:
+                q.filter.return_value.all.return_value = []
+                q.filter.return_value.first.return_value = None
+            return q
+
+        mock_session.query.side_effect = mock_query
 
         # Mock Gamma API response indicating market is still open (closed: false)
         mock_resp = AsyncMock()
@@ -205,7 +226,7 @@ async def test_wick_resistant_stop_loss():
         # Run settle trades
         await engine._settle_trades()
 
-        # Trade should NOT be closed because trade_age_sec < 15s
+        # Trade should NOT be closed because trade is in EXIT_REVIEW confirmation period
         assert trade.status == "OPEN"
 
         # Now simulate trade age = 25 seconds, but mid_price = 0.51 (above SL + 0.03 = 0.48)
@@ -219,7 +240,7 @@ async def test_wick_resistant_stop_loss():
             best_ask=0.60,
             timestamp=datetime.now(timezone.utc)
         )
-        mock_session.query.return_value.filter.return_value.order_by.return_value.first.return_value = hist_unconfirmed
+        current_hist[0] = hist_unconfirmed
 
         await engine._settle_trades()
         # Should NOT be closed because mid_price did not confirm
@@ -228,15 +249,19 @@ async def test_wick_resistant_stop_loss():
         # Now simulate confirmed breakdown:
         # ask jumped to 0.65 (NO bid 0.35 <= 0.45) AND bid is 0.55
         # mid_price for NO = 1.0 - (0.55 + 0.65)/2 = 0.40 (<= 0.48 confirmed)
+        # Advance exit_review_started_at past confirmation threshold (>= 10s)
+        trade.exit_review_started_at = datetime.now(timezone.utc) - timedelta(seconds=15)
+        trade.hard_stop_price = 0.36  # With NO bid 0.35 <= 0.36, also triggers confirmed hard safety stop
         hist_confirmed = BTC5MPriceHistory(
             market_id="test_market_101",
             best_bid=0.55,
             best_ask=0.65,
             timestamp=datetime.now(timezone.utc)
         )
-        mock_session.query.return_value.filter.return_value.order_by.return_value.first.return_value = hist_confirmed
+        current_hist[0] = hist_confirmed
 
         await engine._settle_trades()
         # Should now trigger EARLY_SL
         assert trade.status == "CLOSED"
         assert trade.resolution == "EARLY_SL"
+

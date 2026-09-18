@@ -71,8 +71,17 @@ def ensure_btc5m_schema(db_engine):
         ("entry_target_price", "FLOAT"),
         ("prediction_locked_at", "DATETIME"),
         ("prediction_lock_version", "VARCHAR DEFAULT '1.0'"),
-        ("instance_id", "VARCHAR DEFAULT 'instance_1'")
+        ("instance_id", "VARCHAR DEFAULT 'instance_1'"),
+        ("exit_decision_state", "VARCHAR DEFAULT 'HOLD'"),
+        ("soft_stop_touched_at", "DATETIME"),
+        ("exit_review_started_at", "DATETIME"),
+        ("last_exit_review_reason", "VARCHAR"),
+        ("thesis_failure_score", "FLOAT"),
+        ("hard_stop_price", "FLOAT")
     ]
+
+    from app.db.models import BTC5MExitAudit
+    BTC5MExitAudit.__table__.create(db_engine, checkfirst=True)
 
     with db_engine.connect() as conn:
         for col_name, col_type in new_cols:

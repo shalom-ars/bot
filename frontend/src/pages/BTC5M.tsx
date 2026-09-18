@@ -3,7 +3,7 @@ import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Clock, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
-  Bot, Crosshair
+  Bot, Crosshair, AlertTriangle, ShieldAlert
 } from 'lucide-react';
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
@@ -1079,6 +1079,72 @@ function InnerBTC5M() {
                       {fmtUsd(tradeUnrealized)}
                     </strong>
                   </div>
+                  {/* SMART STOP-LOSS / EXIT DECISION STATE BANNER */}
+                  {trade.exit_decision_state === 'EXIT_REVIEW' ? (
+                    <div className="mt-2 p-2.5 bg-amber-500/10 border border-amber-500/40 rounded-xl font-sans">
+                      <div className="flex items-center justify-between text-amber-500 font-black text-[11px] uppercase tracking-wide">
+                        <span className="flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 animate-bounce text-amber-500" />
+                          <span>⚠️ SOFT STOP TOUCHED — ANALYZING</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-mono font-black text-[10px] animate-pulse">
+                          {trade.confirmation_seconds_elapsed != null ? `${trade.confirmation_seconds_elapsed}s` : '0s'} / {trade.confirmation_seconds_total || 10}s
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-amber-700 font-medium">
+                        Confirmation grace period in progress. Bot is evaluating noise vs thesis failure.
+                      </div>
+                      <div className="mt-1 pt-1 border-t border-amber-500/20 flex justify-between items-center text-[9px] font-mono text-amber-800">
+                        <span>Failure Score: <strong>{trade.thesis_failure_score != null ? `${trade.thesis_failure_score}/100` : '—'}</strong></span>
+                        <span className="truncate max-w-[170px]" title={trade.last_exit_review_reason || 'Soft stop threshold breached'}>
+                          {trade.last_exit_review_reason || 'Soft stop breached'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : trade.exit_decision_state === 'CONFIRMED_EXIT' ? (
+                    <div className="mt-2 p-2.5 bg-rose-500/10 border border-rose-500/40 rounded-xl font-sans">
+                      <div className="flex items-center justify-between text-rose-500 font-black text-[11px] uppercase tracking-wide">
+                        <span className="flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-rose-500" />
+                          <span>🚨 THESIS FAILED — EXITING</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-mono font-black text-[10px]">
+                          Score: {trade.thesis_failure_score != null ? `${trade.thesis_failure_score}/100` : '>=60'}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-rose-700 font-medium">
+                        Persistent thesis invalidation confirmed across multi-factor evaluation.
+                      </div>
+                    </div>
+                  ) : trade.exit_decision_state === 'HARD_EXIT' ? (
+                    <div className="mt-2 p-2.5 bg-rose-600/10 border border-rose-600/50 rounded-xl font-sans">
+                      <div className="flex items-center justify-between text-rose-600 font-black text-[11px] uppercase tracking-wide">
+                        <span className="flex items-center gap-1.5">
+                          <ShieldAlert className="w-4 h-4 text-rose-600" />
+                          <span>🛑 HARD SAFETY STOP — IMMEDIATE EXIT</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-rose-600/20 text-rose-500 font-mono font-black text-[10px]">
+                          Floor: ${fmt4(trade.hard_stop_price)}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-rose-700 font-medium">
+                        Catastrophic risk floor or daily risk budget breach triggered.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl font-sans">
+                      <div className="flex items-center justify-between text-emerald-600 font-bold text-[10px] uppercase tracking-wide">
+                        <span className="flex items-center gap-1.5">
+                          <Shield className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>✅ THESIS STILL VALID — HOLDING</span>
+                        </span>
+                        <span className="text-[9px] font-mono text-emerald-700 font-semibold">
+                          Score: {trade.thesis_failure_score != null ? `${trade.thesis_failure_score}/100` : '0/100'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="text-[10px] text-slate-400 font-sans pt-0.5">
                     Thesis locked at {fmtDate(trade.prediction_locked_at || trade.entry_time)}
                   </div>

@@ -722,7 +722,10 @@ class BTC5MEngine:
                 entry_stop_price=signal.stop_loss_price,
                 entry_target_price=signal.take_profit_price,
                 prediction_locked_at=signal.timestamp,
-                prediction_lock_version="1.0"
+                prediction_lock_version="1.0",
+                # Smart Exit System initial state
+                exit_decision_state="HOLD",
+                hard_stop_price=max(0.01, (signal.stop_loss_price or 0.10) - 0.10)
             )
             db.add(trade)
             db.commit()
@@ -792,76 +795,126 @@ class BTC5MEngine:
                                     continue
 
                                 if not mkt.get("closed"):
-                                    # Check for early R:R exit using current CLOB best bid
+                                    # Fetch current market CLOB orderbook & time remaining
+                                    trade_market = db.query(BTC5MMarket).filter(BTC5MMarket.market_id == trade.market_id).first()
                                     best_bid = None
+                                    best_ask = None
                                     mid_price = None
-                                    from app.db.models import BTC5MPriceHistory
-                                    last_hist = db.query(BTC5MPriceHistory).filter(
-                                        BTC5MPriceHistory.market_id == trade.market_id
-                                    ).order_by(BTC5MPriceHistory.timestamp.desc()).first()
-                                    if last_hist:
-                                        if trade.side == "BUY":
-                                            best_bid = last_hist.best_bid
-                                            if last_hist.best_bid is not None and last_hist.best_ask is not None:
-                                                mid_price = (last_hist.best_bid + last_hist.best_ask) / 2.0
-                                            else:
-                                                mid_price = best_bid
-                                        elif trade.side == "SELL":
-                                            if last_hist.best_ask is not None and last_hist.best_ask > 0:
-                                                best_bid = 1.0 - last_hist.best_ask
-                                            elif last_hist.best_bid is not None and last_hist.best_bid > 0:
-                                                best_bid = 1.0 - last_hist.best_bid
+                                    time_remaining_sec = 0.0
 
-                                            if last_hist.best_bid is not None and last_hist.best_ask is not None:
-                                                mid_price = 1.0 - ((last_hist.best_bid + last_hist.best_ask) / 2.0)
-                                            else:
-                                                mid_price = best_bid
-                                        else:
-                                            best_bid = last_hist.best_bid
-                                            mid_price = best_bid
+                                    if trade_market and trade_market.best_bid is not None and trade_market.best_ask is not None:
+                                        best_bid = trade_market.best_bid
+                                        best_ask = trade_market.best_ask
+                                        mid_price = trade_market.mid_price or ((best_bid + best_ask) / 2.0)
+                                        time_remaining_sec = trade_market.time_remaining_sec or 0.0
                                     
-                                    if best_bid is not None and trade.take_profit_price and trade.stop_loss_price:
-                                        # Calculate age of trade to protect from single-tick entry-block wicks
-                                        entry_t = trade.entry_time.replace(tzinfo=timezone.utc) if (trade.entry_time and trade.entry_time.tzinfo is None) else (trade.entry_time or datetime.now(timezone.utc))
-                                        trade_age_sec = (datetime.now(timezone.utc) - entry_t).total_seconds()
-                                        if best_bid >= trade.take_profit_price:
-                                            # Early exit at Target
-                                            trade.status = "CLOSED"
-                                            trade.exit_time = datetime.now(timezone.utc)
-                                            trade.exit_price = trade.take_profit_price
-                                            trade.pnl = (trade.take_profit_price - trade.entry_price) * trade.quantity
-                                            trade.resolution = "EARLY_TP"
-                                            if hasattr(trade, 'actual_rr'): trade.actual_rr = trade.planned_rr
-                                            
-                                            self.risk_manager.record_trade_result(trade.pnl)
-                                            self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
-                                            db.commit()
-                                            self.strategy.record_exit(trade.market_id)
-                                            logger.info(f"[BTC5M Engine] EARLY EXIT TP trade {trade.id} ({trade.side}) | PnL: {trade.pnl:.2f}")
-                                            found_resolution = True
-                                            any_settled = True
-                                            break
-                                        elif best_bid <= trade.stop_loss_price and trade_age_sec >= 15.0 and (mid_price is None or mid_price <= (trade.stop_loss_price + 0.03)):
-                                            # Early exit at Stop (wick-resistant and mid-price confirmed)
-                                            trade.status = "CLOSED"
-                                            trade.exit_time = datetime.now(timezone.utc)
-                                            trade.exit_price = trade.stop_loss_price
-                                            trade.pnl = (trade.stop_loss_price - trade.entry_price) * trade.quantity
-                                            trade.resolution = "EARLY_SL"
-                                            if hasattr(trade, 'actual_rr'): trade.actual_rr = -1.0
-                                            
-                                            self.risk_manager.record_trade_result(trade.pnl)
-                                            self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
-                                            db.commit()
-                                            self.strategy.record_exit(trade.market_id)
-                                            logger.info(f"[BTC5M Engine] EARLY EXIT SL trade {trade.id} ({trade.side}) | PnL: {trade.pnl:.2f}")
-                                            found_resolution = True
-                                            any_settled = True
-                                            break
+                                    if best_bid is None or best_ask is None:
+                                        from app.db.models import BTC5MPriceHistory
+                                        last_hist = db.query(BTC5MPriceHistory).filter(
+                                            BTC5MPriceHistory.market_id == trade.market_id
+                                        ).order_by(BTC5MPriceHistory.timestamp.desc()).first()
+                                        if last_hist:
+                                            best_bid = last_hist.best_bid
+                                            best_ask = last_hist.best_ask
+                                            mid_price = (best_bid + best_ask) / 2.0 if (best_bid is not None and best_ask is not None) else best_bid
 
-                                    logger.debug(f"[BTC5M Engine] Trade {trade.id} market not yet closed. Waiting...")
-                                    found_resolution = True
-                                    break
+                                    is_yes = (trade.locked_predicted_side == "YES" or trade.side == "BUY")
+                                    if is_yes:
+                                        current_executable_price = best_bid
+                                        current_pos_mid = mid_price
+                                    else:
+                                        current_executable_price = (1.0 - best_ask) if best_ask is not None else None
+                                        current_pos_mid = (1.0 - mid_price) if mid_price is not None else None
+
+                                    # Authoritative live reference BTC and frozen P2B
+                                    cache_key = f"p2b_{trade.market_id}"
+                                    p2b = self._market_states.get(cache_key) if hasattr(self, '_market_states') else None
+                                    btc_price = self._market_states.get("latest_btc_price") if hasattr(self, '_market_states') else None
+                                    if btc_price is None:
+                                        from app.api.btc5m import _get_live_btc_price
+                                        btc_price = _get_live_btc_price()
+
+                                    # Microstructure features
+                                    features = {
+                                        "short_momentum_1m": getattr(trade_market, "short_momentum_1m", 0.0) if trade_market else 0.0,
+                                        "bid_ask_imbalance": getattr(trade_market, "imbalance", 0.0) if trade_market else 0.0,
+                                        "rolling_volatility": 0.001,
+                                        "mid_price": mid_price or 0.5,
+                                        "fair_prob_yes": mid_price or 0.5
+                                    }
+                                    if hasattr(self, '_btc_history') and self._btc_history and btc_price:
+                                        now_ts = time.time()
+                                        older_ticks = [x for x in self._btc_history if x[0] <= (now_ts - 45.0)]
+                                        if older_ticks and older_ticks[-1][1] > 0:
+                                            features["btc_momentum_1m"] = (btc_price - older_ticks[-1][1]) / older_ticks[-1][1]
+
+                                    from app.btc5m.settings_manager import get_btc5m_settings
+                                    from app.btc5m.exit_manager import BTC5MExitManager
+                                    trade_settings = get_btc5m_settings(db, instance_id=self.instance_id)
+                                    exit_mgr = BTC5MExitManager(db, instance_id=self.instance_id)
+
+                                    decision, exit_price, reason, thesis_score, breakdown, audit_event = exit_mgr.evaluate_exit(
+                                        trade=trade,
+                                        current_executable_price=current_executable_price,
+                                        current_mid_price=current_pos_mid,
+                                        btc_price=btc_price,
+                                        p2b=p2b,
+                                        features=features,
+                                        time_remaining_sec=time_remaining_sec,
+                                        risk_manager=self.risk_manager,
+                                        settings=trade_settings
+                                    )
+
+                                    if audit_event:
+                                        exit_mgr.record_audit(
+                                            trade=trade,
+                                            event_type=audit_event,
+                                            current_executable_price=current_executable_price,
+                                            btc_price=btc_price,
+                                            p2b=p2b,
+                                            features=features,
+                                            time_remaining_sec=time_remaining_sec,
+                                            current_exit_decision=decision,
+                                            thesis_failure_score=thesis_score,
+                                            reason=reason,
+                                            breakdown=breakdown
+                                        )
+
+                                    if decision in ("TP", "CONFIRMED_EXIT", "HARD_EXIT"):
+                                        trade.status = "CLOSED"
+                                        trade.exit_time = datetime.now(timezone.utc)
+                                        trade.exit_price = exit_price
+                                        trade.pnl = (exit_price - trade.entry_price) * trade.quantity if (trade.entry_price is not None and trade.quantity is not None) else 0.0
+                                        trade.exit_reason = reason
+                                        if decision == "TP":
+                                            trade.resolution = "EARLY_TP"
+                                            trade.exit_decision_state = "TP"
+                                            if hasattr(trade, 'actual_rr'): trade.actual_rr = trade.planned_rr
+                                        elif decision == "HARD_EXIT":
+                                            trade.resolution = "EARLY_SL"
+                                            trade.exit_decision_state = "HARD_EXIT"
+                                            if hasattr(trade, 'actual_rr') and trade.planned_risk and trade.planned_risk > 0:
+                                                trade.actual_rr = trade.pnl / trade.planned_risk
+                                        else:
+                                            trade.resolution = "EARLY_SL"
+                                            trade.exit_decision_state = "CONFIRMED_EXIT"
+                                            if hasattr(trade, 'actual_rr') and trade.planned_risk and trade.planned_risk > 0:
+                                                trade.actual_rr = trade.pnl / trade.planned_risk
+
+                                        self.risk_manager.record_trade_result(trade.pnl)
+                                        self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
+                                        db.commit()
+                                        self.strategy.record_exit(trade.market_id)
+                                        logger.info(f"[BTC5M Engine {self.instance_id}] EARLY EXIT {decision} trade {trade.id} ({trade.side}) | PnL: {trade.pnl:.2f} | Reason: {reason}")
+                                        found_resolution = True
+                                        any_settled = True
+                                        break
+                                    else:
+                                        # HOLD or EXIT_REVIEW: position remains OPEN
+                                        db.commit()
+                                        logger.debug(f"[BTC5M Engine {self.instance_id}] Trade {trade.id} state: {decision} ({reason})")
+                                        found_resolution = True
+                                        break
 
                                 # Market is closed - resolve
                                 try:
@@ -907,8 +960,25 @@ class BTC5MEngine:
                                     trade.actual_rr = trade.pnl / trade.planned_risk
 
                                 # Update risk manager via proper API
-                                self.risk_manager.record_trade_result(trade.pnl)
-                                self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
+                                trade.exit_decision_state = "RESOLVED"
+                                try:
+                                    from app.btc5m.exit_manager import BTC5MExitManager
+                                    exit_mgr = BTC5MExitManager(db, instance_id=self.instance_id)
+                                    exit_mgr.record_audit(
+                                        trade=trade,
+                                        event_type="RESOLUTION_EXIT",
+                                        current_executable_price=trade.exit_price,
+                                        btc_price=None,
+                                        p2b=None,
+                                        features={},
+                                        time_remaining_sec=0.0,
+                                        current_exit_decision="RESOLVED",
+                                        thesis_failure_score=0.0 if is_win else 100.0,
+                                        reason=f"Market settled at resolution: {resolution} (Win: {is_win})",
+                                        breakdown={"is_win": is_win, "resolution": resolution}
+                                    )
+                                except Exception as exc:
+                                    logger.debug(f"Audit log on resolution error: {exc}")
 
                                 db.commit()
                                 self.strategy.record_exit(trade.market_id)
@@ -918,6 +988,8 @@ class BTC5MEngine:
                                 break
                             if found_resolution:
                                 break
+                        if found_resolution:
+                            break
 
             if any_settled:
                 asyncio.create_task(self.broadcast_status())

@@ -445,6 +445,23 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
                 open_trade_dict["unrealized_pnl"] = None
                 open_trade_dict["pnl_pct"] = None
 
+        # Smart Exit Confirmation Countdown
+        if open_trade.exit_decision_state == "EXIT_REVIEW" and open_trade.exit_review_started_at:
+            rev_start = open_trade.exit_review_started_at
+            if rev_start.tzinfo is None:
+                rev_start = rev_start.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - rev_start).total_seconds()
+            conf_total = 10.0
+            if hasattr(eng, "settings") and isinstance(eng.settings, dict):
+                conf_total = float(eng.settings.get("soft_stop_confirmation_seconds", 10.0))
+            open_trade_dict["confirmation_seconds_elapsed"] = round(max(0.0, elapsed), 1)
+            open_trade_dict["confirmation_seconds_total"] = conf_total
+            open_trade_dict["confirmation_seconds_remaining"] = round(max(0.0, conf_total - elapsed), 1)
+        else:
+            open_trade_dict["confirmation_seconds_elapsed"] = 0.0
+            open_trade_dict["confirmation_seconds_total"] = 10.0
+            open_trade_dict["confirmation_seconds_remaining"] = 0.0
+
     btc_price = _get_live_btc_price()
 
     price_to_beat = None
@@ -760,10 +777,59 @@ def _format_trade(t: BTC5MTrade) -> dict:
         "entry_net_edge": getattr(t, "entry_net_edge", None) or t.net_edge,
         "entry_planned_rr": getattr(t, "entry_planned_rr", None) or t.planned_rr,
         "entry_stop_price": getattr(t, "entry_stop_price", None) or t.stop_loss_price,
-        "entry_target_price": getattr(t, "entry_target_price", None) or t.take_profit_price,
         "prediction_locked_at": t.prediction_locked_at.isoformat() if getattr(t, "prediction_locked_at", None) else (t.entry_time.isoformat() if t.entry_time else None),
         "prediction_lock_version": getattr(t, "prediction_lock_version", 1),
         "is_thesis_locked": True,
+        # Smart Exit System Fields
+        "exit_decision_state": getattr(t, "exit_decision_state", "HOLD") or "HOLD",
+        "soft_stop_touched_at": t.soft_stop_touched_at.isoformat() if getattr(t, "soft_stop_touched_at", None) else None,
+        "exit_review_started_at": t.exit_review_started_at.isoformat() if getattr(t, "exit_review_started_at", None) else None,
+        "last_exit_review_reason": getattr(t, "last_exit_review_reason", None),
+        "thesis_failure_score": getattr(t, "thesis_failure_score", None),
+        "hard_stop_price": getattr(t, "hard_stop_price", None),
+    }
+
+@router.get("/exit_audits")
+def get_btc5m_exit_audits(instance_id: Optional[str] = None, limit: int = 50, db: Session = Depends(get_db)):
+    """Recent smart exit audit records for transparency and forensics."""
+    from app.db.models import BTC5MExitAudit
+    query = db.query(BTC5MExitAudit)
+    if instance_id:
+        query = query.filter(BTC5MExitAudit.instance_id == instance_id)
+    audits = query.order_by(BTC5MExitAudit.timestamp.desc()).limit(limit).all()
+    return {
+        "status": "success",
+        "total": len(audits),
+        "audits": [
+            {
+                "id": a.id,
+                "trade_id": a.trade_id,
+                "instance_id": a.instance_id,
+                "market_id": a.market_id,
+                "event_type": a.event_type,
+                "timestamp": a.timestamp.isoformat() if a.timestamp else None,
+                "locked_predicted_side": a.locked_predicted_side,
+                "current_live_prediction": a.current_live_prediction,
+                "btc_price": a.btc_price,
+                "p2b": a.p2b,
+                "delta": a.delta,
+                "momentum": a.momentum,
+                "probability": a.probability,
+                "orderbook_imbalance": a.orderbook_imbalance,
+                "volatility": a.volatility,
+                "remaining_time": a.remaining_time,
+                "entry_price": a.entry_price,
+                "current_price": a.current_price,
+                "unrealized_pnl": a.unrealized_pnl,
+                "original_stop": a.original_stop,
+                "hard_stop": a.hard_stop,
+                "current_exit_decision": a.current_exit_decision,
+                "thesis_failure_score": a.thesis_failure_score,
+                "reason": a.reason,
+                "details": a.details_json
+            }
+            for a in audits
+        ]
     }
 
 @router.get("/chart")

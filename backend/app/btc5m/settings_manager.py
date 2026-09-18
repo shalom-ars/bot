@@ -29,6 +29,9 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "sl_dollar": "2.00",
     "side_bias": "ANY",
     "only_short": "false",
+    "soft_stop_confirmation_seconds": "10.0",
+    "thesis_failure_threshold": "60.0",
+    "hard_stop_delta": "0.10",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = {
@@ -50,6 +53,9 @@ DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = {
     "sl_dollar": "2.00",
     "side_bias": "NO",
     "only_short": "true",
+    "soft_stop_confirmation_seconds": "10.0",
+    "thesis_failure_threshold": "60.0",
+    "hard_stop_delta": "0.10",
 }
 
 TYPED_FIELDS = {
@@ -71,6 +77,9 @@ TYPED_FIELDS = {
     "sl_dollar": float,
     "side_bias": str,
     "only_short": bool,
+    "soft_stop_confirmation_seconds": float,
+    "thesis_failure_threshold": float,
+    "hard_stop_delta": float,
 }
 
 
