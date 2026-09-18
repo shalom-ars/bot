@@ -498,9 +498,9 @@ class BTC5MStrategy:
         min_edge = self.settings.get("min_net_edge", MIN_NET_EDGE)
         max_spr = self.settings.get("max_spread", MAX_SPREAD)
         min_liq = self.settings.get("min_liquidity", MIN_LIQUIDITY)
-        min_time = self.settings.get("min_time_remaining", 30.0)
+        min_time = float(self.settings.get("min_time_remaining", 210.0))
         is_instance_1 = (self.instance_id == "instance_1" or getattr(self, "instance_id", None) is None)
-        default_max_time = 300.0 if is_instance_1 else 240.0
+        default_max_time = 295.0 if is_instance_1 else 240.0
         max_time = float(self.settings.get("max_time_remaining", default_max_time))
 
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
@@ -576,7 +576,7 @@ class BTC5MStrategy:
             skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {min_liq:.0f}")
             
         if time_remaining < min_time:
-            skip_flags.append(f"SKIP - Time {time_remaining:.0f}s < {min_time:.0f}s")
+            skip_flags.append(f"SKIP - Late-candle entry rejected ({time_remaining:.0f}s < {min_time:.0f}s left)")
         elif time_remaining > max_time:
             skip_flags.append(f"SKIP - Candle open stabilization ({time_remaining:.0f}s > {max_time:.0f}s)")
         else:
@@ -588,14 +588,20 @@ class BTC5MStrategy:
         else:
             skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
             
+        min_p2b = float(self.settings.get("min_p2b_diff", 15.0))
         if not btc_price or not price_to_beat:
             skip_flags.append("SKIP - Missing Price-to-Beat or Current BTC Price (Stale data)")
+        elif abs(btc_price - price_to_beat) < min_p2b:
+            btc_diff = abs(btc_price - price_to_beat)
+            skip_flags.append(f"SKIP - Indecisive BTC vs P2B (${btc_diff:.1f} < ${min_p2b:.2f} threshold)")
             
         if predicted_side == "NONE":
             skip_flags.append("SKIP - No directional evidence (YES/NO tie)")
             
-        if entry_price < 0.30 or entry_price > 0.70:
-            skip_flags.append(f"SKIP - Entry price {entry_price:.2f} outside optimal R:R window (0.30 - 0.70)")
+        min_p = float(self.settings.get("min_entry_price", 0.40))
+        max_p = float(self.settings.get("max_entry_price", 0.58))
+        if entry_price < min_p or entry_price > max_p:
+            skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
             
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")

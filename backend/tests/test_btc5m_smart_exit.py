@@ -452,3 +452,138 @@ def test_hard_stop_price_default_calculation(db_session):
 
     assert decision == "HARD_EXIT"
     assert audit_event == "HARD_STOP_TRIGGERED"
+
+
+# ── TEST 15: Strict Entry Gates — Late Candle Rejection ─────────────────────
+def test_entry_gates_reject_late_candle(db_session):
+    from app.btc5m.strategy import BTC5MStrategy
+    strat = BTC5MStrategy(instance_id="instance_1", settings_dict={"min_time_remaining": 210.0, "max_time_remaining": 295.0})
+    features = {
+        "mid_price": 0.50,
+        "bid": 0.49,
+        "ask": 0.51,
+        "spread": 0.02,
+        "bid_depth": 500.0,
+        "ask_depth": 500.0,
+        "short_momentum_1m": 0.001,
+        "bid_ask_imbalance": 0.1,
+        "time_remaining_sec": 180.0  # < 210.0s min_time
+    }
+    sig = strat.evaluate(
+        market_id="test_late_mkt",
+        condition_id="0xabc",
+        question="BTC 5M Test",
+        yes_token_id="tok1",
+        no_token_id="tok2",
+        features=features,
+        orderbook_timestamp=None,
+        btc_price=65100.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig.state == "SKIP"
+    assert "Late-candle entry rejected" in sig.reason
+
+
+# ── TEST 16: Strict Entry Gates — Extreme Entry Price Rejection ─────────────
+def test_entry_gates_reject_extreme_entry_price(db_session):
+    from app.btc5m.strategy import BTC5MStrategy
+    strat = BTC5MStrategy(instance_id="instance_1", settings_dict={"min_entry_price": 0.40, "max_entry_price": 0.58})
+    # Elevated price 0.65 > 0.58
+    features = {
+        "mid_price": 0.65,
+        "bid": 0.64,
+        "ask": 0.66,
+        "spread": 0.02,
+        "bid_depth": 500.0,
+        "ask_depth": 500.0,
+        "short_momentum_1m": 0.001,
+        "bid_ask_imbalance": 0.1,
+        "time_remaining_sec": 250.0
+    }
+    sig = strat.evaluate(
+        market_id="test_price_mkt",
+        condition_id="0xdef",
+        question="BTC 5M Test",
+        yes_token_id="tok1",
+        no_token_id="tok2",
+        features=features,
+        orderbook_timestamp=None,
+        btc_price=65100.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig.state == "SKIP"
+    assert "outside optimal R:R window" in sig.reason
+
+
+# ── TEST 17: Strict Entry Gates — Indecisive P2B Rejection ──────────────────
+def test_entry_gates_reject_indecisive_p2b(db_session):
+    from app.btc5m.strategy import BTC5MStrategy
+    strat = BTC5MStrategy(instance_id="instance_1", settings_dict={"min_p2b_diff": 15.0})
+    features = {
+        "mid_price": 0.50,
+        "bid": 0.49,
+        "ask": 0.51,
+        "spread": 0.02,
+        "bid_depth": 500.0,
+        "ask_depth": 500.0,
+        "short_momentum_1m": 0.001,
+        "bid_ask_imbalance": 0.1,
+        "time_remaining_sec": 250.0
+    }
+    # BTC only $5 from P2B (< $15.00 threshold)
+    sig = strat.evaluate(
+        market_id="test_p2b_mkt",
+        condition_id="0xghi",
+        question="BTC 5M Test",
+        yes_token_id="tok1",
+        no_token_id="tok2",
+        features=features,
+        orderbook_timestamp=None,
+        btc_price=65005.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig.state == "SKIP"
+    assert "Indecisive BTC vs P2B" in sig.reason
+
+
+# ── TEST 18: In-Memory Fast Exit Evaluator Closes Trade Instantly ────────────
+@pytest.mark.asyncio
+async def test_fast_exit_monitor_evaluates_and_closes_trade(db_session):
+    from app.btc5m.engine import btc5m_engine
+    from app.db.models import BTC5MMarket
+
+    # Setup market and trade
+    mkt = BTC5MMarket(
+        market_id="test_market_5m_001",
+        condition_id="cid_fast",
+        question="Test Market",
+        yes_token_id="yes1",
+        no_token_id="no1",
+        best_bid=0.58,  # Gain: (0.58 - 0.50) * 20 = +$1.60 >= $1.00 target
+        best_ask=0.59,
+        mid_price=0.585,
+        time_remaining_sec=200.0
+    )
+    db_session.add(mkt)
+
+    trade = create_open_trade(
+        db_session,
+        entry_price=0.50,
+        stop_loss=0.01,
+        take_profit=0.55,
+        quantity=20.0
+    )
+    trade.planned_reward = 1.00
+    db_session.commit()
+
+    # Call _evaluate_and_apply_exit
+    closed = await btc5m_engine._evaluate_and_apply_exit(db_session, trade)
+    assert closed is True
+    assert trade.status == "CLOSED"
+    assert trade.resolution == "EARLY_TP"
+    assert trade.pnl >= 1.00
+    assert "Take profit target reached" in trade.exit_reason
+

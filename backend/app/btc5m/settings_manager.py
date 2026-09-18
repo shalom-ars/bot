@@ -20,8 +20,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_rr": "0.1",
     "max_spread": "0.05",
     "min_liquidity": "100.0",
-    "min_time_remaining": "30.0",
-    "max_time_remaining": "300.0",
+    "min_time_remaining": "210.0",
+    "max_time_remaining": "295.0",
     "take_profit_delta": "0.05",
     "max_take_profit": "0.95",
     "stop_loss_ratio": "1.00",
@@ -35,6 +35,9 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "soft_stop_confirmation_seconds": "3.0",
     "thesis_failure_threshold": "50.0",
     "hard_stop_delta": "0.02",
+    "min_entry_price": "0.40",
+    "max_entry_price": "0.58",
+    "min_p2b_diff": "15.0",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
@@ -64,6 +67,9 @@ TYPED_FIELDS = {
     "soft_stop_confirmation_seconds": float,
     "thesis_failure_threshold": float,
     "hard_stop_delta": float,
+    "min_entry_price": float,
+    "max_entry_price": float,
+    "min_p2b_diff": float,
 }
 
 
