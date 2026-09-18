@@ -471,22 +471,30 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
         ).order_by(BTC5MSignal.timestamp.desc()).first()
 
     if latest_sig:
-        yes_score = getattr(latest_sig, "yes_score", 0.0)
-        no_score = getattr(latest_sig, "no_score", 0.0)
+        yes_score = getattr(latest_sig, "yes_score", None)
+        no_score = getattr(latest_sig, "no_score", None)
         
-        # If the signal is a SKIP, fetch scores from btc5m_skips since signals DB doesn't have score columns
-        if latest_sig.state == "SKIP":
+        # If signal scores are missing or null, fallback to btc5m_skips
+        if yes_score is None or no_score is None:
             from app.db.models import BTC5MSkip
             skip_rec = db.query(BTC5MSkip).filter(BTC5MSkip.market_id == latest_sig.market_id).order_by(BTC5MSkip.timestamp.desc()).first()
             if skip_rec:
                 yes_score = skip_rec.yes_score or 0.0
                 no_score = skip_rec.no_score or 0.0
-                setattr(latest_sig, "yes_prob", skip_rec.yes_prob)
-                setattr(latest_sig, "no_prob", skip_rec.no_prob)
-                setattr(latest_sig, "predicted_side", skip_rec.predicted_side)
-                setattr(latest_sig, "gate_results", skip_rec.gate_results)
-                setattr(latest_sig, "yes_breakdown", skip_rec.yes_breakdown)
-                setattr(latest_sig, "no_breakdown", skip_rec.no_breakdown)
+                if not getattr(latest_sig, "yes_prob", None):
+                    setattr(latest_sig, "yes_prob", skip_rec.yes_prob)
+                if not getattr(latest_sig, "no_prob", None):
+                    setattr(latest_sig, "no_prob", skip_rec.no_prob)
+                if not getattr(latest_sig, "predicted_side", None):
+                    setattr(latest_sig, "predicted_side", skip_rec.predicted_side)
+                if not getattr(latest_sig, "gate_results", None):
+                    setattr(latest_sig, "gate_results", skip_rec.gate_results)
+                if not getattr(latest_sig, "yes_breakdown", None):
+                    setattr(latest_sig, "yes_breakdown", skip_rec.yes_breakdown)
+                if not getattr(latest_sig, "no_breakdown", None):
+                    setattr(latest_sig, "no_breakdown", skip_rec.no_breakdown)
+        yes_score = yes_score or 0.0
+        no_score = no_score or 0.0
 
     analysis = None
     if latest_sig:
