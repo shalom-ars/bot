@@ -166,7 +166,8 @@ class BTC5MStrategy:
         mode: str = "dynamic",
         tp_dollar: Optional[float] = None,
         sl_dollar: Optional[float] = None,
-        only_short: bool = False
+        only_short: bool = False,
+        slot_mode: Optional[str] = None
     ):
         self.risk_manager = risk_manager
         self.instance_id = instance_id
@@ -174,24 +175,43 @@ class BTC5MStrategy:
         self.tp_dollar = tp_dollar
         self.sl_dollar = sl_dollar
         self.only_short = only_short
+        self.slot_mode = slot_mode or ("double_slot_2.5m" if instance_id == "instance_2" else "single_5m")
         self._active_positions: dict = {}  # market_id -> entry info
         self.last_btc_price = None
         self.last_price_to_beat = None
         self.settings: dict = settings_dict or {}
         if not self.settings:
             self.rehydrate_settings()
+            if mode != "dynamic":
+                self.mode = mode
+                self.settings["mode"] = mode
+            if tp_dollar is not None:
+                self.tp_dollar = tp_dollar
+                self.settings["tp_dollar"] = tp_dollar
+            if sl_dollar is not None:
+                self.sl_dollar = sl_dollar
+                self.settings["sl_dollar"] = sl_dollar
+            if only_short:
+                self.only_short = only_short
+                self.settings["only_short"] = only_short
+            if slot_mode is not None:
+                self.slot_mode = slot_mode
+                self.settings["slot_mode"] = slot_mode
         else:
             self._sync_instance_params()
 
     def _sync_instance_params(self):
         if self.settings.get("mode"):
             self.mode = self.settings.get("mode")
+        if self.settings.get("slot_mode"):
+            self.slot_mode = self.settings.get("slot_mode")
         if self.settings.get("tp_dollar") is not None:
             self.tp_dollar = float(self.settings.get("tp_dollar"))
         if self.settings.get("sl_dollar") is not None:
             self.sl_dollar = float(self.settings.get("sl_dollar"))
         if self.settings.get("only_short") is not None:
             self.only_short = bool(self.settings.get("only_short"))
+
 
     def rehydrate_settings(self):
         """Load persistent targeting settings from DB for this instance, falling back to defaults."""
@@ -355,7 +375,7 @@ class BTC5MStrategy:
 
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
         if is_fixed:
-            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 3.0))
+            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 4.0))
             sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 2.0))
             take_profit_price = min(0.99, entry_price + (tp_dollar / max(0.1, quantity)))
             stop_loss_price = max(0.01, entry_price - (sl_dollar / max(0.1, quantity)))
@@ -363,14 +383,15 @@ class BTC5MStrategy:
             risk_per_share = max(0.001, entry_price - stop_loss_price)
             planned_risk = sl_dollar
         else:
-            tp_delta = self.settings.get("take_profit_delta", 0.30)
-            max_tp = self.settings.get("max_take_profit", 0.95)
-            sl_ratio = self.settings.get("stop_loss_ratio", 0.50)
+            tp_delta = float(self.settings.get("take_profit_delta", 0.20))
+            max_tp = float(self.settings.get("max_take_profit", 0.95))
+            sl_ratio = float(self.settings.get("stop_loss_ratio", 0.50))
 
-            take_profit_price = min(max_tp, entry_price + tp_delta) # Dynamic target
+            take_profit_price = min(max_tp, entry_price + tp_delta)  # Dynamic target
             reward_per_share = max(0.01, take_profit_price - entry_price)
-            risk_per_share = reward_per_share * sl_ratio
+            risk_per_share = reward_per_share * sl_ratio  # 1:2 Risk to Reward (Profit is 2x loss)
             stop_loss_price = max(0.01, entry_price - risk_per_share)
+
         
         net_reward = (take_profit_price - entry_price) - fees - slippage_cost - spread_cost
         net_risk = (entry_price - stop_loss_price) + fees + slippage_cost + spread_cost
@@ -501,12 +522,12 @@ class BTC5MStrategy:
         
         import json
         # 3. Determine Prediction (Independent of 70 threshold)
-        if yes_score > no_score:
+        if abs(yes_score - no_score) < 1.0:
+            predicted_side = "NONE"
+        elif yes_score > no_score:
             predicted_side = "YES"
-        elif no_score > yes_score:
-            predicted_side = "NO"
         else:
-            predicted_side = "YES" if yes_edge > no_edge else ("NO" if no_edge > yes_edge else "NONE")
+            predicted_side = "NO"
 
         # 4. Entry Checks
         gate_results = {
@@ -572,6 +593,9 @@ class BTC5MStrategy:
         if predicted_side == "NONE":
             skip_flags.append("SKIP - No directional evidence (YES/NO tie)")
             
+        if entry_price < 0.10 or entry_price > 0.90:
+            skip_flags.append(f"SKIP - Entry price {entry_price:.2f} in extreme terminal tail (< 0.10 or > 0.90)")
+            
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")
 
@@ -584,22 +608,45 @@ class BTC5MStrategy:
         from app.db.models import BTC5MTrade
         db = SessionLocal()
         try:
-            open_count = db.query(BTC5MTrade).filter(
+            open_trades = db.query(BTC5MTrade).filter(
                 BTC5MTrade.status == "OPEN",
                 BTC5MTrade.instance_id == self.instance_id
-            ).count()
-            already_traded = db.query(BTC5MTrade).filter(
+            ).all()
+            existing_market_trades = db.query(BTC5MTrade).filter(
                 BTC5MTrade.market_id == market_id,
                 BTC5MTrade.instance_id == self.instance_id
-            ).count()
+            ).all()
         finally:
             db.close()
 
-        if open_count >= 1:
-            skip_flags.append("SKIP - Max 1 open position allowed")
+        slot_mode = self.settings.get("slot_mode") or getattr(self, "slot_mode", None) or ("double_slot_2.5m" if self.instance_id == "instance_2" else "single_5m")
 
-        if already_traded >= 1:
-            skip_flags.append("SKIP - Duplicate trade prevention: Market already traded")
+        if slot_mode == "double_slot_2.5m":
+            # 2.5-minute slots: Slot 1 (300s -> 150s), Slot 2 (150s -> 30s)
+            current_slot = 1 if time_remaining > 150.0 else 2
+            slot1_traded = any(
+                (t.time_remaining_at_entry is not None and t.time_remaining_at_entry > 150.0)
+                for t in existing_market_trades
+            )
+            slot2_traded = any(
+                (t.time_remaining_at_entry is not None and t.time_remaining_at_entry <= 150.0)
+                for t in existing_market_trades
+            )
+            if current_slot == 1 and slot1_traded:
+                skip_flags.append("SKIP - Slot 1 (first 2.5m) already traded for this 5M candle")
+            elif current_slot == 2 and slot2_traded:
+                skip_flags.append("SKIP - Slot 2 (second 2.5m) already traded for this 5M candle")
+
+            if len(open_trades) >= 2:
+                skip_flags.append("SKIP - Max 2 open positions allowed (both slots active)")
+        else:
+            # Single trade per 5M candle (Bot 1)
+            if len(open_trades) >= 1:
+                skip_flags.append("SKIP - Max 1 open position allowed")
+
+            if len(existing_market_trades) >= 1:
+                skip_flags.append("SKIP - Single trade per 5M candle already executed")
+
             
         if current_balance <= 0:
             skip_flags.append("SKIP - Risk limit (Zero or negative balance)")

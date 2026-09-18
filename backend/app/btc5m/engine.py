@@ -43,7 +43,8 @@ class BTC5MEngine:
         tp_dollar: Optional[float] = None,
         sl_dollar: Optional[float] = None,
         only_short: bool = False,
-        risk_manager: Optional[RiskManager] = None
+        risk_manager: Optional[RiskManager] = None,
+        slot_mode: Optional[str] = None
     ):
         self.instance_id = instance_id
         self.name = name
@@ -51,6 +52,7 @@ class BTC5MEngine:
         self.tp_dollar = tp_dollar
         self.sl_dollar = sl_dollar
         self.only_short = only_short
+        self.slot_mode = slot_mode or ("double_slot_2.5m" if instance_id == "instance_2" else "single_5m")
         from app.db.models import BTC5MTrade
         self.risk_manager = risk_manager or RiskManager(trade_model=BTC5MTrade, instance_id=self.instance_id)
         self.feature_engine = BTC5MFeatureEngine()
@@ -60,8 +62,10 @@ class BTC5MEngine:
             mode=self.mode,
             tp_dollar=self.tp_dollar,
             sl_dollar=self.sl_dollar,
-            only_short=self.only_short
+            only_short=self.only_short,
+            slot_mode=self.slot_mode
         )
+
         self.running = False
         self.trading_active = True  # Default active for paper trading (toggleable via UI)
         self._market_states: Dict[str, str] = {}  # market_id -> state
@@ -1090,21 +1094,26 @@ class BTC5MEngine:
         finally:
             db.close()
 
-# Primary Bot (Instance 1: Dynamic R:R All-Weather)
+# Primary Bot (Instance 1: Single Slot 5M)
 btc5m_engine = BTC5MEngine(
     instance_id="instance_1",
-    name="Bot 1 (Dynamic R:R)"
+    name="Bot 1: Single Slot 5M",
+    mode="dynamic",
+    only_short=False,
+    slot_mode="single_5m"
 )
 
-# Secondary Bot (Instance 2: Short Specialist $3 TP / $2 SL)
+# Secondary Bot (Instance 2: Double Slot 2.5M)
 btc5m_engine_2 = BTC5MEngine(
     instance_id="instance_2",
-    name="Bot 2 (Short Specialist $3 TP / $2 SL)",
-    mode="fixed_dollar",
-    tp_dollar=3.0,
+    name="Bot 2: Double Slot 2.5M",
+    mode="dynamic",
+    tp_dollar=4.0,
     sl_dollar=2.0,
-    only_short=True
+    only_short=False,
+    slot_mode="double_slot_2.5m"
 )
+
 
 ENGINES: Dict[str, BTC5MEngine] = {
     "instance_1": btc5m_engine,

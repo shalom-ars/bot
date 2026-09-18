@@ -3,8 +3,10 @@ import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Clock, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
-  Bot, Crosshair, AlertTriangle, ShieldAlert
+  Bot, AlertTriangle, ShieldAlert, RotateCcw, DollarSign, Layers
 } from 'lucide-react';
+
+
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
   constructor(props: any) { super(props); this.state = { hasError: false, error: null }; }
@@ -439,6 +441,9 @@ function InnerBTC5M() {
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [isTogglingTrading, setIsTogglingTrading] = useState<boolean>(false);
+  const [isResetting, setIsResetting] = useState<boolean>(false);
+  const [isTogglingAccount, setIsTogglingAccount] = useState<boolean>(false);
+  const [showRealMoneyConfirm, setShowRealMoneyConfirm] = useState<boolean>(false);
 
   const activeTradeId = statusData?.active_trade?.id ?? null;
   const activeTradeStatus = statusData?.active_trade?.status ?? null;
@@ -465,6 +470,53 @@ function InnerBTC5M() {
     }
   };
 
+  const handleToggleAccountMode = async (targetMode: 'demo' | 'real_money') => {
+    if (isTogglingAccount) return;
+    if (targetMode === 'real_money' && !showRealMoneyConfirm) {
+      setShowRealMoneyConfirm(true);
+      return;
+    }
+    setShowRealMoneyConfirm(false);
+    setIsTogglingAccount(true);
+    try {
+      const res = await fetch('/api/btc5m/account_mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: targetMode, instance_id: selectedInstance })
+      });
+      if (res.ok) {
+        refetchStatus();
+      }
+    } catch (err) {
+      console.error('Failed to toggle account mode:', err);
+    } finally {
+      setIsTogglingAccount(false);
+    }
+  };
+
+  const handleResetHistory = async () => {
+    if (isResetting) return;
+    const confirm = window.confirm(
+      "⚠️ RESET ALL TRADING HISTORY?\n\nThis will clear all historical trades, signals, price history, and audits across all bot instances, and restart virtual equity at $500.00.\n\nProceed?"
+    );
+    if (!confirm) return;
+    setIsResetting(true);
+    try {
+      const res = await fetch('/api/btc5m/reset_history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        refetchStatus();
+        setRefreshTrigger(prev => prev + 1);
+      }
+    } catch (err) {
+      console.error('Failed to reset history:', err);
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const handleCloseTrade = async () => {
     if (isClosing) return;
     setIsClosing(true);
@@ -487,6 +539,7 @@ function InnerBTC5M() {
       setIsClosing(false);
     }
   };
+
   
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -596,46 +649,119 @@ function InnerBTC5M() {
 
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
-      {/* BOT INSTANCE SWITCHER BAR */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2 flex flex-col sm:flex-row items-center justify-between gap-2 shadow-sm">
-        <div className="flex items-center gap-1.5 w-full sm:w-auto">
+      {/* TOP CONTROL BAR: INSTANCES, DEMO/REAL MONEY TOGGLE, RESET */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-col lg:flex-row items-center justify-between gap-2.5 shadow-sm">
+        {/* Left: Dual Bot Instance Selector */}
+        <div className="flex items-center gap-1.5 w-full lg:w-auto">
           <button
             onClick={() => setSelectedInstance('instance_1')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
               selectedInstance === 'instance_1'
                 ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                 : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
             }`}
           >
             <Bot className="w-4 h-4" />
-            <span>BOT 1: Dynamic R:R (All-Weather)</span>
+            <span>BOT 1: Single Slot 5M (YES / NO)</span>
             {selectedInstance === 'instance_1' && isTradingActive && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
             )}
           </button>
           <button
             onClick={() => setSelectedInstance('instance_2')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
               selectedInstance === 'instance_2'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
                 : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
             }`}
           >
-            <Crosshair className="w-4 h-4" />
-            <span>BOT 2: Short Specialist ($3 TP / $2 SL)</span>
+            <Layers className="w-4 h-4" />
+            <span>BOT 2: Double Slot 2.5M (Dual Slots)</span>
             {selectedInstance === 'instance_2' && isTradingActive && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
             )}
           </button>
         </div>
 
-        <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 px-2 self-end sm:self-auto">
-          <span className="text-slate-500 uppercase text-[9px] font-bold">Active Instance:</span>
-          <span className="text-amber-400 font-bold">
-            {selectedInstance === 'instance_1' ? 'Engine 1 (Dynamic YES/NO)' : 'Engine 2 (NO/DOWN Only, $3 TP / $2 SL)'}
-          </span>
+        {/* Right: Demo vs Real Money Toggle & Reset History Button */}
+        <div className="flex items-center gap-2 w-full lg:w-auto justify-end flex-wrap">
+          {/* Account Mode Switcher */}
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <button
+              onClick={() => handleToggleAccountMode('demo')}
+              disabled={isTogglingAccount}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                (statusData?.account_mode || 'demo') === 'demo'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>DEMO ($500)</span>
+            </button>
+            <button
+              onClick={() => handleToggleAccountMode('real_money')}
+              disabled={isTogglingAccount}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                statusData?.account_mode === 'real_money'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <DollarSign className="w-3.5 h-3.5" />
+              <span>REAL MONEY</span>
+            </button>
+          </div>
+
+          {/* Reset All History Button */}
+          <button
+            onClick={handleResetHistory}
+            disabled={isResetting}
+            title="Reset all trades, signals, and restart equity at $500.00"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-rose-500/10 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20 transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+            <span>RESET ($500)</span>
+          </button>
         </div>
       </div>
+
+      {/* REAL MONEY SAFETY CONFIRMATION MODAL */}
+      {showRealMoneyConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border-2 border-amber-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-white">
+            <div className="flex items-center gap-3 text-amber-400">
+              <ShieldAlert className="w-8 h-8 shrink-0" />
+              <div>
+                <h3 className="text-base font-black uppercase tracking-wider">Switch to Real Money Account</h3>
+                <p className="text-xs text-slate-400">Live Trading Safety Confirmation</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Enabling Real Money mode instructs the bot to submit orders to Polymarket's live orderbook using real funds (USDC). Ensure your wallet private key and Polymarket API credentials are configured in your environment.
+            </p>
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-300 space-y-1">
+              <p className="font-bold">✓ Risk-Reward: 1:2 (Profit:Loss) active</p>
+              <p className="font-bold">✓ Smart Stop-Loss / Confirmation Exit active</p>
+              <p className="font-bold">✓ Daily loss circuit breaker armed</p>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowRealMoneyConfirm(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleToggleAccountMode('real_money')}
+                className="px-4 py-2 rounded-xl text-xs font-black text-white bg-amber-600 hover:bg-amber-500 cursor-pointer"
+              >
+                Confirm Real Money Mode
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 1. FULL-WIDTH RESOLUTION COUNTDOWN TIMER BANNER (AT THE VERY TOP) */}
       <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
@@ -655,6 +781,23 @@ function InnerBTC5M() {
                 <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black px-2 py-0.5 rounded border border-amber-500/30 font-mono">
                   5-MIN WINDOW
                 </span>
+                {statusData?.slot_mode === 'double_slot_2.5m' ? (
+                  <span className="bg-indigo-500/20 text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded border border-indigo-500/30 font-mono flex items-center gap-1">
+                    <Layers className="w-3 h-3" />
+                    SLOT {statusData?.current_slot ?? 1} OF 2 ({statusData?.current_slot === 1 ? 'FIRST 2.5M' : 'SECOND 2.5M'})
+                  </span>
+                ) : (
+                  <span className="bg-blue-500/20 text-blue-300 text-[9px] font-black px-2 py-0.5 rounded border border-blue-500/30 font-mono">
+                    SINGLE 5M SLOT
+                  </span>
+                )}
+                <span className={`text-[9px] font-black px-2 py-0.5 rounded border font-mono uppercase ${
+                  statusData?.account_mode === 'real_money'
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                }`}>
+                  {statusData?.account_mode === 'real_money' ? '● REAL MONEY' : '🧪 DEMO ($500)'}
+                </span>
                 <button
                   onClick={() => handleToggleTrading(!isTradingActive)}
                   disabled={isTogglingTrading}
@@ -672,27 +815,16 @@ function InnerBTC5M() {
               </p>
               <div className="flex items-center gap-2 mt-1 text-[9px] font-mono text-slate-400 flex-wrap">
                 <span className="text-amber-400 font-bold uppercase">TARGETING:</span>
-                {selectedInstance === 'instance_2' ? (
-                  <>
-                    <span className="text-indigo-300 font-bold">SIDE: SHORT (NO/DOWN ONLY)</span>
-                    <span>&bull;</span>
-                    <span className="text-emerald-400 font-bold">TP +$3.00</span>
-                    <span>&bull;</span>
-                    <span className="text-rose-400 font-bold">SL -$2.00</span>
-                    <span>&bull;</span>
-                    <span>Score &ge; {targetSettings?.min_entry_score ?? 60}</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Score &ge; {targetSettings?.min_entry_score ?? 60}</span>
-                    <span>&bull;</span>
-                    <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.015) * 100).toFixed(1)}%</span>
-                    <span>&bull;</span>
-                    <span>R:R &ge; {targetSettings?.min_rr ?? 1.5}:1</span>
-                    <span>&bull;</span>
-                    <span>TP +${targetSettings?.take_profit_delta ?? 0.30}</span>
-                  </>
-                )}
+                <span className="text-indigo-300 font-bold">YES &amp; NO SIGNALS</span>
+                <span>&bull;</span>
+                <span className="text-emerald-400 font-bold">R:R 1:2 (PROFIT:LOSS)</span>
+                <span>&bull;</span>
+                <span>Score &ge; {targetSettings?.min_entry_score ?? 55}</span>
+                <span>&bull;</span>
+                <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.005) * 100).toFixed(1)}%</span>
+                <span>&bull;</span>
+                <span>TP +${targetSettings?.take_profit_delta ?? 0.20}</span>
+                <span>&bull;</span>
                 <span className="text-emerald-400 font-bold ml-1">🔒 PERSISTENT</span>
                 <span className="mx-1 text-slate-600">|</span>
                 {wsConnected ? (
@@ -709,6 +841,7 @@ function InnerBTC5M() {
               </div>
             </div>
           </div>
+
 
           {/* Right: Digital Timer & Virtual Equity */}
           <div className="flex items-center gap-3 shrink-0 self-start md:self-auto">

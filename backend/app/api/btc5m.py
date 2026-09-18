@@ -12,6 +12,8 @@ from datetime import datetime, timezone, timedelta
 from app.btc5m.latency import latency_tracker
 import time
 import httpx
+import os
+from app.config import settings
 
 router = APIRouter()
 
@@ -212,8 +214,15 @@ class ToggleTradingRequest(BaseModel):
     active: bool
     instance_id: Optional[str] = "instance_1"
 
+class AccountModeRequest(BaseModel):
+    mode: str  # "demo" or "real_money"
+    instance_id: Optional[str] = "instance_1"
+
 class UpdateSettingsRequest(BaseModel):
     instance_id: Optional[str] = "instance_1"
+    account_mode: Optional[str] = None
+    slot_mode: Optional[str] = None
+    risk_reward_ratio: Optional[str] = None
     min_entry_score: Optional[float] = None
     min_net_edge: Optional[float] = None
     min_rr: Optional[float] = None
@@ -242,6 +251,7 @@ def get_btc5m_instances():
                 "instance_id": eng.instance_id,
                 "name": eng.name,
                 "mode": eng.mode,
+                "slot_mode": getattr(eng, "slot_mode", "single_5m"),
                 "only_short": eng.only_short,
                 "tp_dollar": eng.tp_dollar,
                 "sl_dollar": eng.sl_dollar,
@@ -250,6 +260,7 @@ def get_btc5m_instances():
             for eng in ENGINES.values()
         ]
     }
+
 
 @router.get("/settings")
 def get_btc5m_targeting_settings(instance_id: str = "instance_1", db: Session = Depends(get_db)):
@@ -318,6 +329,103 @@ def toggle_trading(req: ToggleTradingRequest, db: Session = Depends(get_db)):
     _safe_broadcast(inst_id)
 
     return {"status": "success", "instance_id": inst_id, "trading_active": eng.trading_active}
+
+@router.get("/account_mode")
+def get_account_mode(instance_id: str = "instance_1", db: Session = Depends(get_db)):
+    from app.btc5m.settings_manager import get_btc5m_settings
+    settings_map = get_btc5m_settings(db, instance_id=instance_id)
+    eng = get_engine(instance_id)
+    has_credentials = bool(
+        getattr(settings, "polymarket_api_key", None) or 
+        os.environ.get("POLYMARKET_API_KEY") or
+        os.environ.get("POLYGON_WALLET_PRIVATE_KEY")
+    )
+    acc_mode = settings_map.get("account_mode", "demo")
+    return {
+        "status": "success",
+        "instance_id": instance_id,
+        "account_mode": acc_mode,
+        "execution_mode": "live" if acc_mode == "real_money" else "paper",
+        "has_credentials": has_credentials,
+        "virtual_equity": round(eng.risk_manager.current_balance, 2) if (eng and eng.risk_manager) else 500.0,
+        "is_armed": has_credentials if acc_mode == "real_money" else False
+    }
+
+@router.post("/account_mode")
+def set_account_mode(req: AccountModeRequest, db: Session = Depends(get_db)):
+    target_mode = "real_money" if req.mode.lower() in ("real_money", "real", "live") else "demo"
+    from app.btc5m.settings_manager import update_btc5m_settings
+    inst_id = req.instance_id or "instance_1"
+    update_btc5m_settings(db, {"account_mode": target_mode}, user_info=f"UI_TOGGLE_ACCOUNT_{inst_id}", instance_id=inst_id)
+    eng = get_engine(inst_id)
+    if eng and eng.strategy:
+        eng.strategy.rehydrate_settings()
+    has_credentials = bool(
+        getattr(settings, "polymarket_api_key", None) or 
+        os.environ.get("POLYMARKET_API_KEY") or
+        os.environ.get("POLYGON_WALLET_PRIVATE_KEY")
+    )
+    _safe_broadcast(inst_id)
+    return {
+        "status": "success",
+        "instance_id": inst_id,
+        "account_mode": target_mode,
+        "execution_mode": "live" if target_mode == "real_money" else "paper",
+        "has_credentials": has_credentials,
+        "warning": None if (has_credentials or target_mode == "demo") else "Live trading credentials not configured in environment. System remains in safe paper fallback."
+    }
+
+@router.post("/reset_history")
+def reset_trading_history(db: Session = Depends(get_db)):
+    """
+    Completely resets all BTC5M trading history across all instances:
+    - Deletes all trades, signals, price history, skips, exit audits, and audits.
+    - Reinitializes virtual balance/equity to exactly $500.00 in RiskManager.
+    - Clears in-memory active positions.
+    - Broadcasts clean state to all connected WebSocket clients.
+    """
+    from app.db.models import (
+        BTC5MTrade, BTC5MSignal, BTC5MPriceHistory, BTC5MSkip, BTC5MExitAudit, BTC5MAudit, BTC5MSetting
+    )
+    try:
+        db.query(BTC5MTrade).delete()
+        db.query(BTC5MSignal).delete()
+        db.query(BTC5MPriceHistory).delete()
+        db.query(BTC5MSkip).delete()
+        db.query(BTC5MExitAudit).delete()
+        db.query(BTC5MAudit).delete()
+        db.query(BTC5MSetting).delete()
+        db.commit()
+
+        # Reset RiskManager balance to $500.00 for both engines and rehydrate defaults
+        for eng in (btc5m_engine, btc5m_engine_2):
+            if eng and eng.risk_manager:
+                eng.risk_manager.starting_balance = 500.0
+                eng.risk_manager.current_balance = 500.0
+                eng.risk_manager.peak_balance = 500.0
+                eng.risk_manager.daily_pnl = 0.0
+                eng.risk_manager.consecutive_losses = 0
+                eng.risk_manager.current_exposure = 0.0
+                eng.risk_manager.open_positions_count = 0
+                eng.risk_manager.is_paused = False
+                eng.risk_manager.pause_reason = "Allowed"
+            if eng and eng.strategy:
+                eng.strategy._active_positions.clear()
+                eng.strategy.rehydrate_settings()
+
+        _safe_broadcast("instance_1")
+        _safe_broadcast("instance_2")
+
+        return {
+            "status": "success",
+            "message": "All trading history reset. Virtual equity reset to $500.00 for all instances.",
+            "virtual_equity": 500.0
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Error resetting history: {exc}", exc_info=True)
+        return {"status": "error", "message": str(exc)}
+
 
 @router.post("/close_trade")
 def close_btc5m_trade(instance_id: str = "instance_1", db: Session = Depends(get_db)):
@@ -548,10 +656,23 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
         "latency_status": "DEGRADED" if is_degraded else "NORMAL",
     }
 
+    t_rem = current_market.time_remaining_sec if (current_market and current_market.time_remaining_sec is not None) else 300.0
+    current_slot = 1 if t_rem > 150.0 else 2
+    settings_map = (lambda: __import__('app.btc5m.settings_manager', fromlist=['get_btc5m_settings']).get_btc5m_settings(db, instance_id=instance_id))()
+    account_mode = settings_map.get("account_mode", "demo")
+    slot_mode = getattr(eng, "slot_mode", settings_map.get("slot_mode", "single_5m"))
+    virtual_equity = round(eng.risk_manager.current_balance, 2) if (eng and eng.risk_manager) else 500.0
+
     return {
         "instance_id": instance_id,
         "instance_name": eng.name,
         "mode": eng.mode,
+        "slot_mode": slot_mode,
+        "current_slot": current_slot,
+        "slot_time_remaining": round(t_rem - 150.0 if current_slot == 1 else t_rem, 1),
+        "account_mode": account_mode,
+        "risk_reward_ratio": settings_map.get("risk_reward_ratio", "1:2"),
+        "virtual_equity": virtual_equity,
         "only_short": eng.only_short,
         "tp_dollar": eng.tp_dollar,
         "sl_dollar": eng.sl_dollar,
@@ -570,8 +691,9 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
         "latest_signal": latest_sig.state if latest_sig else None,
         "analysis": analysis,
         "live_market_analysis": live_market_analysis,
-        "targeting_settings": (lambda: __import__('app.btc5m.settings_manager', fromlist=['get_btc5m_settings']).get_btc5m_settings(db, instance_id=instance_id))()
+        "targeting_settings": settings_map
     }
+
 
 @router.get("/status")
 def get_btc5m_status(instance_id: str = "instance_1", db: Session = Depends(get_db)):

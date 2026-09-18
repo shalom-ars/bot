@@ -11,10 +11,9 @@ def test_engine_singletons_and_get_engine():
     assert btc5m_engine.only_short is False
 
     assert btc5m_engine_2.instance_id == "instance_2"
-    assert btc5m_engine_2.mode == "fixed_dollar"
-    assert btc5m_engine_2.only_short is True
-    assert btc5m_engine_2.tp_dollar == 3.0
-    assert btc5m_engine_2.sl_dollar == 2.0
+    assert btc5m_engine_2.mode == "dynamic"
+    assert btc5m_engine_2.only_short is False
+    assert btc5m_engine_2.slot_mode == "double_slot_2.5m"
 
     assert get_engine("instance_1") is btc5m_engine
     assert get_engine("instance_2") is btc5m_engine_2
