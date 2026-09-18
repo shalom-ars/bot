@@ -720,7 +720,7 @@ function InnerBTC5M() {
               Enabling Real Money mode instructs the bot to submit orders to Polymarket's live orderbook using real funds (USDC). Ensure your wallet private key and Polymarket API credentials are configured in your environment.
             </p>
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-300 space-y-1">
-              <p className="font-bold">✓ Risk-Reward: 1:2 (Profit:Loss) active</p>
+              <p className="font-bold">✓ Target Profit: $1.00 | Stop Loss: $10.00 active</p>
               <p className="font-bold">✓ Smart Stop-Loss / Confirmation Exit active</p>
               <p className="font-bold">✓ Daily loss circuit breaker armed</p>
             </div>
@@ -796,13 +796,13 @@ function InnerBTC5M() {
                 <span className="text-amber-400 font-bold uppercase">TARGETING:</span>
                 <span className="text-indigo-300 font-bold">YES &amp; NO SIGNALS</span>
                 <span>&bull;</span>
-                <span className="text-emerald-400 font-bold">R:R 1:2 (PROFIT:LOSS)</span>
+                <span className="text-emerald-400 font-bold">TP $1.00 / SL $10.00</span>
                 <span>&bull;</span>
                 <span>Score &ge; {targetSettings?.min_entry_score ?? 55}</span>
                 <span>&bull;</span>
                 <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.005) * 100).toFixed(1)}%</span>
                 <span>&bull;</span>
-                <span>TP +${targetSettings?.take_profit_delta ?? 0.20}</span>
+                <span>TP +${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'}</span>
                 <span>&bull;</span>
                 <span className="text-emerald-400 font-bold ml-1">🔒 PERSISTENT</span>
                 <span className="mx-1 text-slate-600">|</span>
@@ -1312,7 +1312,7 @@ function InnerBTC5M() {
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
             <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
             <span className="font-bold text-slate-700">
-              Dynamic 1:2 R:R ($10 / trade)
+              Fixed $1.00 TP / $10.00 SL ($10 / trade)
             </span>
           </div>
         </div>

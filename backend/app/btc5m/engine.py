@@ -1098,7 +1098,9 @@ class BTC5MEngine:
 btc5m_engine = BTC5MEngine(
     instance_id="instance_1",
     name="BTC 5M Trading Bot",
-    mode="dynamic",
+    mode="fixed_dollar",
+    tp_dollar=1.0,
+    sl_dollar=10.0,
     only_short=False,
     slot_mode="single_5m"
 )

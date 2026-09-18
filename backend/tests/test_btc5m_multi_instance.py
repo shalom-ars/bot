@@ -7,7 +7,9 @@ from app.db.models import BTC5MTrade
 def test_engine_singletons_and_get_engine():
     """Verify primary engine is correctly instantiated with isolated IDs and settings."""
     assert btc5m_engine.instance_id == "instance_1"
-    assert btc5m_engine.mode == "dynamic"
+    assert btc5m_engine.mode == "fixed_dollar"
+    assert btc5m_engine.tp_dollar == 1.0
+    assert btc5m_engine.sl_dollar == 10.0
     assert btc5m_engine.only_short is False
     assert btc5m_engine.slot_mode == "single_5m"
 

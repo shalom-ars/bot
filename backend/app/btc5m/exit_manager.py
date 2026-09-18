@@ -273,6 +273,13 @@ class BTC5MExitManager:
         except (ValueError, TypeError):
             tp_p = None
 
+        if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
+            unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
+            target_gain = float(trade.planned_reward) if (trade.planned_reward and float(trade.planned_reward) > 0) else 1.00
+            if unrealized >= target_gain:
+                reason = f"Take profit target reached: +${unrealized:.2f} >= +${target_gain:.2f}"
+                return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"
+
         if tp_p is not None and exec_p is not None:
             if exec_p >= tp_p:
                 reason = f"Take profit target reached: ${exec_p:.4f} >= ${tp_p:.4f}"
