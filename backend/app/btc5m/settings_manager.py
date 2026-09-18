@@ -32,37 +32,12 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "sl_dollar": "2.00",
     "side_bias": "ANY",
     "only_short": "false",
-    "soft_stop_confirmation_seconds": "10.0",
-    "thesis_failure_threshold": "60.0",
-    "hard_stop_delta": "0.10",
+    "soft_stop_confirmation_seconds": "3.0",
+    "thesis_failure_threshold": "50.0",
+    "hard_stop_delta": "0.02",
 }
 
-DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = {
-    "trading_active": "true",
-    "account_mode": "demo",
-    "slot_mode": "double_slot_2.5m",
-    "risk_reward_ratio": "1:2",
-    "min_entry_score": "55.0",
-    "min_net_edge": "0.005",
-    "min_rr": "1.5",
-    "max_spread": "0.05",
-    "min_liquidity": "100.0",
-    "min_time_remaining": "30.0",
-    "max_time_remaining": "300.0",
-    "take_profit_delta": "0.20",
-    "max_take_profit": "0.95",
-    "stop_loss_ratio": "0.50",
-    "risk_per_trade": "0.02",
-    "max_consecutive_losses": "5",
-    "mode": "dynamic",
-    "tp_dollar": "4.00",
-    "sl_dollar": "2.00",
-    "side_bias": "ANY",
-    "only_short": "false",
-    "soft_stop_confirmation_seconds": "10.0",
-    "thesis_failure_threshold": "60.0",
-    "hard_stop_delta": "0.10",
-}
+DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
 
 TYPED_FIELDS = {
     "trading_active": bool,

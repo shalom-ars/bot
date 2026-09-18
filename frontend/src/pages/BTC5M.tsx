@@ -434,7 +434,7 @@ function TradeHistorySection({ refreshTrigger, instanceId = 'instance_1' }: { re
 }
 
 function InnerBTC5M() {
-  const [selectedInstance, setSelectedInstance] = useState<'instance_1' | 'instance_2'>('instance_1');
+  const [selectedInstance] = useState<'instance_1'>('instance_1');
   const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus(selectedInstance);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const { data: statsData } = useApi<any>(`/btc5m/stats?instance_id=${selectedInstance}&v=${refreshTrigger}`, null);
@@ -651,36 +651,15 @@ function InnerBTC5M() {
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
       {/* TOP CONTROL BAR: INSTANCES, DEMO/REAL MONEY TOGGLE, RESET */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-col lg:flex-row items-center justify-between gap-2.5 shadow-sm">
-        {/* Left: Dual Bot Instance Selector */}
+        {/* Left: Single Bot Badge */}
         <div className="flex items-center gap-1.5 w-full lg:w-auto">
-          <button
-            onClick={() => setSelectedInstance('instance_1')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              selectedInstance === 'instance_1'
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
+          <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20 text-xs font-black">
             <Bot className="w-4 h-4" />
-            <span>BOT 1: Single Slot 5M (YES / NO)</span>
-            {selectedInstance === 'instance_1' && isTradingActive && (
+            <span>BTC 5M TRADING BOT (YES / NO)</span>
+            {isTradingActive && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
             )}
-          </button>
-          <button
-            onClick={() => setSelectedInstance('instance_2')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              selectedInstance === 'instance_2'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
-                : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>BOT 2: Double Slot 2.5M (Dual Slots)</span>
-            {selectedInstance === 'instance_2' && isTradingActive && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
-            )}
-          </button>
+          </div>
         </div>
 
         {/* Right: Demo vs Real Money Toggle & Reset History Button */}
@@ -1333,7 +1312,7 @@ function InnerBTC5M() {
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
             <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
             <span className="font-bold text-slate-700">
-              {selectedInstance === 'instance_2' ? 'Fixed $3 TP / $2 SL (Short Only)' : 'Dynamic R:R All-Weather ($50/trade)'}
+              Dynamic 1:2 R:R ($10 / trade)
             </span>
           </div>
         </div>

@@ -197,7 +197,7 @@ def reset_btc5m_state(db: Session = Depends(get_db)):
 
 import httpx
 
-from app.btc5m.engine import btc5m_engine, btc5m_engine_2, get_engine, ENGINES
+from app.btc5m.engine import btc5m_engine, get_engine, ENGINES
 from pydantic import BaseModel
 from typing import Optional
 
@@ -397,8 +397,8 @@ def reset_trading_history(db: Session = Depends(get_db)):
         db.query(BTC5MSetting).delete()
         db.commit()
 
-        # Reset RiskManager balance to $500.00 for both engines and rehydrate defaults
-        for eng in (btc5m_engine, btc5m_engine_2):
+        # Reset RiskManager balance to $500.00 for active engine and rehydrate defaults
+        for eng in ENGINES.values():
             if eng and eng.risk_manager:
                 eng.risk_manager.starting_balance = 500.0
                 eng.risk_manager.current_balance = 500.0
@@ -414,7 +414,6 @@ def reset_trading_history(db: Session = Depends(get_db)):
                 eng.strategy.rehydrate_settings()
 
         _safe_broadcast("instance_1")
-        _safe_broadcast("instance_2")
 
         return {
             "status": "success",

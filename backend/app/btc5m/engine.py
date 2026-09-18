@@ -52,7 +52,7 @@ class BTC5MEngine:
         self.tp_dollar = tp_dollar
         self.sl_dollar = sl_dollar
         self.only_short = only_short
-        self.slot_mode = slot_mode or ("double_slot_2.5m" if instance_id == "instance_2" else "single_5m")
+        self.slot_mode = slot_mode or "single_5m"
         from app.db.models import BTC5MTrade
         self.risk_manager = risk_manager or RiskManager(trade_model=BTC5MTrade, instance_id=self.instance_id)
         self.feature_engine = BTC5MFeatureEngine()
@@ -729,7 +729,7 @@ class BTC5MEngine:
                 prediction_lock_version="1.0",
                 # Smart Exit System initial state
                 exit_decision_state="HOLD",
-                hard_stop_price=max(0.01, (signal.stop_loss_price or 0.10) - 0.10)
+                hard_stop_price=max(0.01, (signal.stop_loss_price or 0.10) - 0.02)
             )
             db.add(trade)
             db.commit()
@@ -1094,30 +1094,17 @@ class BTC5MEngine:
         finally:
             db.close()
 
-# Primary Bot (Instance 1: Single Slot 5M)
+# Primary Bot (Single Slot 5M)
 btc5m_engine = BTC5MEngine(
     instance_id="instance_1",
-    name="Bot 1: Single Slot 5M",
+    name="BTC 5M Trading Bot",
     mode="dynamic",
     only_short=False,
     slot_mode="single_5m"
 )
 
-# Secondary Bot (Instance 2: Double Slot 2.5M)
-btc5m_engine_2 = BTC5MEngine(
-    instance_id="instance_2",
-    name="Bot 2: Double Slot 2.5M",
-    mode="dynamic",
-    tp_dollar=4.0,
-    sl_dollar=2.0,
-    only_short=False,
-    slot_mode="double_slot_2.5m"
-)
-
-
 ENGINES: Dict[str, BTC5MEngine] = {
     "instance_1": btc5m_engine,
-    "instance_2": btc5m_engine_2
 }
 
 def get_engine(instance_id: str = "instance_1") -> BTC5MEngine:

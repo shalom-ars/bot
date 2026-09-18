@@ -1,22 +1,17 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from app.btc5m.engine import BTC5MEngine, btc5m_engine, btc5m_engine_2, get_engine
+from app.btc5m.engine import BTC5MEngine, btc5m_engine, get_engine
 from app.btc5m.strategy import BTC5MStrategy
 from app.db.models import BTC5MTrade
 
 def test_engine_singletons_and_get_engine():
-    """Verify both engines are correctly instantiated with isolated IDs and settings."""
+    """Verify primary engine is correctly instantiated with isolated IDs and settings."""
     assert btc5m_engine.instance_id == "instance_1"
     assert btc5m_engine.mode == "dynamic"
     assert btc5m_engine.only_short is False
-
-    assert btc5m_engine_2.instance_id == "instance_2"
-    assert btc5m_engine_2.mode == "dynamic"
-    assert btc5m_engine_2.only_short is False
-    assert btc5m_engine_2.slot_mode == "double_slot_2.5m"
+    assert btc5m_engine.slot_mode == "single_5m"
 
     assert get_engine("instance_1") is btc5m_engine
-    assert get_engine("instance_2") is btc5m_engine_2
     assert get_engine("unknown") is btc5m_engine  # default fallback
 
 def test_fixed_dollar_tp_sl_calculation():

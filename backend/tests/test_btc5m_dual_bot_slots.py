@@ -11,7 +11,7 @@ def test_slot_mode_settings_defaults():
     assert DEFAULT_SETTINGS.get("risk_reward_ratio") == "1:2"
     assert float(DEFAULT_SETTINGS.get("stop_loss_ratio")) == 0.50
 
-    assert DEFAULT_SETTINGS_INSTANCE_2.get("slot_mode") == "double_slot_2.5m"
+    assert DEFAULT_SETTINGS_INSTANCE_2.get("slot_mode") == "single_5m"
     assert DEFAULT_SETTINGS_INSTANCE_2.get("account_mode") == "demo"
     assert DEFAULT_SETTINGS_INSTANCE_2.get("risk_reward_ratio") == "1:2"
     assert float(DEFAULT_SETTINGS_INSTANCE_2.get("stop_loss_ratio")) == 0.50

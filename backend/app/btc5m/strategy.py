@@ -175,7 +175,7 @@ class BTC5MStrategy:
         self.tp_dollar = tp_dollar
         self.sl_dollar = sl_dollar
         self.only_short = only_short
-        self.slot_mode = slot_mode or ("double_slot_2.5m" if instance_id == "instance_2" else "single_5m")
+        self.slot_mode = slot_mode or "single_5m"
         self._active_positions: dict = {}  # market_id -> entry info
         self.last_btc_price = None
         self.last_price_to_beat = None
@@ -227,7 +227,7 @@ class BTC5MStrategy:
         except Exception as e:
             logger.warning(f"[BTC5M Strategy] Using default settings for {self.instance_id}: {e}")
             from app.btc5m.settings_manager import DEFAULT_SETTINGS, DEFAULT_SETTINGS_INSTANCE_2, _cast_val
-            defaults = DEFAULT_SETTINGS_INSTANCE_2 if self.instance_id == "instance_2" else DEFAULT_SETTINGS
+            defaults = DEFAULT_SETTINGS
             self.settings = {k: _cast_val(k, v) for k, v in defaults.items()}
             self._sync_instance_params()
 
@@ -391,6 +391,7 @@ class BTC5MStrategy:
             reward_per_share = max(0.01, take_profit_price - entry_price)
             risk_per_share = reward_per_share * sl_ratio  # 1:2 Risk to Reward (Profit is 2x loss)
             stop_loss_price = max(0.01, entry_price - risk_per_share)
+            planned_risk = risk_per_share * quantity  # Actual dollar risk (e.g. ~$2.00)
 
         
         net_reward = (take_profit_price - entry_price) - fees - slippage_cost - spread_cost
@@ -522,7 +523,7 @@ class BTC5MStrategy:
         
         import json
         # 3. Determine Prediction (Independent of 70 threshold)
-        if abs(yes_score - no_score) < 1.0:
+        if abs(yes_score - no_score) < 3.0:
             predicted_side = "NONE"
         elif yes_score > no_score:
             predicted_side = "YES"
@@ -593,8 +594,8 @@ class BTC5MStrategy:
         if predicted_side == "NONE":
             skip_flags.append("SKIP - No directional evidence (YES/NO tie)")
             
-        if entry_price < 0.10 or entry_price > 0.90:
-            skip_flags.append(f"SKIP - Entry price {entry_price:.2f} in extreme terminal tail (< 0.10 or > 0.90)")
+        if entry_price < 0.30 or entry_price > 0.70:
+            skip_flags.append(f"SKIP - Entry price {entry_price:.2f} outside optimal R:R window (0.30 - 0.70)")
             
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")
@@ -619,7 +620,7 @@ class BTC5MStrategy:
         finally:
             db.close()
 
-        slot_mode = self.settings.get("slot_mode") or getattr(self, "slot_mode", None) or ("double_slot_2.5m" if self.instance_id == "instance_2" else "single_5m")
+        slot_mode = self.settings.get("slot_mode") or getattr(self, "slot_mode", None) or "single_5m"
 
         if slot_mode == "double_slot_2.5m":
             # 2.5-minute slots: Slot 1 (300s -> 150s), Slot 2 (150s -> 30s)
