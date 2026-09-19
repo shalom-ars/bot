@@ -19,7 +19,7 @@ if %errorlevel% neq 0 (
 
 :: Start Backend
 echo Starting FastAPI Backend...
-start cmd /k "cd backend && call .venv\Scripts\activate && python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+start cmd /k "cd backend && call .venv\Scripts\activate && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 :: Start Frontend
 echo Starting React Frontend...
@@ -29,7 +29,7 @@ echo.
 echo ========================================================
 echo Polymarket Quant Bot MVP (PAPER TRADING ONLY)
 echo ========================================================
-echo Backend API: http://127.0.0.1:8000/api/status
+echo Backend API: http://13.140.56.78:8000/api/status
 echo Frontend Dashboard: http://localhost:5173
 echo.
 echo Press any key to exit this launcher (services will keep running in separate windows)...

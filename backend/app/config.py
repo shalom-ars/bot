@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # Phase 8: SaaS
     saas_secret_key: str = ""
 
+    # Server & Network Configuration
+    server_host: str = "13.140.56.78"
+    server_port: int = 8000
+    backend_url: str = "http://13.140.56.78:8000"
+
     class Config:
         env_file = ".env"
         extra = "allow"
