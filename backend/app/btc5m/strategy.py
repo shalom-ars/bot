@@ -588,7 +588,7 @@ class BTC5MStrategy:
         else:
             skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
             
-        min_p2b = float(self.settings.get("min_p2b_diff", 15.0))
+        min_p2b = float(self.settings.get("min_p2b_diff", 10.0))
         if not btc_price or not price_to_beat:
             skip_flags.append("SKIP - Missing Price-to-Beat or Current BTC Price (Stale data)")
         elif abs(btc_price - price_to_beat) < min_p2b:
@@ -597,9 +597,11 @@ class BTC5MStrategy:
             
         if predicted_side == "NONE":
             skip_flags.append("SKIP - No directional evidence (YES/NO tie)")
+        elif predicted_side == "NO" and not no_token_id:
+            skip_flags.append("SKIP - Missing NO outcome token ID on Polymarket")
             
         min_p = float(self.settings.get("min_entry_price", 0.40))
-        max_p = float(self.settings.get("max_entry_price", 0.58))
+        max_p = float(self.settings.get("max_entry_price", 0.75))
         if entry_price < min_p or entry_price > max_p:
             skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
             

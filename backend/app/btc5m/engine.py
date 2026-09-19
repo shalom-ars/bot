@@ -259,7 +259,7 @@ class BTC5MEngine:
             if best_bid is None:
                 return False
 
-            is_yes = (trade.locked_predicted_side == "YES" or trade.side == "BUY")
+            is_yes = (trade.locked_predicted_side == "YES") if trade.locked_predicted_side else (trade.side == "BUY")
             if is_yes:
                 current_executable_price = best_bid
                 current_pos_mid = mid_price
@@ -286,9 +286,12 @@ class BTC5MEngine:
             }
             if hasattr(self, '_btc_history') and self._btc_history and btc_price:
                 now_ts = time.time()
-                older_ticks = [x for x in self._btc_history if x[0] <= (now_ts - 45.0)]
-                if older_ticks and older_ticks[-1][1] > 0:
-                    features["btc_momentum_1m"] = (btc_price - older_ticks[-1][1]) / older_ticks[-1][1]
+                older_ticks = [x for x in self._btc_history if x[0] <= (now_ts - 10.0)]
+                if older_ticks:
+                    ref_ts, ref_p = older_ticks[-1]
+                    elapsed = max(5.0, now_ts - ref_ts)
+                    if ref_p > 0:
+                        features["btc_momentum_1m"] = ((btc_price - ref_p) / ref_p) * min(6.0, (60.0 / elapsed))
 
             from app.btc5m.settings_manager import get_btc5m_settings
             from app.btc5m.exit_manager import BTC5MExitManager
@@ -401,7 +404,8 @@ class BTC5MEngine:
                 logger.error(f"[BTC5M Engine] Cycle error: {e}", exc_info=True)
                 await asyncio.sleep(backoff)
                 backoff = min(60, backoff * 2)
-            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            sleep_sec = 1.0 if getattr(self, '_in_entry_window', False) else POLL_INTERVAL_SECONDS
+            await asyncio.sleep(sleep_sec)
 
     async def _cycle(self):
         """
@@ -441,12 +445,11 @@ class BTC5MEngine:
         valid = [m for m in markets if m.is_valid]
         logger.info(f"[BTC5M Engine] {len(valid)}/{len(markets)} markets valid. Processing...")
 
-        try:
-            t0_db = time.perf_counter()
-            await asyncio.to_thread(self._persist_markets, markets)
-            latency_tracker.record("db_write_ms", (time.perf_counter() - t0_db) * 1000)
-        except Exception as e:
-            logger.error(f"[BTC5M Engine] Persist markets error: {e}", exc_info=True)
+        # Detect if we are in prime entry window (210s - 295s) for 1s rapid polling
+        self._in_entry_window = any(210.0 <= getattr(m, 'time_remaining_sec', 0.0) <= 295.0 for m in valid)
+
+        # Background market persistence so evaluation runs with zero DB wait
+        asyncio.create_task(asyncio.to_thread(self._persist_markets, markets))
 
         for m in valid[:MAX_CONCURRENT_MARKETS]:
             try:
@@ -529,13 +532,19 @@ class BTC5MEngine:
                 start_utc = market.start_time.replace(tzinfo=timezone.utc) if market.start_time.tzinfo is None else market.start_time
                 end_utc = market.end_time.replace(tzinfo=timezone.utc) if market.end_time.tzinfo is None else market.end_time
                 
-                # If the market has already started, we must capture the exact first price we see for it.
                 if now_utc >= start_utc and now_utc < end_utc:
                     cache_key = f"p2b_{market.market_id}"
                     if cache_key not in self._market_states:
                         self._market_states[cache_key] = btc_price
                         logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
                     price_to_beat = self._market_states[cache_key]
+
+            if price_to_beat is None and (market.time_remaining_sec and 0 < market.time_remaining_sec <= 300):
+                cache_key = f"p2b_{market.market_id}"
+                if cache_key not in self._market_states:
+                    self._market_states[cache_key] = btc_price
+                    logger.info(f"[BTC5M Engine] Fallback captured P2B {btc_price} for active market {market.market_id}")
+                price_to_beat = self._market_states[cache_key]
 
         return btc_price, price_to_beat
 
@@ -551,6 +560,10 @@ class BTC5MEngine:
 
         if not hasattr(self, '_market_states'):
             self._market_states = {}
+
+        now_mono = time.monotonic()
+        if hasattr(self, '_cached_rpc_btc') and (now_mono - getattr(self, '_cached_rpc_time', 0.0)) < 1.2:
+            btc_price = self._cached_rpc_btc
 
         RPC_URLS = [
             "https://polygon.drpc.org",
@@ -587,31 +600,36 @@ class BTC5MEngine:
                 pass
             return None
 
-        try:
-            async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}) as client:
-                tasks = [asyncio.create_task(_query_rpc(client, url)) for url in RPC_URLS]
-                for fut in asyncio.as_completed(tasks):
-                    try:
-                        p = await fut
-                        if p is not None and p > 0:
-                            btc_price = p
-                            for t in tasks:
-                                if not t.done():
-                                    t.cancel()
-                            break
-                    except Exception:
-                        continue
+        if btc_price is None:
+            try:
+                async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}) as client:
+                    tasks = [asyncio.create_task(_query_rpc(client, url)) for url in RPC_URLS]
+                    for fut in asyncio.as_completed(tasks):
+                        try:
+                            p = await fut
+                            if p is not None and p > 0:
+                                btc_price = p
+                                for t in tasks:
+                                    if not t.done():
+                                        t.cancel()
+                                break
+                        except Exception:
+                            continue
 
-                # Fallback to Coinbase spot if all RPC nodes failed
-                if btc_price is None:
-                    try:
-                        resp = await client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=1.5)
-                        if resp.status_code == 200:
-                            btc_price = float(resp.json()["data"]["amount"])
-                    except Exception:
-                        pass
-        except Exception as exc:
-            logger.warning("[BTC5M Engine] Async BTC reference fetch failed: %s", exc)
+                    # Fallback to Coinbase spot if all RPC nodes failed
+                    if btc_price is None:
+                        try:
+                            resp = await client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=1.5)
+                            if resp.status_code == 200:
+                                btc_price = float(resp.json()["data"]["amount"])
+                        except Exception:
+                            pass
+            except Exception as exc:
+                logger.warning("[BTC5M Engine] Async BTC reference fetch failed: %s", exc)
+
+        if btc_price is not None:
+            self._cached_rpc_btc = btc_price
+            self._cached_rpc_time = now_mono
 
         # Fallback to sync method if needed
         if btc_price is None:
@@ -630,6 +648,13 @@ class BTC5MEngine:
                         self._market_states[cache_key] = btc_price
                         logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
                     price_to_beat = self._market_states[cache_key]
+
+            if price_to_beat is None and (market.time_remaining_sec and 0 < market.time_remaining_sec <= 300):
+                cache_key = f"p2b_{market.market_id}"
+                if cache_key not in self._market_states:
+                    self._market_states[cache_key] = btc_price
+                    logger.info(f"[BTC5M Engine] Fallback captured P2B {btc_price} for active market {market.market_id}")
+                price_to_beat = self._market_states[cache_key]
 
         return btc_price, price_to_beat
 
@@ -668,11 +693,13 @@ class BTC5MEngine:
                 self._btc_history.append((now_ts, btc_price))
                 cutoff = now_ts - 900.0
                 self._btc_history = [x for x in self._btc_history if x[0] >= cutoff]
-                older_ticks = [x for x in self._btc_history if x[0] <= (now_ts - 45.0)]
+                older_ticks = [x for x in self._btc_history if x[0] <= (now_ts - 10.0)]
                 if older_ticks:
-                    ref_p = older_ticks[-1][1]
+                    ref_ts, ref_p = older_ticks[-1]
+                    elapsed = max(5.0, now_ts - ref_ts)
                     if ref_p > 0:
-                        features["btc_momentum_1m"] = (btc_price - ref_p) / ref_p
+                        raw_mom = (btc_price - ref_p) / ref_p
+                        features["btc_momentum_1m"] = raw_mom * min(6.0, (60.0 / elapsed))
 
             # Evaluate both YES and NO with explicit BTC/P2B inputs.
             t0_strat = time.perf_counter()
@@ -690,12 +717,7 @@ class BTC5MEngine:
             )
             latency_tracker.record("strategy_ms", (time.perf_counter() - t0_strat) * 1000)
 
-            # Persist signal
-            t0_sig = time.perf_counter()
-            await asyncio.to_thread(self._persist_signal, signal)
-            latency_tracker.record("db_write_ms", (time.perf_counter() - t0_sig) * 1000)
-
-            # Execute paper trade if ENTER
+            # Execute paper trade immediately if ENTER for zero decision latency
             if signal.state == "ENTER" and not settings.live_trading_enabled:
                 if not self.trading_active:
                     logger.info(f"[BTC5M Engine] ENTER signal received, but BOT IS STOPPED (trading_active=False). Blocking trade entry.")
@@ -705,12 +727,20 @@ class BTC5MEngine:
                         logger.error(f"Error recording stopped skip: {e}")
                 else:
                     t0_exec = time.perf_counter()
-                    await asyncio.to_thread(self._execute_paper_trade, signal, current_balance)
+                    success = await asyncio.to_thread(self._execute_paper_trade, signal, current_balance)
                     latency_tracker.record("execution_ms", (time.perf_counter() - t0_exec) * 1000)
-                    self.strategy.record_entry(market.market_id, signal)
-                    logger.info(f"[BTC5M Engine] PAPER ENTRY: {signal.question[:50]} | side={signal.side} | size=${signal.position_size:.2f}")
-                    asyncio.create_task(self.broadcast_status())
+                    if success:
+                        self.strategy.record_entry(market.market_id, signal)
+                        logger.info(f"[BTC5M Engine] PAPER ENTRY SUCCESS: {signal.question[:50]} | side={signal.side} | size=${signal.position_size:.2f}")
+                        asyncio.create_task(self.broadcast_status())
+                    else:
+                        logger.error(f"[BTC5M Engine] PAPER ENTRY FAILED: Database order routing error for market {market.market_id}")
+
+                # Persist signal in background so execution path has 0ms DB latency
+                asyncio.create_task(asyncio.to_thread(self._persist_signal, signal))
             else:
+                # Background persist signal
+                asyncio.create_task(asyncio.to_thread(self._persist_signal, signal))
                 reason_ext = getattr(signal, 'skip_flags', signal.reason)
                 if hasattr(signal, 'skip_flags') and isinstance(signal.skip_flags, list) and len(signal.skip_flags) > 0:
                     reason_ext = " | ".join(signal.skip_flags)
@@ -910,10 +940,12 @@ class BTC5MEngine:
 
             # Update RiskManager state
             self.risk_manager.current_exposure += signal.position_size
+            return True
 
         except Exception as e:
             db.rollback()
-            logger.error(f"[BTC5M Engine {self.instance_id}] Execute paper trade error: {e}")
+            logger.error(f"[BTC5M Engine {self.instance_id}] Execute paper trade error: {e}", exc_info=True)
+            return False
         finally:
             db.close()
 
@@ -939,6 +971,14 @@ class BTC5MEngine:
                     except Exception:
                         entry_ts = int(trade.entry_time.timestamp()) if trade.entry_time else 0
 
+                    now_ts_curr = int(datetime.now(timezone.utc).timestamp())
+                    # While candle is active (< 280s elapsed), delegate exclusively to sub-second local exit monitor
+                    if (now_ts_curr - entry_ts) < 280:
+                        closed_now = await self._evaluate_and_apply_exit(db, trade)
+                        if closed_now:
+                            any_settled = True
+                        continue
+
                     # The BTC5M market ends at the next 5-minute boundary from entry
                     # Try the bucket at entry and entry+300
                     buckets_to_check = []
@@ -951,7 +991,7 @@ class BTC5MEngine:
                         slug = f"btc-updown-5m-{bucket_ts}"
                         url = f"https://gamma-api.polymarket.com/events?slug={slug}"
                         try:
-                            async with session.get(url, timeout=10) as resp:
+                            async with session.get(url, timeout=3.0) as resp:
                                 if resp.status != 200:
                                     continue
                                 data = await resp.json()
@@ -1093,14 +1133,24 @@ class BTC5MEngine:
             db.close()
 
     async def _settle_skips(self):
-        """Find pending skips that haven't been hypothetical resolved yet."""
+        """Find pending skips that haven't been hypothetical resolved yet.
+        Bounded to at most 3 items per cycle to guarantee zero event-loop latency.
+        """
         from app.db.session import SessionLocal
         from app.db.models import BTC5MSkip
         import aiohttp
-        from datetime import timezone
+        from datetime import timezone, datetime, timedelta
         db = SessionLocal()
         try:
-            pending_skips = db.query(BTC5MSkip).filter(BTC5MSkip.actual_resolution == None).all()
+            now_dt = datetime.now(timezone.utc)
+            now_ts = int(now_dt.timestamp())
+            # Skips need at least 300s to have settled
+            cutoff_dt = now_dt - timedelta(seconds=300)
+            pending_skips = db.query(BTC5MSkip).filter(
+                BTC5MSkip.actual_resolution == None,
+                BTC5MSkip.timestamp <= cutoff_dt
+            ).order_by(BTC5MSkip.timestamp.desc()).limit(3).all()
+
             if not pending_skips:
                 return
 
@@ -1111,25 +1161,28 @@ class BTC5MEngine:
                     except Exception:
                         entry_ts = int(skip.timestamp.timestamp()) if skip.timestamp else 0
 
-                    buckets_to_check = []
-                    for offset in [0, 300, 600, -300]:
-                        b = entry_ts - (entry_ts % 300) + offset
-                        buckets_to_check.append(b)
+                    if entry_ts < (now_ts - 7200):
+                        skip.actual_resolution = "EXPIRED"
+                        skip.hypothetical_outcome = "EXPIRED"
+                        db.commit()
+                        continue
+
+                    buckets_to_check = [
+                        entry_ts - (entry_ts % 300),
+                        entry_ts - (entry_ts % 300) + 300
+                    ]
 
                     for bucket_ts in buckets_to_check:
                         slug = f"btc-updown-5m-{bucket_ts}"
                         url = f"https://gamma-api.polymarket.com/events?slug={slug}"
                         try:
-                            async with session.get(url, timeout=5) as resp:
+                            async with session.get(url, timeout=2.0) as resp:
                                 if resp.status == 200:
                                     events = await resp.json()
                                     if events and isinstance(events, list):
                                         ev = events[0]
                                         closed = ev.get("closed", False)
-                                        tokens = ev.get("markets", [{}])[0].get("clobTokenIds", "[]")
                                         if closed and ev.get("eventMetadata", {}).get("finalPrice"):
-                                            # It resolved. Get the resolution data.
-                                            # Assuming YES means UP. Polymarket resolves YES if finalPrice >= priceToBeat.
                                             final = ev["eventMetadata"].get("finalPrice")
                                             p2b = ev["eventMetadata"].get("priceToBeat")
                                             if final and p2b:
@@ -1137,15 +1190,8 @@ class BTC5MEngine:
                                                 p2b = float(p2b)
                                                 res = "YES" if final >= p2b else "NO"
                                                 skip.actual_resolution = res
-                                                
-                                                # Determine hypothetical outcome
-                                                # In strategy, yes_score vs no_score determines the "best_side".
                                                 best_side = "YES" if skip.yes_score >= skip.no_score else "NO"
-                                                if res == best_side:
-                                                    skip.hypothetical_outcome = "WIN"
-                                                else:
-                                                    skip.hypothetical_outcome = "LOSS"
-                                                
+                                                skip.hypothetical_outcome = "WIN" if res == best_side else "LOSS"
                                                 db.commit()
                                                 break
                         except Exception:
