@@ -382,13 +382,15 @@ class BTC5MStrategy:
 
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
         if is_fixed:
-            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 1.0))
+            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 2.0))
             sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 10.0))
+            dynamic_sl_delta = float(self.settings.get("dynamic_sl_delta", 0.20))
             take_profit_price = min(0.99, entry_price + (tp_dollar / max(0.1, quantity)))
-            stop_loss_price = max(0.01, entry_price - (sl_dollar / max(0.1, quantity)))
+            max_sl_dist = min(dynamic_sl_delta, sl_dollar / max(0.1, quantity))
+            stop_loss_price = max(0.10, entry_price - max_sl_dist)
             reward_per_share = max(0.001, take_profit_price - entry_price)
             risk_per_share = max(0.001, entry_price - stop_loss_price)
-            planned_risk = sl_dollar
+            planned_risk = min(sl_dollar, risk_per_share * quantity)
         else:
             tp_delta = float(self.settings.get("take_profit_delta", 0.20))
             max_tp = float(self.settings.get("max_take_profit", 0.95))
@@ -511,7 +513,7 @@ class BTC5MStrategy:
         min_liq = self.settings.get("min_liquidity", MIN_LIQUIDITY)
         min_time = float(self.settings.get("min_time_remaining", 210.0))
         is_instance_1 = (self.instance_id == "instance_1" or getattr(self, "instance_id", None) is None)
-        default_max_time = 295.0 if is_instance_1 else 240.0
+        default_max_time = 240.0
         max_time = float(self.settings.get("max_time_remaining", default_max_time))
 
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
@@ -623,7 +625,7 @@ class BTC5MStrategy:
             skip_flags.append("SKIP - Missing NO outcome token ID on Polymarket")
             
         min_p = float(self.settings.get("min_entry_price", 0.40))
-        max_p = float(self.settings.get("max_entry_price", 0.80))
+        max_p = float(self.settings.get("max_entry_price", 0.62))
         if entry_price < min_p or entry_price > max_p:
             skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
 

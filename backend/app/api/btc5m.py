@@ -240,6 +240,11 @@ class UpdateSettingsRequest(BaseModel):
     sl_dollar: Optional[float] = None
     side_bias: Optional[str] = None
     only_short: Optional[bool] = None
+    soft_stop_confirmation_seconds: Optional[float] = None
+    thesis_failure_threshold: Optional[float] = None
+    hard_stop_delta: Optional[float] = None
+    dynamic_sl_delta: Optional[float] = None
+    max_consecutive_losses: Optional[int] = None
     min_entry_price: Optional[float] = None
     max_entry_price: Optional[float] = None
     min_p2b_diff: Optional[float] = None

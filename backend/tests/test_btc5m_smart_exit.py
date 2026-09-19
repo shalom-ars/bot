@@ -499,7 +499,7 @@ def test_entry_gates_reject_extreme_entry_price(db_session):
         "ask_depth": 500.0,
         "short_momentum_1m": 0.001,
         "bid_ask_imbalance": 0.1,
-        "time_remaining_sec": 250.0
+        "time_remaining_sec": 230.0
     }
     sig = strat.evaluate(
         market_id="test_price_mkt",
@@ -530,7 +530,7 @@ def test_entry_gates_reject_indecisive_p2b(db_session):
         "ask_depth": 500.0,
         "short_momentum_1m": 0.001,
         "bid_ask_imbalance": 0.1,
-        "time_remaining_sec": 250.0
+        "time_remaining_sec": 230.0
     }
     # BTC only $5 from P2B (< $15.00 threshold)
     sig = strat.evaluate(
@@ -793,3 +793,154 @@ def test_macd_and_bollinger_bands_integration(db_session):
     assert gates_bb_down["bollinger"]["pass"] is False
 
 
+# ── TEST 21: Candle Stabilization (240s), Dynamic SL (0.20), Early Thesis Cut-Loss, and Price Corridor ──
+def test_early_thesis_and_candle_stabilization_and_corridor(db_session):
+    import json
+    from app.btc5m.strategy import BTC5MStrategy
+    from app.btc5m.exit_manager import BTC5MExitManager
+    from app.btc5m.settings_manager import DEFAULT_SETTINGS, TYPED_FIELDS
+
+    # 1. Verify updated default settings
+    assert DEFAULT_SETTINGS["max_time_remaining"] == "240.0"
+    assert DEFAULT_SETTINGS["thesis_failure_threshold"] == "60.0"
+    assert DEFAULT_SETTINGS["dynamic_sl_delta"] == "0.20"
+    assert DEFAULT_SETTINGS["max_entry_price"] == "0.62"
+    assert DEFAULT_SETTINGS["min_entry_price"] == "0.40"
+    assert TYPED_FIELDS["dynamic_sl_delta"] == float
+
+    strat = BTC5MStrategy(instance_id="instance_1")
+
+    base_features = {
+        "mid_price": 0.50,
+        "bid": 0.49,
+        "ask": 0.51,
+        "spread": 0.02,
+        "bid_depth": 500.0,
+        "ask_depth": 500.0,
+        "short_momentum_1m": 0.005,
+        "bid_ask_imbalance": 0.2,
+        "time_remaining_sec": 230.0,
+        "rsi_14": 55.0,
+        "macd_hist": 0.02,
+        "bb_pct_b": 0.65,
+        "bb_bandwidth": 0.04
+    }
+
+    # 2. Candle stabilization filter: time_remaining_sec > 240.0 should SKIP
+    early_candle_features = dict(base_features)
+    early_candle_features["time_remaining_sec"] = 270.0
+    sig_early = strat.evaluate(
+        market_id="mkt_early_candle",
+        condition_id="0x_early",
+        question="BTC 5M Early Candle",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=early_candle_features,
+        orderbook_timestamp=None,
+        btc_price=65040.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig_early.state == "SKIP"
+    assert any("Candle open stabilization" in flag for flag in sig_early.skip_flags)
+
+    # 3. Entry price corridor: ask > 0.62 should SKIP
+    high_price_features = dict(base_features)
+    high_price_features["ask"] = 0.65
+    high_price_features["mid_price"] = 0.64
+    high_price_features["bid"] = 0.63
+    sig_high_price = strat.evaluate(
+        market_id="mkt_high_price",
+        condition_id="0x_high",
+        question="BTC 5M High Price",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=high_price_features,
+        orderbook_timestamp=None,
+        btc_price=65040.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig_high_price.state == "SKIP"
+    assert any("outside optimal R:R window" in flag for flag in sig_high_price.skip_flags)
+
+    # 4. Entry price corridor: ask < 0.40 should SKIP
+    low_price_features = dict(base_features)
+    low_price_features["ask"] = 0.38
+    low_price_features["mid_price"] = 0.37
+    low_price_features["bid"] = 0.36
+    sig_low_price = strat.evaluate(
+        market_id="mkt_low_price",
+        condition_id="0x_low",
+        question="BTC 5M Low Price",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=low_price_features,
+        orderbook_timestamp=None,
+        btc_price=65040.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig_low_price.state == "SKIP"
+    assert any("outside optimal R:R window" in flag for flag in sig_low_price.skip_flags)
+
+    # 5. Early thesis cut-loss exit evaluation:
+    # A YES trade entered at 0.55 with raw SL at 0.05.
+    # Dynamic SL delta 0.20 caps soft stop at max(0.55 - 0.20, 0.05) = 0.35.
+    trade = create_open_trade(
+        db_session,
+        entry_price=0.55,
+        stop_loss=0.05,
+        hard_stop=0.02
+    )
+    manager = BTC5MExitManager(db_session, instance_id="instance_1")
+
+    # When thesis collapses (score >= 60) even if price is 0.42 (above 0.35 stop),
+    # it must enter EXIT_REVIEW and then CONFIRMED_EXIT upon timer confirmation.
+    exit_settings = {
+        "dynamic_sl_delta": 0.20,
+        "thesis_failure_threshold": 60.0,
+        "soft_stop_confirmation_seconds": 2.0
+    }
+    adverse_features = {
+        "short_momentum_1m": -0.008,
+        "fair_prob_yes": 0.25,
+        "bid": 0.41,
+        "ask": 0.43,
+        "spread": 0.02
+    }
+
+    # First evaluation with dead thesis (BTC well below P2B) -> transitions to EXIT_REVIEW
+    decision, exit_price, reason, score, _, audit_event = manager.evaluate_exit(
+        trade=trade,
+        current_executable_price=0.42,
+        current_mid_price=0.42,
+        btc_price=64850.0,  # $150 below P2B ($65,000)
+        p2b=65000.0,
+        features=adverse_features,
+        time_remaining_sec=150.0,
+        risk_manager=None,
+        settings=exit_settings
+    )
+    assert decision == "EXIT_REVIEW"
+    assert score >= 60.0
+
+    # Simulate elapsed confirmation timer
+    trade.exit_review_started_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    db_session.commit()
+
+    # Second evaluation after timer elapses -> must CONFIRMED_EXIT and cut loss at 0.42!
+    decision2, exit_price2, reason2, score2, _, audit_event2 = manager.evaluate_exit(
+        trade=trade,
+        current_executable_price=0.42,
+        current_mid_price=0.42,
+        btc_price=64850.0,
+        p2b=65000.0,
+        features=adverse_features,
+        time_remaining_sec=145.0,
+        risk_manager=None,
+        settings=exit_settings
+    )
+    assert decision2 == "CONFIRMED_EXIT"
+    assert exit_price2 == 0.42
+    assert "materially invalidated" in reason2

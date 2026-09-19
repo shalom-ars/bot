@@ -294,42 +294,52 @@ class BTC5MExitManager:
             time_remaining_sec=time_remaining_sec
         )
 
-        # ── 4. TWO-LAYER SOFT STOP / ADVERSE MOVE REVIEW ───────────────────────
+        # ── 4. TWO-LAYER SOFT STOP / DYNAMIC SL / THESIS REVIEW ────────────────
+        dynamic_sl_delta = float(settings.get("dynamic_sl_delta", 0.20))
         try:
-            soft_stop_price = float(trade.stop_loss_price) if trade.stop_loss_price is not None else 0.20
+            raw_sl = float(trade.stop_loss_price) if trade.stop_loss_price is not None else 0.20
+            if trade.entry_price is not None:
+                # Dynamic SL ensures stop is capped at entry_price - dynamic_sl_delta (e.g. $0.20 below entry)
+                soft_stop_price = max(float(trade.entry_price) - dynamic_sl_delta, raw_sl)
+            else:
+                soft_stop_price = raw_sl
         except (ValueError, TypeError):
             soft_stop_price = 0.20
 
-        # Check if price is in soft-stop territory
-        is_touching_soft_stop = False
+        # Check if price or thesis is in adverse review territory:
+        # Either price is touching soft stop OR thesis has materially failed (thesis_score >= threshold)
+        is_adverse = False
         if exec_p is not None and exec_p <= soft_stop_price:
-            is_touching_soft_stop = True
+            is_adverse = True
         elif mid_p is not None and mid_p <= (soft_stop_price + 0.02):
-            is_touching_soft_stop = True
+            is_adverse = True
+        elif thesis_score >= thesis_threshold:
+            is_adverse = True
 
         current_state = trade.exit_decision_state or "HOLD"
 
-        # Scenario A: Price is NOT touching soft stop (Normal market condition)
-        if not is_touching_soft_stop:
+        # Scenario A: Neither price nor thesis is adverse (Normal market condition)
+        if not is_adverse:
             if current_state == "EXIT_REVIEW":
-                # Price has recovered above soft stop! Transition back to HOLD
+                # Conditions recovered! Transition back to HOLD
                 trade.exit_decision_state = "HOLD"
-                trade.last_exit_review_reason = "Price recovered above soft stop threshold"
+                trade.last_exit_review_reason = "Conditions recovered above adverse threshold"
                 reason = f"THESIS STILL VALID — HOLDING (Price recovered to ${current_executable_price:.4f})"
                 return "HOLD", None, reason, thesis_score, breakdown, "EXIT_REVIEW_HOLD"
             else:
                 trade.exit_decision_state = "HOLD"
                 return "HOLD", None, "Thesis active — normal holding", thesis_score, breakdown, None
 
-        # Scenario B: Price IS touching or below soft stop area!
+        # Scenario B: Adverse condition detected (Price below soft stop OR thesis failed)
         # Enter or continue EXIT_REVIEW
         if current_state != "EXIT_REVIEW":
-            # First time soft stop is touched!
+            # First time adverse condition is detected!
             trade.exit_decision_state = "EXIT_REVIEW"
             trade.soft_stop_touched_at = now
             trade.exit_review_started_at = now
             trade.thesis_failure_score = thesis_score
-            reason = f"Soft stop touched (${current_executable_price:.4f} <= ${soft_stop_price:.4f}); entering EXIT_REVIEW confirmation period ({conf_seconds_total:.0f}s)"
+            trigger_detail = f"Thesis failure score {thesis_score:.1f} >= {thesis_threshold:.0f}" if thesis_score >= thesis_threshold else f"Soft stop touched (${current_executable_price:.4f} <= ${soft_stop_price:.4f})"
+            reason = f"{trigger_detail}; entering EXIT_REVIEW confirmation period ({conf_seconds_total:.0f}s)"
             trade.last_exit_review_reason = reason
             return "EXIT_REVIEW", None, reason, thesis_score, breakdown, "SOFT_STOP_TOUCHED"
 
