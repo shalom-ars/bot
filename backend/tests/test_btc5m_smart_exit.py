@@ -587,3 +587,102 @@ async def test_fast_exit_monitor_evaluates_and_closes_trade(db_session):
     assert trade.pnl >= 1.00
     assert "Take profit target reached" in trade.exit_reason
 
+
+# ── TEST 19: RSI-14 Indicator Overbought & Oversold Gate Protection ───────────
+def test_rsi_14_overbought_and_oversold_protection(db_session):
+    from app.btc5m.strategy import BTC5MStrategy
+    from app.btc5m.features import BTC5MFeatureEngine
+
+    strat = BTC5MStrategy(
+        instance_id="instance_1",
+        settings_dict={
+            "min_p2b_diff": 10.0,
+            "rsi_overbought": 70.0,
+            "rsi_oversold": 30.0,
+            "min_entry_probability": 0.50
+        }
+    )
+
+    base_features = {
+        "mid_price": 0.50,
+        "bid": 0.49,
+        "ask": 0.51,
+        "spread": 0.02,
+        "bid_depth": 500.0,
+        "ask_depth": 500.0,
+        "short_momentum_1m": 0.005,
+        "bid_ask_imbalance": 0.2,
+        "time_remaining_sec": 250.0
+    }
+
+    # Case 1: Overbought (RSI = 78.0 > 70) -> Buying YES/UP should be blocked
+    features_ob = dict(base_features)
+    features_ob["rsi_14"] = 78.0
+
+    sig_ob = strat.evaluate(
+        market_id="mkt_rsi_ob",
+        condition_id="0x_ob",
+        question="BTC 5M Test Overbought",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=features_ob,
+        orderbook_timestamp=None,
+        btc_price=65030.0,
+        price_to_beat=65000.0,  # Strongly above strike (+ $30), predicted YES
+        current_balance=500.0
+    )
+    assert sig_ob.state == "SKIP"
+    assert any("Overbought" in flag for flag in sig_ob.skip_flags)
+    assert "Overbought" in sig_ob.gate_results
+
+    # Case 2: Oversold (RSI = 22.0 < 30) -> Buying NO/DOWN should be blocked
+    features_os = dict(base_features)
+    features_os["rsi_14"] = 22.0
+
+    sig_os = strat.evaluate(
+        market_id="mkt_rsi_os",
+        condition_id="0x_os",
+        question="BTC 5M Test Oversold",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=features_os,
+        orderbook_timestamp=None,
+        btc_price=64970.0,
+        price_to_beat=65000.0,  # Strongly below strike (- $30), predicted NO
+        current_balance=500.0
+    )
+    assert sig_os.state == "SKIP"
+    assert any("Oversold" in flag for flag in sig_os.skip_flags)
+    assert "Oversold" in sig_os.gate_results
+
+    # Case 3: Healthy RSI (RSI = 52.0, between 30 and 70) -> Gate passes
+    features_ok = dict(base_features)
+    features_ok["rsi_14"] = 52.0
+
+    sig_ok = strat.evaluate(
+        market_id="mkt_rsi_ok",
+        condition_id="0x_ok",
+        question="BTC 5M Test Normal RSI",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=features_ok,
+        orderbook_timestamp=None,
+        btc_price=65030.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert not any("RSI" in flag for flag in sig_ok.skip_flags)
+    import json
+    gates = json.loads(sig_ok.gate_results)
+    assert gates["rsi"]["pass"] is True
+    assert gates["rsi"]["value"] == "52.0"
+
+    # Verify FeatureEngine RSI-14 calculation on price sequence
+    fe = BTC5MFeatureEngine()
+    # Feed 20 ticks of steady rising prices
+    for i in range(20):
+        f = fe.update_and_compute("test_mkt", 0.50 + (i * 0.01), 0.49 + (i * 0.01), 0.51 + (i * 0.01), 0.02, 100, 100, 0, 200)
+    assert "rsi_14" in f
+    assert f["rsi_14"] == 100.0  # Steady pure gains yield 100 RSI
+
+

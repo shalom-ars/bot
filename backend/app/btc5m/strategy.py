@@ -97,6 +97,7 @@ class BTC5MSignal:
     gate_results: str = "{}"
     yes_breakdown: str = "{}"
     no_breakdown: str = "{}"
+    rsi: float = 50.0
     instance_id: str = "instance_1"
     # Risk-level skip flags
     skip_flags: list = field(default_factory=list)
@@ -481,7 +482,8 @@ class BTC5MStrategy:
                 predicted_side="NONE",
                 gate_results="{}",
                 yes_breakdown="{}",
-                no_breakdown="{}"
+                no_breakdown="{}",
+                rsi=float(features.get("rsi_14", 50.0))
             )
 
         # 1. Score both sides with time-decayed option metrics
@@ -538,7 +540,8 @@ class BTC5MStrategy:
             "spread": {"pass": False, "value": f"{spread*100:.2f}%"},
             "liquidity": {"pass": False, "value": f"{liquidity:.0f}"},
             "rr": {"pass": False, "value": "UNAVAILABLE"},
-            "time": {"pass": False, "value": f"{time_remaining:.0f}s"}
+            "time": {"pass": False, "value": f"{time_remaining:.0f}s"},
+            "rsi": {"pass": True, "value": f"{float(features.get('rsi_14', 50.0)):.1f}"}
         }
 
         # Select target params based on prediction
@@ -612,6 +615,22 @@ class BTC5MStrategy:
         max_p = float(self.settings.get("max_entry_price", 0.80))
         if entry_price < min_p or entry_price > max_p:
             skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
+
+        # RSI Overbought / Oversold protection (14-period, Overbought @ 70, Oversold @ 30)
+        rsi_val = float(features.get("rsi_14", 50.0))
+        rsi_ob = float(self.settings.get("rsi_overbought", 70.0))
+        rsi_os = float(self.settings.get("rsi_oversold", 30.0))
+        gate_results["rsi"]["value"] = f"{rsi_val:.1f}"
+        if predicted_side == "YES" and rsi_val > rsi_ob:
+            gate_results["rsi"]["pass"] = False
+            gate_results["rsi"]["value"] = f"{rsi_val:.1f} (Overbought > {rsi_ob:.0f})"
+            skip_flags.append(f"SKIP - RSI {rsi_val:.1f} > {rsi_ob:.0f} (Overbought: high reversal risk for UP entry)")
+        elif predicted_side == "NO" and rsi_val < rsi_os:
+            gate_results["rsi"]["pass"] = False
+            gate_results["rsi"]["value"] = f"{rsi_val:.1f} (Oversold < {rsi_os:.0f})"
+            skip_flags.append(f"SKIP - RSI {rsi_val:.1f} < {rsi_os:.0f} (Oversold: high bounce risk for DOWN entry)")
+        else:
+            gate_results["rsi"]["pass"] = True
             
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")
@@ -742,5 +761,6 @@ class BTC5MStrategy:
             gate_results=json.dumps(gate_results),
             yes_breakdown=json.dumps(yes_breakdown),
             no_breakdown=json.dumps(no_breakdown),
+            rsi=rsi_val,
             instance_id=self.instance_id
         )

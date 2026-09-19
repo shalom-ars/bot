@@ -701,6 +701,24 @@ class BTC5MEngine:
                         raw_mom = (btc_price - ref_p) / ref_p
                         features["btc_momentum_1m"] = raw_mom * min(6.0, (60.0 / elapsed))
 
+                # Compute Spot BTC 14-period RSI
+                if len(self._btc_history) >= 15:
+                    recent_btc = [p for _, p in self._btc_history[-15:]]
+                    changes = [recent_btc[i] - recent_btc[i-1] for i in range(1, 15)]
+                    gains = [c for c in changes if c > 0]
+                    losses = [-c for c in changes if c < 0]
+                    avg_gain = sum(gains) / 14.0
+                    avg_loss = sum(losses) / 14.0
+                    if avg_loss == 0:
+                        btc_rsi = 100.0 if avg_gain > 0 else 50.0
+                    else:
+                        rs = avg_gain / avg_loss
+                        btc_rsi = 100.0 - (100.0 / (1.0 + rs))
+                    features["btc_rsi_14"] = round(btc_rsi, 2)
+                    # Blend spot BTC RSI (65%) and contract RSI (35%)
+                    contract_rsi = features.get("rsi_14", 50.0)
+                    features["rsi_14"] = round((btc_rsi * 0.65) + (contract_rsi * 0.35), 2)
+
             # Evaluate both YES and NO with explicit BTC/P2B inputs.
             t0_strat = time.perf_counter()
             signal = self.strategy.evaluate(

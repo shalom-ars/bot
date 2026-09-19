@@ -142,6 +142,36 @@ class BTC5MFeatureEngine:
         else:
             features["momentum_persistence"] = 0.0
 
+        # ── RELATIVE STRENGTH INDEX (RSI-14) ─────────────
+        # 14-period RSI with overbought @ 70 and oversold @ 30
+        if n >= 15:
+            period = 14
+            changes = [prices[i] - prices[i-1] for i in range(n - period, n)]
+            gains = [c for c in changes if c > 0]
+            losses = [-c for c in changes if c < 0]
+            avg_gain = sum(gains) / float(period)
+            avg_loss = sum(losses) / float(period)
+            if avg_loss == 0:
+                features["rsi_14"] = 100.0 if avg_gain > 0 else 50.0
+            else:
+                rs = avg_gain / avg_loss
+                features["rsi_14"] = round(100.0 - (100.0 / (1.0 + rs)), 2)
+        elif n >= 5:
+            # Approximate RSI for earlier ticks until 14 periods accumulate
+            p_sub = n - 1
+            changes = [prices[i] - prices[i-1] for i in range(1, n)]
+            gains = [c for c in changes if c > 0]
+            losses = [-c for c in changes if c < 0]
+            avg_gain = sum(gains) / float(p_sub)
+            avg_loss = sum(losses) / float(p_sub)
+            if avg_loss == 0:
+                features["rsi_14"] = 100.0 if avg_gain > 0 else 50.0
+            else:
+                rs = avg_gain / avg_loss
+                features["rsi_14"] = round(100.0 - (100.0 / (1.0 + rs)), 2)
+        else:
+            features["rsi_14"] = 50.0  # Neutral midpoint
+
         # ── ORDERBOOK ───────────────────────────────────────
         features["bid_ask_imbalance"] = imbalance
         features["depth_imbalance"] = (bid_depth - ask_depth) / (bid_depth + ask_depth + 1e-9)

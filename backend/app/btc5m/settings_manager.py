@@ -39,6 +39,9 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "max_entry_price": "0.80",
     "min_p2b_diff": "10.0",
     "min_entry_probability": "0.70",
+    "rsi_period": "14",
+    "rsi_overbought": "70.0",
+    "rsi_oversold": "30.0",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
@@ -72,6 +75,9 @@ TYPED_FIELDS = {
     "max_entry_price": float,
     "min_p2b_diff": float,
     "min_entry_probability": float,
+    "rsi_period": int,
+    "rsi_overbought": float,
+    "rsi_oversold": float,
 }
 
 
