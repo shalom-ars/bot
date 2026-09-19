@@ -720,7 +720,7 @@ function InnerBTC5M() {
               Enabling Real Money mode instructs the bot to submit orders to Polymarket's live orderbook using real funds (USDC). Ensure your wallet private key and Polymarket API credentials are configured in your environment.
             </p>
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-300 space-y-1">
-              <p className="font-bold">✓ Target Profit: $1.00 | Stop Loss: $10.00 active</p>
+              <p className="font-bold">✓ Target Profit: ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '2.00'} | Stop Loss: ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} active</p>
               <p className="font-bold">✓ Smart Stop-Loss / Confirmation Exit active</p>
               <p className="font-bold">✓ Daily loss circuit breaker armed</p>
             </div>
@@ -1312,7 +1312,7 @@ function InnerBTC5M() {
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
             <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
             <span className="font-bold text-slate-700">
-              Fixed $1.00 TP / $10.00 SL ($10 / trade)
+              Fixed ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '2.00'} TP / ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} SL ($10 / trade)
             </span>
           </div>
         </div>

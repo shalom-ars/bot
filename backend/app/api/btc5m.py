@@ -303,6 +303,14 @@ def update_btc5m_targeting_settings(req: UpdateSettingsRequest, db: Session = De
         eng.strategy._sync_instance_params()
     if "trading_active" in updates:
         eng.trading_active = bool(updates["trading_active"])
+    if "tp_dollar" in updates:
+        eng.tp_dollar = float(updates["tp_dollar"])
+    if "sl_dollar" in updates:
+        eng.sl_dollar = float(updates["sl_dollar"])
+    if "slot_mode" in updates:
+        eng.slot_mode = str(updates["slot_mode"])
+    if "only_short" in updates:
+        eng.only_short = bool(updates["only_short"])
         
     _safe_broadcast(inst_id)
 
