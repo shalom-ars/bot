@@ -601,7 +601,7 @@ class BTC5MStrategy:
             skip_flags.append("SKIP - Missing NO outcome token ID on Polymarket")
             
         min_p = float(self.settings.get("min_entry_price", 0.40))
-        max_p = float(self.settings.get("max_entry_price", 0.75))
+        max_p = float(self.settings.get("max_entry_price", 0.80))
         if entry_price < min_p or entry_price > max_p:
             skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
             

@@ -36,7 +36,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "thesis_failure_threshold": "50.0",
     "hard_stop_delta": "0.02",
     "min_entry_price": "0.40",
-    "max_entry_price": "0.75",
+    "max_entry_price": "0.80",
     "min_p2b_diff": "10.0",
 }
 
