@@ -38,6 +38,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_entry_price": "0.40",
     "max_entry_price": "0.80",
     "min_p2b_diff": "10.0",
+    "min_entry_probability": "0.70",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
@@ -70,6 +71,7 @@ TYPED_FIELDS = {
     "min_entry_price": float,
     "max_entry_price": float,
     "min_p2b_diff": float,
+    "min_entry_probability": float,
 }
 
 

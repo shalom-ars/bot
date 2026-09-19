@@ -533,6 +533,7 @@ class BTC5MStrategy:
         # 4. Entry Checks
         gate_results = {
             "score": {"pass": False, "value": f"{max(yes_score, no_score):.1f}"},
+            "probability": {"pass": False, "value": "0.0%"},
             "net_edge": {"pass": False, "value": f"0.00%"},
             "spread": {"pass": False, "value": f"{spread*100:.2f}%"},
             "liquidity": {"pass": False, "value": f"{liquidity:.0f}"},
@@ -552,6 +553,7 @@ class BTC5MStrategy:
         selected_risk = yes_risk if is_yes else no_risk
         selected_pos_size = yes_pos_size if is_yes else no_pos_size
         
+        gate_results["probability"]["value"] = f"{fair_prob*100:.1f}%"
         gate_results["net_edge"]["value"] = f"{net_edge*100:.2f}%"
         gate_results["rr"]["value"] = f"{actual_planned_rr:.2f}"
         
@@ -559,7 +561,7 @@ class BTC5MStrategy:
             gate_results["score"]["pass"] = True
         else:
             skip_flags.append(f"SKIP - Predicted {predicted_side}, but score {selected_score:.1f} < {min_score:.0f}")
-            
+
         if net_edge >= min_edge:
             gate_results["net_edge"]["pass"] = True
         else:
@@ -594,6 +596,12 @@ class BTC5MStrategy:
         elif abs(btc_price - price_to_beat) < min_p2b:
             btc_diff = abs(btc_price - price_to_beat)
             skip_flags.append(f"SKIP - Indecisive BTC vs P2B (${btc_diff:.1f} < ${min_p2b:.2f} threshold)")
+
+        min_prob = float(self.settings.get("min_entry_probability", 0.70))
+        if fair_prob >= min_prob:
+            gate_results["probability"]["pass"] = True
+        else:
+            skip_flags.append(f"SKIP - Probability {fair_prob*100:.1f}% < {min_prob*100:.1f}% threshold")
             
         if predicted_side == "NONE":
             skip_flags.append("SKIP - No directional evidence (YES/NO tie)")

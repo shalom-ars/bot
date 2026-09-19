@@ -243,6 +243,7 @@ class UpdateSettingsRequest(BaseModel):
     min_entry_price: Optional[float] = None
     max_entry_price: Optional[float] = None
     min_p2b_diff: Optional[float] = None
+    min_entry_probability: Optional[float] = None
 
 @router.get("/instances")
 def get_btc5m_instances():
