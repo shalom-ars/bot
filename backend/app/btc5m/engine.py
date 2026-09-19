@@ -719,6 +719,42 @@ class BTC5MEngine:
                     contract_rsi = features.get("rsi_14", 50.0)
                     features["rsi_14"] = round((btc_rsi * 0.65) + (contract_rsi * 0.35), 2)
 
+                    # Compute Spot BTC MACD (12, 26, 9)
+                    if len(self._btc_history) >= 10:
+                        from app.btc5m.features import calc_ema
+                        btc_series = [p for _, p in self._btc_history]
+                        f_p = min(12, len(btc_series))
+                        s_p = min(26, len(btc_series))
+                        ema_f = calc_ema(btc_series, f_p)
+                        ema_s = calc_ema(btc_series, s_p)
+                        btc_macd_s = [f - s for f, s in zip(ema_f, ema_s)]
+                        sig_p = min(9, len(btc_macd_s))
+                        btc_sig_s = calc_ema(btc_macd_s, sig_p)
+                        btc_macd_hist = btc_macd_s[-1] - btc_sig_s[-1]
+                        btc_macd_norm = (btc_macd_hist / (btc_price + 1e-9)) * 1000.0
+                        features["btc_macd_hist"] = round(btc_macd_norm, 4)
+                        contract_macd = features.get("macd_hist", 0.0)
+                        features["macd_hist"] = round((btc_macd_norm * 0.65) + (contract_macd * 0.35), 4)
+
+                    # Compute Spot BTC Bollinger Bands (20, 2.0)
+                    if len(self._btc_history) >= 5:
+                        import math
+                        bb_len = min(20, len(self._btc_history))
+                        btc_bb_win = [p for _, p in self._btc_history[-bb_len:]]
+                        btc_mid = sum(btc_bb_win) / float(bb_len)
+                        btc_var = sum((x - btc_mid)**2 for x in btc_bb_win) / float(bb_len)
+                        btc_std = math.sqrt(btc_var)
+                        btc_up = btc_mid + 2.0 * btc_std
+                        btc_low = btc_mid - 2.0 * btc_std
+                        btc_diff = btc_up - btc_low
+                        btc_pct_b = (btc_price - btc_low) / (btc_diff + 1e-9) if btc_diff > 1e-7 else 0.5
+                        btc_bw = btc_diff / (btc_mid + 1e-9)
+                        features["btc_bb_pct_b"] = round(btc_pct_b, 4)
+                        features["btc_bb_bandwidth"] = round(btc_bw, 5)
+                        contract_pct_b = features.get("bb_pct_b", 0.5)
+                        features["bb_pct_b"] = round((btc_pct_b * 0.65) + (contract_pct_b * 0.35), 4)
+                        features["bb_bandwidth"] = max(features.get("bb_bandwidth", 0.0), round(btc_bw, 4))
+
             # Evaluate both YES and NO with explicit BTC/P2B inputs.
             t0_strat = time.perf_counter()
             signal = self.strategy.evaluate(

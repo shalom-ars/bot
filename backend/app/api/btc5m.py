@@ -247,6 +247,11 @@ class UpdateSettingsRequest(BaseModel):
     rsi_period: Optional[int] = None
     rsi_overbought: Optional[float] = None
     rsi_oversold: Optional[float] = None
+    macd_fast: Optional[int] = None
+    macd_slow: Optional[int] = None
+    macd_signal: Optional[int] = None
+    bb_period: Optional[int] = None
+    bb_std: Optional[float] = None
 
 @router.get("/instances")
 def get_btc5m_instances():

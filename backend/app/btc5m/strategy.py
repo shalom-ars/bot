@@ -98,6 +98,9 @@ class BTC5MSignal:
     yes_breakdown: str = "{}"
     no_breakdown: str = "{}"
     rsi: float = 50.0
+    macd_hist: float = 0.0
+    bb_pct_b: float = 0.5
+    bb_bandwidth: float = 0.0
     instance_id: str = "instance_1"
     # Risk-level skip flags
     skip_flags: list = field(default_factory=list)
@@ -276,15 +279,17 @@ class BTC5MStrategy:
         breakdown["BTC vs P2B"] = round(score_p2b, 1)
         total += score_p2b
         
-        # 2. Momentum (15 points) - blends true spot BTC momentum and orderbook momentum
+        # 2. Momentum (15 points) - blends true spot BTC momentum, contract momentum, and MACD trend
         btc_mom = features.get("btc_momentum_1m", None)
         clob_mom = features.get("short_momentum_1m", 0.0)
+        macd_h = float(features.get("macd_hist", 0.0))
+        macd_bonus = max(-2.0, min(2.0, macd_h * 15.0))
         
         if btc_mom is not None:
             # 65% weight on spot BTC momentum, 35% on CLOB contract momentum
-            mom_composite = (btc_mom * 3000.0 * 0.65) + (clob_mom * 250.0 * 0.35)
+            mom_composite = (btc_mom * 3000.0 * 0.65) + (clob_mom * 250.0 * 0.35) + macd_bonus
         else:
-            mom_composite = clob_mom * 400.0
+            mom_composite = (clob_mom * 400.0) + macd_bonus
             
         if is_yes:
             score_mom = min(15.0, max(0.0, 7.5 + mom_composite))
@@ -312,10 +317,11 @@ class BTC5MStrategy:
         breakdown["Prob Movement"] = round(score_prob, 1)
         total += score_prob
         
-        # 5. Volatility (10 points)
-        # Lower volatility is better (less noise)
+        # 5. Volatility & Bollinger Bandwidth (10 points)
+        # Lower volatility with stable bandwidth is ideal (less noise)
         vol = features.get("rolling_volatility", 0.0)
-        score_vol = min(10.0, max(0.0, 10.0 - (vol * 100.0)))
+        bb_bw = float(features.get("bb_bandwidth", 0.0))
+        score_vol = min(10.0, max(0.0, 10.0 - (vol * 80.0) - (bb_bw * 10.0)))
         breakdown["Volatility"] = round(score_vol, 1)
         total += score_vol
         
@@ -483,7 +489,10 @@ class BTC5MStrategy:
                 gate_results="{}",
                 yes_breakdown="{}",
                 no_breakdown="{}",
-                rsi=float(features.get("rsi_14", 50.0))
+                rsi=float(features.get("rsi_14", 50.0)),
+                macd_hist=float(features.get("macd_hist", 0.0)),
+                bb_pct_b=float(features.get("bb_pct_b", 0.5)),
+                bb_bandwidth=float(features.get("bb_bandwidth", 0.0))
             )
 
         # 1. Score both sides with time-decayed option metrics
@@ -541,7 +550,9 @@ class BTC5MStrategy:
             "liquidity": {"pass": False, "value": f"{liquidity:.0f}"},
             "rr": {"pass": False, "value": "UNAVAILABLE"},
             "time": {"pass": False, "value": f"{time_remaining:.0f}s"},
-            "rsi": {"pass": True, "value": f"{float(features.get('rsi_14', 50.0)):.1f}"}
+            "rsi": {"pass": True, "value": f"{float(features.get('rsi_14', 50.0)):.1f}"},
+            "macd": {"pass": True, "value": f"{float(features.get('macd_hist', 0.0)):.4f}"},
+            "bollinger": {"pass": True, "value": f"%B: {float(features.get('bb_pct_b', 0.5)):.2f}"}
         }
 
         # Select target params based on prediction
@@ -631,6 +642,32 @@ class BTC5MStrategy:
             skip_flags.append(f"SKIP - RSI {rsi_val:.1f} < {rsi_os:.0f} (Oversold: high bounce risk for DOWN entry)")
         else:
             gate_results["rsi"]["pass"] = True
+
+        # MACD Trend Alignment filter
+        macd_val = float(features.get("macd_hist", 0.0))
+        macd_dir = "Bullish" if macd_val > 0.0001 else ("Bearish" if macd_val < -0.0001 else "Neutral")
+        gate_results["macd"]["value"] = f"{macd_val:+.4f} ({macd_dir})"
+        if predicted_side == "YES" and macd_val < -0.15:
+            gate_results["macd"]["pass"] = False
+            skip_flags.append(f"SKIP - Severe Bearish MACD divergence ({macd_val:+.4f}) for UP entry")
+        elif predicted_side == "NO" and macd_val > 0.15:
+            gate_results["macd"]["pass"] = False
+            skip_flags.append(f"SKIP - Severe Bullish MACD divergence ({macd_val:+.4f}) for DOWN entry")
+        else:
+            gate_results["macd"]["pass"] = True
+
+        # Bollinger Bands Volatility & Boundary Protection
+        bb_pct = float(features.get("bb_pct_b", 0.5))
+        bb_bw = float(features.get("bb_bandwidth", 0.0))
+        gate_results["bollinger"]["value"] = f"%B {bb_pct:.2f} | BW {bb_bw:.3f}"
+        if predicted_side == "YES" and bb_pct > 1.10:
+            gate_results["bollinger"]["pass"] = False
+            skip_flags.append(f"SKIP - Price pierced upper Bollinger Band (%B {bb_pct:.2f} > 1.10): high reversal risk")
+        elif predicted_side == "NO" and bb_pct < -0.10:
+            gate_results["bollinger"]["pass"] = False
+            skip_flags.append(f"SKIP - Price pierced lower Bollinger Band (%B {bb_pct:.2f} < -0.10): high bounce risk")
+        else:
+            gate_results["bollinger"]["pass"] = True
             
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")
@@ -762,5 +799,8 @@ class BTC5MStrategy:
             yes_breakdown=json.dumps(yes_breakdown),
             no_breakdown=json.dumps(no_breakdown),
             rsi=rsi_val,
+            macd_hist=macd_val,
+            bb_pct_b=bb_pct,
+            bb_bandwidth=bb_bw,
             instance_id=self.instance_id
         )

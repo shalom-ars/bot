@@ -686,3 +686,110 @@ def test_rsi_14_overbought_and_oversold_protection(db_session):
     assert f["rsi_14"] == 100.0  # Steady pure gains yield 100 RSI
 
 
+# ── TEST 20: MACD and Bollinger Bands Gating and Feature Engine ──────────────
+def test_macd_and_bollinger_bands_integration(db_session):
+    import json
+    from app.btc5m.features import BTC5MFeatureEngine
+    from app.btc5m.strategy import BTC5MStrategy
+    from app.btc5m.settings_manager import DEFAULT_SETTINGS, TYPED_FIELDS
+
+    # 1. Verify settings configuration
+    assert "macd_fast" in DEFAULT_SETTINGS and TYPED_FIELDS["macd_fast"] == int
+    assert "macd_slow" in DEFAULT_SETTINGS and TYPED_FIELDS["macd_slow"] == int
+    assert "macd_signal" in DEFAULT_SETTINGS and TYPED_FIELDS["macd_signal"] == int
+    assert "bb_period" in DEFAULT_SETTINGS and TYPED_FIELDS["bb_period"] == int
+    assert "bb_std" in DEFAULT_SETTINGS and TYPED_FIELDS["bb_std"] == float
+
+    # 2. Verify FeatureEngine computes MACD and Bollinger Bands
+    fe = BTC5MFeatureEngine()
+    prices = [0.50, 0.51, 0.52, 0.53, 0.52, 0.54, 0.55, 0.53, 0.56, 0.57,
+              0.55, 0.58, 0.59, 0.58, 0.60, 0.61, 0.59, 0.62, 0.63, 0.64]
+    for p in prices:
+        f = fe.update_and_compute("bb_macd_mkt", p, p - 0.01, p + 0.01, 0.02, 500, 500, 0.1, 240)
+
+    assert "macd_line" in f
+    assert "macd_signal" in f
+    assert "macd_hist" in f
+    assert "bb_middle" in f
+    assert "bb_upper" in f
+    assert "bb_lower" in f
+    assert "bb_bandwidth" in f
+    assert "bb_pct_b" in f
+    assert f["bb_upper"] > f["bb_middle"] > f["bb_lower"]
+
+    # 3. Verify Strategy Gating with healthy MACD and Bollinger Bands
+    strat = BTC5MStrategy(instance_id="instance_1")
+    healthy_features = {
+        "mid_price": 0.50,
+        "bid": 0.49,
+        "ask": 0.51,
+        "spread": 0.02,
+        "bid_depth": 500.0,
+        "ask_depth": 500.0,
+        "short_momentum_1m": 0.005,
+        "bid_ask_imbalance": 0.2,
+        "time_remaining_sec": 240.0,
+        "rsi_14": 55.0,
+        "macd_hist": 0.02,
+        "bb_pct_b": 0.65,
+        "bb_bandwidth": 0.04
+    }
+    sig_healthy = strat.evaluate(
+        market_id="mkt_healthy_bb",
+        condition_id="0x_healthy",
+        question="BTC 5M Test Healthy",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=healthy_features,
+        orderbook_timestamp=None,
+        btc_price=65040.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    gates_healthy = json.loads(sig_healthy.gate_results)
+    assert gates_healthy["macd"]["pass"] is True
+    assert "Bullish" in gates_healthy["macd"]["value"]
+    assert gates_healthy["bollinger"]["pass"] is True
+    assert "%B 0.65" in gates_healthy["bollinger"]["value"]
+
+    # 4. Verify Bollinger Upper Band piercing rejection (%B > 1.10) for YES
+    overextended_up = dict(healthy_features)
+    overextended_up["bb_pct_b"] = 1.18
+    sig_bb_up = strat.evaluate(
+        market_id="mkt_bb_up",
+        condition_id="0x_bb_up",
+        question="BTC 5M Overextended Upper",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=overextended_up,
+        orderbook_timestamp=None,
+        btc_price=65050.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig_bb_up.state == "SKIP"
+    assert any("pierced upper Bollinger Band" in flag for flag in sig_bb_up.skip_flags)
+    gates_bb_up = json.loads(sig_bb_up.gate_results)
+    assert gates_bb_up["bollinger"]["pass"] is False
+
+    # 5. Verify Bollinger Lower Band piercing rejection (%B < -0.10) for NO
+    overextended_down = dict(healthy_features)
+    overextended_down["bb_pct_b"] = -0.15
+    sig_bb_down = strat.evaluate(
+        market_id="mkt_bb_down",
+        condition_id="0x_bb_down",
+        question="BTC 5M Overextended Lower",
+        yes_token_id="tok_yes",
+        no_token_id="tok_no",
+        features=overextended_down,
+        orderbook_timestamp=None,
+        btc_price=64950.0,
+        price_to_beat=65000.0,
+        current_balance=500.0
+    )
+    assert sig_bb_down.state == "SKIP"
+    assert any("pierced lower Bollinger Band" in flag for flag in sig_bb_down.skip_flags)
+    gates_bb_down = json.loads(sig_bb_down.gate_results)
+    assert gates_bb_down["bollinger"]["pass"] is False
+
+

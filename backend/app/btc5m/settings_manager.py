@@ -42,6 +42,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "rsi_period": "14",
     "rsi_overbought": "70.0",
     "rsi_oversold": "30.0",
+    "macd_fast": "12",
+    "macd_slow": "26",
+    "macd_signal": "9",
+    "bb_period": "20",
+    "bb_std": "2.0",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
@@ -78,6 +83,11 @@ TYPED_FIELDS = {
     "rsi_period": int,
     "rsi_overbought": float,
     "rsi_oversold": float,
+    "macd_fast": int,
+    "macd_slow": int,
+    "macd_signal": int,
+    "bb_period": int,
+    "bb_std": float,
 }
 
 

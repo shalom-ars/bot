@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 HISTORY_SIZE = 60   # 60 ticks per market max
 
 
+def calc_ema(series: list[float], period: int) -> list[float]:
+    """Calculates Exponential Moving Average (EMA) for a float series."""
+    if not series:
+        return []
+    alpha = 2.0 / (period + 1)
+    ema = [series[0]]
+    for val in series[1:]:
+        ema.append(alpha * val + (1.0 - alpha) * ema[-1])
+    return ema
+
+
 @dataclass
 class PricePoint:
     timestamp: datetime
@@ -171,6 +182,50 @@ class BTC5MFeatureEngine:
                 features["rsi_14"] = round(100.0 - (100.0 / (1.0 + rs)), 2)
         else:
             features["rsi_14"] = 50.0  # Neutral midpoint
+
+        # ── MOVING AVERAGE CONVERGENCE DIVERGENCE (MACD 12, 26, 9) ──
+        if n >= 5:
+            fast_p = min(12, n)
+            slow_p = min(26, n)
+            ema_fast = calc_ema(prices, fast_p)
+            ema_slow = calc_ema(prices, slow_p)
+            macd_series = [f - s for f, s in zip(ema_fast, ema_slow)]
+            sig_p = min(9, len(macd_series))
+            signal_series = calc_ema(macd_series, sig_p)
+            macd_line = macd_series[-1]
+            macd_sig = signal_series[-1]
+            macd_hist = macd_line - macd_sig
+            features["macd_line"] = round(macd_line, 5)
+            features["macd_signal"] = round(macd_sig, 5)
+            features["macd_hist"] = round(macd_hist, 5)
+        else:
+            features["macd_line"] = 0.0
+            features["macd_signal"] = 0.0
+            features["macd_hist"] = 0.0
+
+        # ── BOLLINGER BANDS (20, 2.0) ───────────────────────────────
+        bb_p = min(20, n)
+        if bb_p >= 3:
+            bb_window = prices[-bb_p:]
+            bb_middle = sum(bb_window) / float(bb_p)
+            bb_var = sum((x - bb_middle)**2 for x in bb_window) / float(bb_p)
+            bb_std = math.sqrt(bb_var)
+            bb_upper = bb_middle + 2.0 * bb_std
+            bb_lower = bb_middle - 2.0 * bb_std
+            band_diff = bb_upper - bb_lower
+            bb_bw = band_diff / (bb_middle + 1e-9)
+            bb_pct_b = (prices[-1] - bb_lower) / (band_diff + 1e-9) if band_diff > 1e-7 else 0.5
+            features["bb_middle"] = round(bb_middle, 4)
+            features["bb_upper"] = round(bb_upper, 4)
+            features["bb_lower"] = round(bb_lower, 4)
+            features["bb_bandwidth"] = round(bb_bw, 4)
+            features["bb_pct_b"] = round(bb_pct_b, 4)
+        else:
+            features["bb_middle"] = round(prices[-1], 4) if n > 0 else 0.5
+            features["bb_upper"] = round(prices[-1] + 0.05, 4) if n > 0 else 0.55
+            features["bb_lower"] = round(prices[-1] - 0.05, 4) if n > 0 else 0.45
+            features["bb_bandwidth"] = 0.0
+            features["bb_pct_b"] = 0.5
 
         # ── ORDERBOOK ───────────────────────────────────────
         features["bid_ask_imbalance"] = imbalance
