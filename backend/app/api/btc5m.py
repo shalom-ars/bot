@@ -2,6 +2,7 @@
 BTC 5M API endpoints.
 Provides dashboard data for the BTC 5M module.
 """
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
