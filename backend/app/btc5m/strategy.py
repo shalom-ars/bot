@@ -383,14 +383,15 @@ class BTC5MStrategy:
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
         if is_fixed:
             tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 2.0))
-            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 10.0))
+            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 1.0))
+            hard_cap = float(self.settings.get("hard_cap_dollar", 10.0))
             dynamic_sl_delta = float(self.settings.get("dynamic_sl_delta", 0.20))
             take_profit_price = min(0.99, entry_price + (tp_dollar / max(0.1, quantity)))
             max_sl_dist = min(dynamic_sl_delta, sl_dollar / max(0.1, quantity))
             stop_loss_price = max(0.10, entry_price - max_sl_dist)
             reward_per_share = max(0.001, take_profit_price - entry_price)
             risk_per_share = max(0.001, entry_price - stop_loss_price)
-            planned_risk = min(sl_dollar, risk_per_share * quantity)
+            planned_risk = min(hard_cap, risk_per_share * quantity)
         else:
             tp_delta = float(self.settings.get("take_profit_delta", 0.20))
             max_tp = float(self.settings.get("max_take_profit", 0.95))

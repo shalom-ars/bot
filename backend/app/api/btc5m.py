@@ -238,6 +238,7 @@ class UpdateSettingsRequest(BaseModel):
     mode: Optional[str] = None
     tp_dollar: Optional[float] = None
     sl_dollar: Optional[float] = None
+    hard_cap_dollar: Optional[float] = None
     side_bias: Optional[str] = None
     only_short: Optional[bool] = None
     soft_stop_confirmation_seconds: Optional[float] = None
