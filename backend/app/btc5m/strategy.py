@@ -264,52 +264,63 @@ class BTC5MStrategy:
         breakdown = {}
         total = 0.0
         
-        # 1. BTC Price vs P2B (20 points)
-        # Scaled by time remaining: a $20 lead with 1m remaining is highly decisive (18+ pts),
-        # whereas a $3 lead at candle open (280s) is small variance (10.5 pts).
+        # 1. BTC Price vs P2B (10 points) - Reduced for Scalping
         diff = btc_price - p2b if btc_price and p2b else 0.0
         tau = max(15.0, min(300.0, float(time_remaining_sec)))
         sigma_tau = 30.0 * math.sqrt(tau / 300.0)
         z = diff / (sigma_tau + 1e-9) if diff != 0.0 else 0.0
         
         if is_yes:
-            score_p2b = min(20.0, max(0.0, 10.0 + (z * 5.0)))
+            score_p2b = min(10.0, max(0.0, 5.0 + (z * 2.5)))
         else:
-            score_p2b = min(20.0, max(0.0, 10.0 - (z * 5.0)))
+            score_p2b = min(10.0, max(0.0, 5.0 - (z * 2.5)))
         breakdown["BTC vs P2B"] = round(score_p2b, 1)
         total += score_p2b
         
-        # 2. Momentum (15 points) - blends true spot BTC momentum, contract momentum, and MACD trend
+        # 2. Real-Time Momentum & MACD Crossovers (35 points) - Prioritized for Micro-bursts
         btc_mom = features.get("btc_momentum_1m", None)
         clob_mom = features.get("short_momentum_1m", 0.0)
         macd_h = float(features.get("macd_hist", 0.0))
-        macd_bonus = max(-2.0, min(2.0, macd_h * 15.0))
+        
+        # MACD histogram crossing 0 is a strong shift
+        macd_bonus = max(-10.0, min(10.0, macd_h * 50.0))
         
         if btc_mom is not None:
-            # 65% weight on spot BTC momentum, 35% on CLOB contract momentum
-            mom_composite = (btc_mom * 3000.0 * 0.65) + (clob_mom * 250.0 * 0.35) + macd_bonus
+            mom_composite = (btc_mom * 5000.0 * 0.70) + (clob_mom * 500.0 * 0.30) + macd_bonus
         else:
-            mom_composite = (clob_mom * 400.0) + macd_bonus
+            mom_composite = (clob_mom * 800.0) + macd_bonus
             
         if is_yes:
-            score_mom = min(15.0, max(0.0, 7.5 + mom_composite))
+            score_mom = min(35.0, max(0.0, 17.5 + mom_composite))
         else:
-            score_mom = min(15.0, max(0.0, 7.5 - mom_composite))
-        breakdown["Momentum"] = round(score_mom, 1)
+            score_mom = min(35.0, max(0.0, 17.5 - mom_composite))
+        breakdown["Real-Time Momentum"] = round(score_mom, 1)
         total += score_mom
+
+        # 3. RSI Directional Shifts (25 points) - Prioritized for early reversal detection
+        rsi = float(features.get("rsi_14", 50.0))
+        # An RSI of 50 is neutral. RSI > 50 implies bullish momentum, < 50 implies bearish.
+        # We scale RSI from 30-70 into a strong signal.
+        rsi_shift = (rsi - 50.0) / 20.0 # -1.0 to 1.0 roughly
         
-        # 3. CLOB Order Book / Imbalance (15 points)
-        # Positive imbalance means more bids (bullish for YES)
+        if is_yes:
+            score_rsi = min(25.0, max(0.0, 12.5 + (rsi_shift * 12.5)))
+        else:
+            score_rsi = min(25.0, max(0.0, 12.5 - (rsi_shift * 12.5)))
+        breakdown["RSI Shift"] = round(score_rsi, 1)
+        total += score_rsi
+        
+        # 4. CLOB Order Book / Imbalance (10 points)
         imb = features.get("bid_ask_imbalance", 0.0)
         if is_yes:
-            score_ob = min(15.0, max(0.0, 7.5 + (imb * 15.0)))
+            score_ob = min(10.0, max(0.0, 5.0 + (imb * 10.0)))
         else:
-            score_ob = min(15.0, max(0.0, 7.5 - (imb * 15.0)))
+            score_ob = min(10.0, max(0.0, 5.0 - (imb * 10.0)))
         breakdown["Order Book"] = round(score_ob, 1)
         total += score_ob
         
-        # 4. Probability Movement (10 points)
-        ret1 = features.get("return_1", 0.0) # change in mid price
+        # 5. Probability Movement (10 points)
+        ret1 = features.get("return_1", 0.0)
         if is_yes:
             score_prob = min(10.0, max(0.0, 5.0 + (ret1 * 100.0)))
         else:
@@ -317,19 +328,12 @@ class BTC5MStrategy:
         breakdown["Prob Movement"] = round(score_prob, 1)
         total += score_prob
         
-        # 5. Volatility & Bollinger Bandwidth (10 points)
-        # Lower volatility with stable bandwidth is ideal (less noise)
+        # 6. Volatility & Spread Penalty (10 points)
         vol = features.get("rolling_volatility", 0.0)
-        bb_bw = float(features.get("bb_bandwidth", 0.0))
-        score_vol = min(10.0, max(0.0, 10.0 - (vol * 80.0) - (bb_bw * 10.0)))
-        breakdown["Volatility"] = round(score_vol, 1)
-        total += score_vol
-        
-        # 6. Liquidity / Spread (10 points)
         spread = features.get("spread", 1.0)
-        score_spread = min(10.0, max(0.0, 10.0 - (spread * 200.0)))
-        breakdown["Liquidity/Spread"] = round(score_spread, 1)
-        total += score_spread
+        score_exec = min(10.0, max(0.0, 10.0 - (vol * 50.0) - (spread * 100.0)))
+        breakdown["Execution Quality"] = round(score_exec, 1)
+        total += score_exec
         
         # Net Edge and R:R are added externally based on actual math
         return total, breakdown
