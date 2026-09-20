@@ -1285,5 +1285,16 @@ ENGINES: Dict[str, BTC5MEngine] = {
     "instance_1": btc5m_engine,
 }
 
+btc5m_engine_2 = BTC5MEngine(
+    instance_id="instance_2",
+    name="BTC 5M Independent Double-Slot Bot",
+    mode="fixed_dollar",
+    tp_dollar=1.50,
+    sl_dollar=0.90,
+    only_short=False,
+    slot_mode="double_slot_2.5m"
+)
+ENGINES["instance_2"] = btc5m_engine_2
+
 def get_engine(instance_id: str = "instance_1") -> BTC5MEngine:
     return ENGINES.get(instance_id, btc5m_engine)

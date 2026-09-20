@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SETTINGS: Dict[str, str] = {
     "trading_active": "true",
     "account_mode": "demo",
-    "slot_mode": "double_slot_2.5m",
+    "slot_mode": "single_5m",
     "risk_reward_ratio": "0.0:1",
     "min_entry_score": "0.0",
     "min_net_edge": "-100.0",
@@ -62,7 +62,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "rsi_oversold": "0.0",
 }
 
-DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
+DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS.copy()
+DEFAULT_SETTINGS_INSTANCE_2["slot_mode"] = "double_slot_2.5m"
 
 TYPED_FIELDS = {
     "trading_active": bool,
@@ -140,7 +141,6 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
 
     loosened_sync = {
-        "slot_mode": "double_slot_2.5m",
         "min_entry_score": "0.0",
         "min_net_edge": "-100.0",
         "min_entry_probability": "0.0",
