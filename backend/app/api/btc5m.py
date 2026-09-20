@@ -456,13 +456,19 @@ def reset_trading_history(db: Session = Depends(get_db)):
 
 
 @router.post("/close_trade")
-def close_btc5m_trade(instance_id: str = "instance_1", db: Session = Depends(get_db)):
+def close_btc5m_trade(instance_id: str = "instance_1", trade_id: Optional[int] = None, db: Session = Depends(get_db)):
     """Manually terminate currently open BTC 5M paper trade immediately at the current market price for the specified bot instance."""
     eng = get_engine(instance_id)
-    trade = db.query(BTC5MTrade).filter(
+    
+    query = db.query(BTC5MTrade).filter(
         BTC5MTrade.status == "OPEN",
         BTC5MTrade.instance_id == instance_id
-    ).first()
+    )
+    if trade_id:
+        query = query.filter(BTC5MTrade.id == trade_id)
+        
+    trade = query.first()
+    
     if not trade:
         return {"status": "error", "message": f"No active trade found to close for {instance_id}"}
 
@@ -540,13 +546,14 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
         BTC5MMarket.start_time > now_naive
     ).order_by(BTC5MMarket.start_time.asc()).first()
 
-    open_trade = db.query(BTC5MTrade).filter(
+    open_trades_models = db.query(BTC5MTrade).filter(
         BTC5MTrade.status == "OPEN",
         BTC5MTrade.instance_id == instance_id
-    ).first()
+    ).all()
     
-    open_trade_dict = _format_trade(open_trade) if open_trade else None
-    if open_trade_dict:
+    open_trades_list = []
+    for open_trade in open_trades_models:
+        tdict = _format_trade(open_trade)
         trade_market = db.query(BTC5MMarket).filter(BTC5MMarket.market_id == open_trade.market_id).first()
         if trade_market:
             best_bid = trade_market.best_bid
@@ -573,13 +580,13 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
                     current_price = 1.0 - best_ask
                 
                 unrealized_pnl = (current_price - open_trade.entry_price) * open_trade.quantity
-                open_trade_dict["current_price"] = current_price
-                open_trade_dict["unrealized_pnl"] = unrealized_pnl
-                open_trade_dict["pnl_pct"] = (unrealized_pnl / open_trade.position_size) * 100 if open_trade.position_size > 0 else 0
+                tdict["current_price"] = current_price
+                tdict["unrealized_pnl"] = unrealized_pnl
+                tdict["pnl_pct"] = (unrealized_pnl / open_trade.position_size) * 100 if open_trade.position_size > 0 else 0
             else:
-                open_trade_dict["current_price"] = None
-                open_trade_dict["unrealized_pnl"] = None
-                open_trade_dict["pnl_pct"] = None
+                tdict["current_price"] = None
+                tdict["unrealized_pnl"] = None
+                tdict["pnl_pct"] = None
 
         # Smart Exit Confirmation Countdown
         if open_trade.exit_decision_state == "EXIT_REVIEW" and open_trade.exit_review_started_at:
@@ -590,13 +597,17 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
             conf_total = 10.0
             if hasattr(eng, "settings") and isinstance(eng.settings, dict):
                 conf_total = float(eng.settings.get("soft_stop_confirmation_seconds", 10.0))
-            open_trade_dict["confirmation_seconds_elapsed"] = round(max(0.0, elapsed), 1)
-            open_trade_dict["confirmation_seconds_total"] = conf_total
-            open_trade_dict["confirmation_seconds_remaining"] = round(max(0.0, conf_total - elapsed), 1)
+            tdict["confirmation_seconds_elapsed"] = round(max(0.0, elapsed), 1)
+            tdict["confirmation_seconds_total"] = conf_total
+            tdict["confirmation_seconds_remaining"] = round(max(0.0, conf_total - elapsed), 1)
         else:
-            open_trade_dict["confirmation_seconds_elapsed"] = 0.0
-            open_trade_dict["confirmation_seconds_total"] = 10.0
-            open_trade_dict["confirmation_seconds_remaining"] = 0.0
+            tdict["confirmation_seconds_elapsed"] = 0.0
+            tdict["confirmation_seconds_total"] = 10.0
+            tdict["confirmation_seconds_remaining"] = 0.0
+        
+        open_trades_list.append(tdict)
+        
+    open_trade_dict = open_trades_list[0] if open_trades_list else None
 
     btc_price = _get_live_btc_price()
 
@@ -711,6 +722,8 @@ def build_btc5m_status_payload(db: Session, instance_id: str = "instance_1") -> 
         "next_market": _format_market(next_market) if next_market else None,
         "open_trade": open_trade_dict,
         "active_trade": open_trade_dict,
+        "open_trades": open_trades_list,
+        "active_trades": open_trades_list,
         "chainlink_btc_usd": btc_price,
         "price_to_beat": price_to_beat,
         "direction": "UP" if btc_price and price_to_beat and btc_price > price_to_beat else ("DOWN" if btc_price and price_to_beat and btc_price < price_to_beat else "NEUTRAL"),

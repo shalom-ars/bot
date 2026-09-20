@@ -1417,7 +1417,7 @@ function ResizableHistoryLogsSplit({
 }
 
 function InnerBTC5M() {
-  const [selectedInstance] = useState<'instance_1'>('instance_1');
+  const [selectedInstance, setSelectedInstance] = useState<'instance_1' | 'instance_2'>('instance_1');
   const { statusData, statusLoading, refetchStatus } = useBTC5MStatus(selectedInstance);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const { data: statsData } = useApi<any>(`/btc5m/stats?instance_id=${selectedInstance}&v=${refreshTrigger}`, null);
@@ -1458,12 +1458,13 @@ function InnerBTC5M() {
     window.location.href = '/login';
   };
 
-  const handleCloseTrade = async () => {
+  const handleCloseTrade = async (tradeId?: number) => {
     if (isClosing) return;
     setIsClosing(true);
     setCloseError(null);
     try {
-      const res = await fetch(`/api/btc5m/close_trade?instance_id=${selectedInstance}`, {
+      const url = tradeId ? `/api/btc5m/close_trade?instance_id=${selectedInstance}&trade_id=${tradeId}` : `/api/btc5m/close_trade?instance_id=${selectedInstance}`;
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -1490,6 +1491,7 @@ function InnerBTC5M() {
 
   const current = statusData?.current_market;
   const trade = statusData?.active_trade || statusData?.open_trade;
+  const activeTrades: any[] = statusData?.active_trades || (trade ? [trade] : []);
   
   const { btcPrice, priceToBeat } = useChainlinkLive(current?.start_time, statusData?.chainlink_btc_usd, statusData?.price_to_beat);
   const { livePrices } = usePolymarketLive(current?.yes_token_id, current?.no_token_id);
@@ -1528,9 +1530,6 @@ function InnerBTC5M() {
   const isTradeOpen = Boolean(trade && trade.status === 'OPEN');
   const lockedSide: 'YES' | 'NO' | null = isTradeOpen 
     ? (trade.locked_predicted_side || (trade.side === 'BUY' ? 'YES' : 'NO')) 
-    : null;
-  const lockedDir: 'UP' | 'DOWN' | null = isTradeOpen
-    ? (trade.locked_direction || (lockedSide === 'YES' ? 'UP' : 'DOWN'))
     : null;
   const isLocked = isTradeOpen;
 
@@ -1615,6 +1614,16 @@ function InnerBTC5M() {
                 >
                   {isTogglingTrading ? 'Updating...' : isTradingActive ? '■ PAUSE BOT' : '▶ START BOT'}
                 </button>
+                <div className="flex items-center ml-2 border-l border-slate-700 pl-3">
+                   <select 
+                     className="bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                     value={selectedInstance}
+                     onChange={(e) => setSelectedInstance(e.target.value as any)}
+                   >
+                     <option value="instance_1">Bot 1 (Single Slot)</option>
+                     <option value="instance_2">Bot 2 (Double Slot)</option>
+                   </select>
+                </div>
               </div>
 
               {/* Bitcoin Up/Down written small beneath Jonanda Bot */}
@@ -2001,144 +2010,157 @@ function InnerBTC5M() {
               </span>
             </div>
 
-            {/* Active Trade Box */}
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 mb-2.5">
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">CURRENT POSITION</span>
-                {isTradeOpen ? (
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200 animate-pulse">
-                    ● IN PROGRESS
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-600">
-                    AWAITING ENTRY
-                  </span>
-                )}
-              </div>
+            {/* Active Trades Box List */}
+            <div className="space-y-2 mb-2.5 max-h-[350px] overflow-y-auto pr-1">
+              {activeTrades.length > 0 ? (
+                activeTrades.map((t: any, idx: number) => {
+                  const tLockedSide = t.side === 'BUY' ? t.locked_predicted_side : (t.locked_predicted_side === 'YES' ? 'NO' : 'YES');
+                  const tLockedDir = tLockedSide === 'YES' ? 'UP' : 'DOWN';
+                  const tUnrealized = typeof t.unrealized_pnl === 'number' ? t.unrealized_pnl : 0;
+                  
+                  return (
+                    <div key={t.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">CURRENT POSITION</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200 animate-pulse">
+                          ● IN PROGRESS
+                        </span>
+                      </div>
 
-              {isTradeOpen ? (
-                <div className="space-y-1.5 mt-1 font-mono text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Direction:</span>
-                    <strong className={lockedSide === 'YES' ? 'text-emerald-600 font-black' : 'text-rose-600 font-black'}>
-                      🔒 BUY {lockedSide} ({lockedDir})
-                    </strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Entry Price:</span>
-                    <strong className="text-slate-800">${fmt4(trade.entry_price)}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Stop / Target:</span>
-                    <strong className="text-slate-700">${fmt4(trade.entry_stop_price || trade.stop_loss_price)} / ${fmt4(trade.entry_target_price || trade.take_profit_price)}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Position Size:</span>
-                    <strong className="text-slate-800">${fmt4(trade.position_size)}</strong>
-                  </div>
-                  <div className="flex justify-between pt-1 border-t border-slate-200">
-                    <span className="text-slate-500">Unrealized P&L:</span>
-                    <strong className={tradeUnrealized >= 0 ? 'text-emerald-600 font-black' : 'text-rose-600 font-black'}>
-                      {fmtUsd(tradeUnrealized)}
-                    </strong>
-                  </div>
-                  {/* SMART STOP-LOSS / EXIT DECISION STATE BANNER */}
-                  {trade.exit_decision_state === 'EXIT_REVIEW' ? (
-                    <div className="mt-2 p-2.5 bg-amber-500/10 border border-amber-500/40 rounded-xl font-sans">
-                      <div className="flex items-center justify-between text-amber-500 font-black text-[11px] uppercase tracking-wide">
-                        <span className="flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 animate-bounce text-amber-500" />
-                          <span>⚠️ SOFT STOP TOUCHED — ANALYZING</span>
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-mono font-black text-[10px] animate-pulse">
-                          {trade.confirmation_seconds_elapsed != null ? `${trade.confirmation_seconds_elapsed}s` : '0s'} / {trade.confirmation_seconds_total || 10}s
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[10px] text-amber-700 font-medium">
-                        Confirmation grace period in progress. Bot is evaluating noise vs thesis failure.
-                      </div>
-                      <div className="mt-1 pt-1 border-t border-amber-500/20 flex justify-between items-center text-[9px] font-mono text-amber-800">
-                        <span>Failure Score: <strong>{trade.thesis_failure_score != null ? `${trade.thesis_failure_score}/100` : '—'}</strong></span>
-                        <span className="truncate max-w-[170px]" title={trade.last_exit_review_reason || 'Soft stop threshold breached'}>
-                          {trade.last_exit_review_reason || 'Soft stop breached'}
-                        </span>
-                      </div>
-                    </div>
-                  ) : trade.exit_decision_state === 'CONFIRMED_EXIT' ? (
-                    <div className="mt-2 p-2.5 bg-rose-500/10 border border-rose-500/40 rounded-xl font-sans">
-                      <div className="flex items-center justify-between text-rose-500 font-black text-[11px] uppercase tracking-wide">
-                        <span className="flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 text-rose-500" />
-                          <span>🚨 THESIS FAILED — EXITING</span>
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-mono font-black text-[10px]">
-                          Score: {trade.thesis_failure_score != null ? `${trade.thesis_failure_score}/100` : '>=60'}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[10px] text-rose-700 font-medium">
-                        Persistent thesis invalidation confirmed across multi-factor evaluation.
-                      </div>
-                    </div>
-                  ) : trade.exit_decision_state === 'HARD_EXIT' ? (
-                    <div className="mt-2 p-2.5 bg-rose-600/10 border border-rose-600/50 rounded-xl font-sans">
-                      <div className="flex items-center justify-between text-rose-600 font-black text-[11px] uppercase tracking-wide">
-                        <span className="flex items-center gap-1.5">
-                          <ShieldAlert className="w-4 h-4 text-rose-600" />
-                          <span>🛑 HARD SAFETY STOP — IMMEDIATE EXIT</span>
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-rose-600/20 text-rose-500 font-mono font-black text-[10px]">
-                          Floor: ${fmt4(trade.hard_stop_price)}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[10px] text-rose-700 font-medium">
-                        Catastrophic risk floor or daily risk budget breach triggered.
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2 p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl font-sans">
-                      <div className="flex items-center justify-between text-emerald-600 font-bold text-[10px] uppercase tracking-wide">
-                        <span className="flex items-center gap-1.5">
-                          <Shield className="w-3.5 h-3.5 text-emerald-500" />
-                          <span>✅ THESIS STILL VALID — HOLDING</span>
-                        </span>
-                        <span className="text-[9px] font-mono text-emerald-700 font-semibold">
-                          Score: {trade.thesis_failure_score != null ? `${trade.thesis_failure_score}/100` : '0/100'}
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                      <div className="space-y-1.5 mt-1 font-mono text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Direction:</span>
+                          <strong className={tLockedSide === 'YES' ? 'text-emerald-600 font-black' : 'text-rose-600 font-black'}>
+                            🔒 BUY {tLockedSide} ({tLockedDir})
+                          </strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Entry Price:</span>
+                          <strong className="text-slate-800">${fmt4(t.entry_price)}</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Stop / Target:</span>
+                          <strong className="text-slate-700">${fmt4(t.entry_stop_price || t.stop_loss_price)} / ${fmt4(t.entry_target_price || t.take_profit_price)}</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Position Size:</span>
+                          <strong className="text-slate-800">${fmt4(t.position_size)}</strong>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-slate-200">
+                          <span className="text-slate-500">Unrealized P&L:</span>
+                          <strong className={tUnrealized >= 0 ? 'text-emerald-600 font-black' : 'text-rose-600 font-black'}>
+                            {fmtUsd(tUnrealized)}
+                          </strong>
+                        </div>
+                        
+                        {/* SMART STOP-LOSS / EXIT DECISION STATE BANNER */}
+                        {t.exit_decision_state === 'EXIT_REVIEW' ? (
+                          <div className="mt-2 p-2.5 bg-amber-500/10 border border-amber-500/40 rounded-xl font-sans">
+                            <div className="flex items-center justify-between text-amber-500 font-black text-[11px] uppercase tracking-wide">
+                              <span className="flex items-center gap-1.5">
+                                <AlertTriangle className="w-4 h-4 animate-bounce text-amber-500" />
+                                <span>⚠️ SOFT STOP TOUCHED — ANALYZING</span>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-mono font-black text-[10px] animate-pulse">
+                                {t.confirmation_seconds_elapsed != null ? `${t.confirmation_seconds_elapsed}s` : '0s'} / {t.confirmation_seconds_total || 10}s
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-amber-700 font-medium">
+                              Confirmation grace period in progress. Bot is evaluating noise vs thesis failure.
+                            </div>
+                            <div className="mt-1 pt-1 border-t border-amber-500/20 flex justify-between items-center text-[9px] font-mono text-amber-800">
+                              <span>Failure Score: <strong>{t.thesis_failure_score != null ? `${t.thesis_failure_score}/100` : '—'}</strong></span>
+                              <span className="truncate max-w-[170px]" title={t.last_exit_review_reason || 'Soft stop threshold breached'}>
+                                {t.last_exit_review_reason || 'Soft stop breached'}
+                              </span>
+                            </div>
+                          </div>
+                        ) : t.exit_decision_state === 'CONFIRMED_EXIT' ? (
+                          <div className="mt-2 p-2.5 bg-rose-500/10 border border-rose-500/40 rounded-xl font-sans">
+                            <div className="flex items-center justify-between text-rose-500 font-black text-[11px] uppercase tracking-wide">
+                              <span className="flex items-center gap-1.5">
+                                <AlertTriangle className="w-4 h-4 text-rose-500" />
+                                <span>🚨 THESIS FAILED — EXITING</span>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-mono font-black text-[10px]">
+                                Score: {t.thesis_failure_score != null ? `${t.thesis_failure_score}/100` : '>=60'}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-rose-700 font-medium">
+                              Persistent thesis invalidation confirmed across multi-factor evaluation.
+                            </div>
+                          </div>
+                        ) : t.exit_decision_state === 'HARD_EXIT' ? (
+                          <div className="mt-2 p-2.5 bg-rose-600/10 border border-rose-600/50 rounded-xl font-sans">
+                            <div className="flex items-center justify-between text-rose-600 font-black text-[11px] uppercase tracking-wide">
+                              <span className="flex items-center gap-1.5">
+                                <ShieldAlert className="w-4 h-4 text-rose-600" />
+                                <span>🛑 HARD SAFETY STOP — IMMEDIATE EXIT</span>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-rose-600/20 text-rose-500 font-mono font-black text-[10px]">
+                                Floor: ${fmt4(t.hard_stop_price)}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-rose-700 font-medium">
+                              Catastrophic risk floor or daily risk budget breach triggered.
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl font-sans">
+                            <div className="flex items-center justify-between text-emerald-600 font-bold text-[10px] uppercase tracking-wide">
+                              <span className="flex items-center gap-1.5">
+                                <Shield className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>✅ THESIS STILL VALID — HOLDING</span>
+                              </span>
+                              <span className="text-[9px] font-mono text-emerald-700 font-semibold">
+                                Score: {t.thesis_failure_score != null ? `${t.thesis_failure_score}/100` : '0/100'}
+                              </span>
+                            </div>
+                          </div>
+                        )}
 
-                  <div className="text-[10px] text-slate-400 font-sans pt-0.5">
-                    Thesis locked at {fmtDate(trade.prediction_locked_at || trade.entry_time)}
-                  </div>
+                        <div className="text-[10px] text-slate-400 font-sans pt-0.5">
+                          Thesis locked at {fmtDate(t.prediction_locked_at || t.entry_time)}
+                        </div>
 
-                  {/* Manual Close Trade Button */}
-                  <button
-                    onClick={handleCloseTrade}
-                    disabled={isClosing}
-                    className="mt-2.5 w-full bg-rose-600 hover:bg-rose-700 active:scale-[0.99] disabled:opacity-50 text-white font-black text-xs py-2 px-3 rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer font-sans"
-                  >
-                    {isClosing ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Closing Position...</span>
-                      </>
-                    ) : (
-                      <>
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>CLOSE TRADE NOW</span>
-                      </>
-                    )}
-                  </button>
-                  {closeError && (
-                    <p className="text-[10px] text-rose-600 font-sans text-center mt-1">
-                      {closeError}
-                    </p>
-                  )}
-                </div>
+                        {/* Manual Close Trade Button */}
+                        <button
+                          onClick={() => handleCloseTrade(t.id)}
+                          disabled={isClosing}
+                          className="mt-2.5 w-full bg-rose-600 hover:bg-rose-700 active:scale-[0.99] disabled:opacity-50 text-white font-black text-xs py-2 px-3 rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+                        >
+                          {isClosing ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>CLOSING...</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>MANUAL CLOSE</span>
+                            </>
+                          )}
+                        </button>
+                        {closeError && (
+                          <div className="text-[10px] text-rose-500 text-center font-bold font-sans mt-1">
+                            {closeError}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
-                <div className="py-3 text-center text-slate-400 text-xs font-sans">
-                  No active trade right now. Bot evaluates each 5M window for optimal entry edge.
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">CURRENT POSITION</span>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-600">
+                      AWAITING ENTRY
+                    </span>
+                  </div>
+                  <div className="text-center text-xs text-slate-500 py-4 font-medium italic">
+                    No active trades in progress.
+                  </div>
                 </div>
               )}
             </div>
