@@ -292,9 +292,8 @@ class BTC5MExitManager:
                 reason = f"Take profit target reached: ${exec_p:.4f} >= ${tp_p:.4f}"
                 return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"
 
-        # ── 2B. JESSE DYNAMIC ATR TRAILING STOP & BREAK-EVEN LOCK ───────────────
-        breakeven_trigger_dollar = float(settings.get("breakeven_trigger_dollar", 0.50))
-        atr_trailing_mult = float(settings.get("atr_trailing_multiplier", 3.0))
+        # ── 2B. HYPER SCALP (ZERO-TOLERANCE) TRAILING & LOSS CUT ───────────────
+        breakeven_trigger_dollar = float(settings.get("breakeven_trigger_dollar", 0.005)) # adha cent (0.005)
         
         # Calculate dynamic ATR (normalized for 5M prediction contracts)
         rolling_vol = float(features.get("rolling_volatility", 0.005))
@@ -303,15 +302,14 @@ class BTC5MExitManager:
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
             
-            # 1. Break-Even Lock: If unrealized profit hits $0.50 (50% of $1.00 TP), guarantee zero-loss
-            if unrealized >= breakeven_trigger_dollar:
-                breakeven_price = float(trade.entry_price) + 0.02
-                if hasattr(trade, 'hard_stop_price') and (trade.hard_stop_price is None or float(trade.hard_stop_price) < breakeven_price):
-                    trade.hard_stop_price = breakeven_price
-                if trade.stop_loss_price is None or float(trade.stop_loss_price) < breakeven_price:
-                    trade.stop_loss_price = breakeven_price
-
-            # 2. Jesse Dynamic ATR Trailing Ratchet
+            # SCALP RULE 1: Foran Loss Cut ("loss ki taraf trigger ho to foran band ho jaye")
+            # We set a micro-tolerance of -$0.10. If it dips more than 10 cents total, close it immediately.
+            micro_loss_tolerance = float(settings.get("micro_loss_tolerance", 0.10))
+            if unrealized <= -micro_loss_tolerance:
+                reason = f"HYPER SCALP CUT: Trade went into immediate loss -${abs(unrealized):.2f} (Tolerance: -${micro_loss_tolerance:.2f})"
+                return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
+            
+            # Peak Price tracking for Trailing
             peak_price = getattr(trade, "entry_target_price", None)
             if peak_price is None or exec_p > float(peak_price):
                 trade.entry_target_price = exec_p
@@ -322,10 +320,17 @@ class BTC5MExitManager:
                 except (ValueError, TypeError):
                     peak_price = exec_p
 
-            if peak_price >= (float(trade.entry_price) + market_atr):
-                trailing_sl_price = peak_price - (market_atr * atr_trailing_mult)
-                if exec_p <= trailing_sl_price and exec_p > float(trade.entry_price):
-                    reason = f"JESSE ATR TRAILING STOP triggered: Executable ${exec_p:.4f} <= Trailing SL ${trailing_sl_price:.4f} (Peak: ${peak_price:.4f}, ATR: ${market_atr:.4f})"
+            # SCALP RULE 2: Micro Trailing Profit ("adha cent bhi ho... jahan tak jaye... reverse se pehle band")
+            # If we achieved ANY profit (e.g. > $0.005) at the peak
+            peak_unrealized = (peak_price - float(trade.entry_price)) * float(trade.quantity)
+            if peak_unrealized >= breakeven_trigger_dollar:
+                # We are in profit! Use a hyper-tight trailing drop (e.g., a 2-cent drop from peak)
+                trailing_drop_allowance = 0.02 # 2 cents drop tolerance to avoid micro-noise
+                trailing_sl_price = peak_price - (trailing_drop_allowance / max(0.1, float(trade.quantity)))
+                
+                # If current price reversed and hit the tight trailing SL, and we are still above or near breakeven
+                if exec_p <= trailing_sl_price:
+                    reason = f"HYPER SCALP PROFIT LOCKED: Reversed from Peak ${peak_price:.4f} to ${exec_p:.4f} (Profit Captured)"
                     return "TP", exec_p, reason, 0.0, {}, "TRAILING_STOP"
 
         # ── 3. COMPUTE THESIS FAILURE SCORE ────────────────────────────────────
