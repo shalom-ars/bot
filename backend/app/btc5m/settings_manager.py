@@ -15,11 +15,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "account_mode": "demo",
     "slot_mode": "single_5m",
     "risk_reward_ratio": "0.0:1",
-    "min_entry_score": "85.0",         # Ultra-strict target 95% WR
-    "min_net_edge": "0.02",            # Require minimum positive EV
+    "min_entry_score": "60.0",         # Fast responsive entry when movement occurs
+    "min_net_edge": "-0.05",           # Enters immediately on directional movement
     "min_rr": "0.0",
-    "max_spread": "0.015",             # Max 1.5 cents spread
-    "min_liquidity": "50.0",           # Deep liquidity only
+    "max_spread": "0.02",              # Max 2.0 cents spread
+    "min_liquidity": "20.0",           # High execution responsiveness
     "min_time_remaining": "0.0",
     "max_time_remaining": "300.0",
     "take_profit_delta": "0.05",
@@ -28,9 +28,9 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
-    "tp_dollar": "2.00",               
-    "sl_dollar": "1.00",               
-    "hard_cap_dollar": "1.20",         
+    "tp_dollar": "1.00",               # $1.00 Profit Target
+    "sl_dollar": "10.00",              # $10.00 Loss Limit
+    "hard_cap_dollar": "10.00",        # $10.00 Hard Loss Cap
     "side_bias": "ANY",
     "only_short": "false",
     "soft_stop_confirmation_seconds": "3.0",
@@ -39,8 +39,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_entry_price": "0.01",
     "max_entry_price": "0.99",
     "min_p2b_diff": "0.0",
-    "min_entry_probability": "0.65",   # 65% minimum ML probability for extreme safety
-    "dynamic_sl_delta": "0.20",
+    "min_entry_probability": "0.50",   # 50%+ probability fires immediate entry
+    "dynamic_sl_delta": "0.90",        # Allow contract price fluctuation
     "rsi_period": "14",
     "rsi_overbought": "75.0",
     "rsi_oversold": "25.0",
@@ -51,12 +51,12 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "bb_std": "2.0",
     "atr_period": "14",
     "atr_trailing_multiplier": "3.0",
-    "breakeven_trigger_dollar": "0.02",
-    "micro_loss_tolerance": "0.035",
+    "breakeven_trigger_dollar": "0.50",
+    "micro_loss_tolerance": "10.00",    # $10 Loss Tolerance for full reversal breathing room
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.0",
-    "cooldown_seconds": "15.0",
+    "cooldown_seconds": "10.0",
     "unanimous_consensus_required": "false",
     "rsi_overbought": "100.0",
     "rsi_oversold": "0.0",
@@ -65,14 +65,14 @@ DEFAULT_SETTINGS: Dict[str, str] = {
 DEFAULT_SETTINGS_INSTANCE_2 = DEFAULT_SETTINGS.copy()
 DEFAULT_SETTINGS_INSTANCE_2.update({
     "slot_mode": "double_slot_2.5m",
-    "min_entry_score": "85.0",         # Ultra-strict target 95% WR
-    "min_entry_probability": "0.65",   # Extreme ML confidence
-    "min_liquidity": "50.0",           # Deep order book
-    "max_spread": "0.015",             # Stop slippage trap (Max 1.5 cents)
-    "min_net_edge": "0.02",            # Positive EV requirement
+    "min_entry_score": "60.0",         # Fast responsive entry when movement occurs
+    "min_entry_probability": "0.50",   # 50%+ probability fires immediate entry
+    "min_liquidity": "20.0",           # High execution responsiveness
+    "max_spread": "0.02",              # Max 2.0 cents spread
+    "min_net_edge": "-0.05",           # Enters immediately on directional movement
     "micro_loss_tolerance": "10.00",    # $10 Loss Tolerance for full reversal breathing room
     "breakeven_trigger_dollar": "0.50",
-    "cooldown_seconds": "20.0",        # Quick recovery for double slot
+    "cooldown_seconds": "10.0",        # Quick recovery for double slot
     "hard_stop_delta": "0.01",
     "tp_dollar": "1.00",               # $1.00 Win Target
     "sl_dollar": "10.00",              # $10.00 Loss Limit for market reversal
@@ -170,8 +170,22 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["micro_loss_tolerance"] = "10.00"
         loosened_sync["dynamic_sl_delta"] = "0.90"
         loosened_sync["breakeven_trigger_dollar"] = "0.50"
+        loosened_sync["min_entry_score"] = "60.0"
+        loosened_sync["min_entry_probability"] = "0.50"
+        loosened_sync["min_net_edge"] = "-0.05"
+        loosened_sync["max_spread"] = "0.02"
     else:
         loosened_sync["slot_mode"] = "single_5m"
+        loosened_sync["tp_dollar"] = "1.00"
+        loosened_sync["sl_dollar"] = "10.00"
+        loosened_sync["hard_cap_dollar"] = "10.00"
+        loosened_sync["micro_loss_tolerance"] = "10.00"
+        loosened_sync["dynamic_sl_delta"] = "0.90"
+        loosened_sync["breakeven_trigger_dollar"] = "0.50"
+        loosened_sync["min_entry_score"] = "60.0"
+        loosened_sync["min_entry_probability"] = "0.50"
+        loosened_sync["min_net_edge"] = "-0.05"
+        loosened_sync["max_spread"] = "0.02"
         
     for k, v in defaults.items():
         db_key = f"{prefix}{k}"

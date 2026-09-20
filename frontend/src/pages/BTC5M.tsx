@@ -2210,8 +2210,8 @@ function InnerBTC5M() {
               <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
               <span className="font-bold text-slate-700">
                 {targetSettings?.slot_mode === 'double_slot_2.5m' 
-                  ? `$${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / $${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} SL (Reversal Mode)` 
-                  : `Fixed $${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '2.00'} TP / $${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '1.00'} SL`}
+                  ? `$${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / $${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} SL (Order Flow Scalp)` 
+                  : `$${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / $${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} SL (Macro Trend)`}
               </span>
             </div>
             <div className="flex justify-between items-center">

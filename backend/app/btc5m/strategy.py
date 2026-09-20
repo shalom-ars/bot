@@ -264,76 +264,72 @@ class BTC5MStrategy:
         breakdown = {}
         total = 0.0
         
-        # 1. BTC Price vs P2B (10 points) - Reduced for Scalping
+        is_bot_2 = (self.instance_id == "instance_2")
+        
         diff = btc_price - p2b if btc_price and p2b else 0.0
         tau = max(15.0, min(300.0, float(time_remaining_sec)))
         sigma_tau = 30.0 * math.sqrt(tau / 300.0)
         z = diff / (sigma_tau + 1e-9) if diff != 0.0 else 0.0
-        
-        if is_yes:
-            score_p2b = min(10.0, max(0.0, 5.0 + (z * 2.5)))
-        else:
-            score_p2b = min(10.0, max(0.0, 5.0 - (z * 2.5)))
-        breakdown["BTC vs P2B"] = round(score_p2b, 1)
-        total += score_p2b
-        
-        # 2. Real-Time Momentum & MACD Crossovers (35 points) - Prioritized for Micro-bursts
+
         btc_mom = features.get("btc_momentum_1m", None)
         clob_mom = features.get("short_momentum_1m", 0.0)
         macd_h = float(features.get("macd_hist", 0.0))
-        
-        # MACD histogram crossing 0 is a strong shift
         macd_bonus = max(-10.0, min(10.0, macd_h * 50.0))
-        
+
         if btc_mom is not None:
             mom_composite = (btc_mom * 5000.0 * 0.70) + (clob_mom * 500.0 * 0.30) + macd_bonus
         else:
             mom_composite = (clob_mom * 800.0) + macd_bonus
-            
-        if is_yes:
-            score_mom = min(35.0, max(0.0, 17.5 + mom_composite))
-        else:
-            score_mom = min(35.0, max(0.0, 17.5 - mom_composite))
-        breakdown["Real-Time Momentum"] = round(score_mom, 1)
-        total += score_mom
 
-        # 3. RSI Directional Shifts (25 points) - Prioritized for early reversal detection
         rsi = float(features.get("rsi_14", 50.0))
-        # An RSI of 50 is neutral. RSI > 50 implies bullish momentum, < 50 implies bearish.
-        # We scale RSI from 30-70 into a strong signal.
-        rsi_shift = (rsi - 50.0) / 20.0 # -1.0 to 1.0 roughly
-        
-        if is_yes:
-            score_rsi = min(25.0, max(0.0, 12.5 + (rsi_shift * 12.5)))
-        else:
-            score_rsi = min(25.0, max(0.0, 12.5 - (rsi_shift * 12.5)))
-        breakdown["RSI Shift"] = round(score_rsi, 1)
-        total += score_rsi
-        
-        # 4. CLOB Order Book / Imbalance (10 points)
+        rsi_shift = (rsi - 50.0) / 20.0
         imb = features.get("bid_ask_imbalance", 0.0)
-        if is_yes:
-            score_ob = min(10.0, max(0.0, 5.0 + (imb * 10.0)))
-        else:
-            score_ob = min(10.0, max(0.0, 5.0 - (imb * 10.0)))
-        breakdown["Order Book"] = round(score_ob, 1)
-        total += score_ob
-        
-        # 5. Probability Movement (10 points)
         ret1 = features.get("return_1", 0.0)
-        if is_yes:
-            score_prob = min(10.0, max(0.0, 5.0 + (ret1 * 100.0)))
-        else:
-            score_prob = min(10.0, max(0.0, 5.0 - (ret1 * 100.0)))
-        breakdown["Prob Movement"] = round(score_prob, 1)
-        total += score_prob
-        
-        # 6. Volatility & Spread Penalty (10 points)
         vol = features.get("rolling_volatility", 0.0)
         spread = features.get("spread", 1.0)
-        score_exec = min(10.0, max(0.0, 10.0 - (vol * 50.0) - (spread * 100.0)))
-        breakdown["Execution Quality"] = round(score_exec, 1)
-        total += score_exec
+
+        if not is_bot_2:
+            # ── BOT 1: MACRO TREND & STRIKE LEAD SPECIALIST (5M CANDLE) ──
+            # Focuses on overarching directional movement and Oracle strike clearance
+            if is_yes:
+                score_p2b = min(30.0, max(0.0, 15.0 + (z * 7.5)))
+                score_mom = min(30.0, max(0.0, 15.0 + (mom_composite * 0.9)))
+                score_rsi = min(20.0, max(0.0, 10.0 + (rsi_shift * 10.0)))
+                score_ob = min(10.0, max(0.0, 5.0 + (imb * 10.0)))
+            else:
+                score_p2b = min(30.0, max(0.0, 15.0 - (z * 7.5)))
+                score_mom = min(30.0, max(0.0, 15.0 - (mom_composite * 0.9)))
+                score_rsi = min(20.0, max(0.0, 10.0 - (rsi_shift * 10.0)))
+                score_ob = min(10.0, max(0.0, 5.0 - (imb * 10.0)))
+
+            score_exec = min(10.0, max(0.0, 10.0 - (vol * 50.0) - (spread * 100.0)))
+            breakdown["BTC vs Strike (Macro)"] = round(score_p2b, 1)
+            breakdown["Trend Momentum"] = round(score_mom, 1)
+            breakdown["RSI Confirmation"] = round(score_rsi, 1)
+            breakdown["Order Book"] = round(score_ob, 1)
+            breakdown["Execution Quality"] = round(score_exec, 1)
+            total = score_p2b + score_mom + score_rsi + score_ob + score_exec
+        else:
+            # ── BOT 2: ORDER FLOW SCALP & RAPID VELOCITY SPECIALIST (2.5M SLOTS) ──
+            # Focuses on instant order book depth imbalance, fast price bursts, and quick pullbacks
+            if is_yes:
+                score_ob = min(35.0, max(0.0, 17.5 + (imb * 35.0)))
+                score_mom = min(35.0, max(0.0, 17.5 + (mom_composite * 1.2)))
+                score_rsi = min(15.0, max(0.0, 7.5 + (rsi_shift * 7.5)))
+                score_p2b = min(5.0, max(0.0, 2.5 + (z * 1.5)))
+            else:
+                score_ob = min(35.0, max(0.0, 17.5 - (imb * 35.0)))
+                score_mom = min(35.0, max(0.0, 17.5 - (mom_composite * 1.2)))
+                score_rsi = min(15.0, max(0.0, 7.5 - (rsi_shift * 7.5)))
+                score_p2b = min(5.0, max(0.0, 2.5 - (z * 1.5)))
+
+            score_exec = min(10.0, max(0.0, 10.0 - (vol * 40.0) - (spread * 80.0)))
+            breakdown["Order Flow Imbalance"] = round(score_ob, 1)
+            breakdown["Rapid Velocity"] = round(score_mom, 1)
+            breakdown["Micro RSI"] = round(score_rsi, 1)
+            breakdown["Strike Lead"] = round(score_p2b, 1)
+            breakdown["Execution Quality"] = round(score_exec, 1)
+            total = score_ob + score_mom + score_rsi + score_p2b + score_exec
         
         # Net Edge and R:R are added externally based on actual math
         return total, breakdown
