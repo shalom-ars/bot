@@ -292,11 +292,12 @@ class BTC5MExitManager:
                 reason = f"Take profit target reached: +${unrealized:.2f} >= +${target_gain:.2f}"
                 return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"
 
-            # ── 2A. INSTANT CENT-LEVEL PROFIT HARVESTER ───────────────────────
-            # User Rule: Stop Loss is $10.00, but the very moment the market turns
-            # green / positive in cents (even +$0.02 profit above entry), collect immediately!
-            min_harvest = float(settings.get("instant_profit_harvest_dollar", 0.02))
-            if unrealized >= min_harvest and exec_p > float(trade.entry_price):
+            # ── 2A. INSTANT CENT-LEVEL PROFIT HARVESTER (OPTIONAL / TOGGLEABLE) ──
+            enable_harvest = settings.get("enable_instant_harvest", False)
+            if isinstance(enable_harvest, str):
+                enable_harvest = enable_harvest.lower() in ("true", "1", "yes")
+            min_harvest = float(settings.get("instant_profit_harvest_dollar", 0.0))
+            if enable_harvest and min_harvest > 0.0 and unrealized >= min_harvest and exec_p > float(trade.entry_price):
                 reason = f"INSTANT CENT PROFIT HARVEST: Market turned green +${unrealized:.2f} >= +${min_harvest:.2f} (Profit Collected)"
                 return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"
 

@@ -286,6 +286,8 @@ class UpdateSettingsRequest(BaseModel):
     macd_signal: Optional[int] = None
     bb_period: Optional[int] = None
     bb_std: Optional[float] = None
+    enable_instant_harvest: Optional[bool] = None
+    instant_profit_harvest_dollar: Optional[float] = None
 
 @router.get("/instances")
 def get_btc5m_instances():
