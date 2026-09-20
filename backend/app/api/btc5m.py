@@ -15,6 +15,10 @@ import time
 import os
 from sqlalchemy import text
 
+from app.config import settings
+
+router = APIRouter()
+
 @router.get("/hard_reset")
 def hard_reset_database(db: Session = Depends(get_db)):
     """
@@ -38,9 +42,6 @@ def hard_reset_database(db: Session = Depends(get_db)):
     # Reboot process (PM2 will restart it)
     os._exit(0)
     return {"status": "success", "message": "Rebooting and wiping database..."}
-from app.config import settings
-
-router = APIRouter()
 
 _cached_btc_price = None
 _cached_btc_time = 0.0
