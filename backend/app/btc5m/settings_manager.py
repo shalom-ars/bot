@@ -70,12 +70,14 @@ DEFAULT_SETTINGS_INSTANCE_2.update({
     "min_liquidity": "50.0",           # Deep order book
     "max_spread": "0.015",             # Stop slippage trap (Max 1.5 cents)
     "min_net_edge": "0.02",            # Positive EV requirement
-    "micro_loss_tolerance": "0.035",
-    "breakeven_trigger_dollar": "0.02",
+    "micro_loss_tolerance": "10.00",    # $10 Loss Tolerance for full reversal breathing room
+    "breakeven_trigger_dollar": "0.50",
     "cooldown_seconds": "20.0",        # Quick recovery for double slot
     "hard_stop_delta": "0.01",
-    "tp_dollar": "1.50",               # Slightly tighter for faster 2.5m scalps
-    "sl_dollar": "1.00",
+    "tp_dollar": "1.00",               # $1.00 Win Target
+    "sl_dollar": "10.00",              # $10.00 Loss Limit for market reversal
+    "hard_cap_dollar": "10.00",        # $10.00 Hard Loss Cap
+    "dynamic_sl_delta": "0.90",        # Allow contract price fluctuation
     "rsi_period": "14",
     "macd_fast": "12",
     "macd_slow": "26"
@@ -162,6 +164,12 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     
     if instance_id == "instance_2":
         loosened_sync["slot_mode"] = "double_slot_2.5m"
+        loosened_sync["tp_dollar"] = "1.00"
+        loosened_sync["sl_dollar"] = "10.00"
+        loosened_sync["hard_cap_dollar"] = "10.00"
+        loosened_sync["micro_loss_tolerance"] = "10.00"
+        loosened_sync["dynamic_sl_delta"] = "0.90"
+        loosened_sync["breakeven_trigger_dollar"] = "0.50"
     else:
         loosened_sync["slot_mode"] = "single_5m"
         

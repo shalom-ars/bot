@@ -259,22 +259,24 @@ class BTC5MExitManager:
             reason = "HARD SAFETY STOP: RiskManager circuit breaker active (trading paused)"
             return "HARD_EXIT", current_executable_price or trade.stop_loss_price, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # C. Explicit Hard Safety Stop Loss (-$0.60 to -$0.90 per trade strictly enforced)
+        # C. Explicit Hard Safety Stop Loss (Configurable per instance, supports up to $10.00+)
         sl_limit = float(settings.get("sl_dollar", 0.90))
-        max_loss_cap = min(sl_limit, 0.90)
+        hard_cap_setting = float(settings.get("hard_cap_dollar", sl_limit))
+        max_loss_cap = max(sl_limit, hard_cap_setting)
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
             if unrealized <= -max_loss_cap:
                 reason = f"HARD SAFETY STOP breached: Maximum loss cap -${abs(unrealized):.2f} <= -${max_loss_cap:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-            max_allowed_loss = (float(trade.planned_risk) if trade.planned_risk else (float(trade.position_size) if trade.position_size else 0.90)) * 1.1
+            planned_r = float(trade.planned_risk) if trade.planned_risk else (float(trade.position_size) if trade.position_size else sl_limit)
+            max_allowed_loss = max(planned_r, sl_limit) * 1.15
             if unrealized <= -max_allowed_loss:
                 reason = f"HARD SAFETY STOP: Unrealized loss -${abs(unrealized):.2f} exceeded max trade boundary -${max_allowed_loss:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # ── 2. TAKE PROFIT TARGET ($1.50 Win Target for 1.6:1 R:R) ─────────────
-        tp_target = float(settings.get("tp_dollar", 1.50))
+        # ── 2. TAKE PROFIT TARGET ─────────────────────────────────────────────
+        tp_target = float(settings.get("tp_dollar", 1.00))
         try:
             tp_p = float(trade.take_profit_price) if trade.take_profit_price is not None else None
         except (ValueError, TypeError):
@@ -292,8 +294,8 @@ class BTC5MExitManager:
                 reason = f"Take profit target reached: ${exec_p:.4f} >= ${tp_p:.4f}"
                 return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"
 
-        # ── 2B. HYPER SCALP (ZERO-TOLERANCE) TRAILING & LOSS CUT ───────────────
-        breakeven_trigger_dollar = float(settings.get("breakeven_trigger_dollar", 0.005)) # adha cent (0.005)
+        # ── 2B. HYPER SCALP TRAILING & LOSS CUT ────────────────────────────────
+        breakeven_trigger_dollar = float(settings.get("breakeven_trigger_dollar", 0.02))
         
         # Calculate dynamic ATR (normalized for 5M prediction contracts)
         rolling_vol = float(features.get("rolling_volatility", 0.005))
@@ -302,10 +304,10 @@ class BTC5MExitManager:
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
             
-            # SCALP RULE 1: Foran Loss Cut ("loss ki taraf trigger ho to foran band ho jaye")
-            # We set a micro-tolerance of -$0.10. If it dips more than 10 cents total, close it immediately.
-            micro_loss_tolerance = float(settings.get("micro_loss_tolerance", 0.10))
-            if unrealized <= -micro_loss_tolerance:
+            # SCALP RULE 1: Micro-Loss Cut (Only active if explicitly set below full SL limit)
+            micro_loss_tolerance = float(settings.get("micro_loss_tolerance", sl_limit))
+            # If sl_limit is >= 5.0 (e.g. $10 SL mode to give room for reversal), do not cut prematurely on cents
+            if sl_limit < 5.0 and micro_loss_tolerance < sl_limit and unrealized <= -micro_loss_tolerance:
                 reason = f"HYPER SCALP CUT: Trade went into immediate loss -${abs(unrealized):.2f} (Tolerance: -${micro_loss_tolerance:.2f})"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
             
@@ -320,28 +322,27 @@ class BTC5MExitManager:
                 except (ValueError, TypeError):
                     peak_price = exec_p
 
-            # SCALP RULE 2: Micro Trailing Profit ("adha cent bhi ho... jahan tak jaye... reverse se pehle band")
-            # If we achieved ANY profit (e.g. > $0.005) at the peak
+            # SCALP RULE 2: Trailing Profit
             peak_unrealized = (peak_price - float(trade.entry_price)) * float(trade.quantity)
             if peak_unrealized >= breakeven_trigger_dollar:
-                # We are in profit! Use a hyper-tight trailing drop (0.5 cents drop tolerance to lock profit immediately on reversal)
-                trailing_drop_allowance = 0.005 
+                trailing_drop_allowance = 0.01 if sl_limit >= 5.0 else 0.005
                 trailing_sl_price = peak_price - (trailing_drop_allowance / max(0.1, float(trade.quantity)))
                 
-                # If current price reversed and hit the tight trailing SL, and we are still above or near breakeven
+                # If current price reversed and hit the trailing SL
                 if exec_p <= trailing_sl_price:
-                    reason = f"HYPER SCALP PROFIT LOCKED: Reversed from Peak ${peak_price:.4f} to ${exec_p:.4f} (Profit Captured)"
+                    reason = f"PROFIT LOCKED: Reversed from Peak ${peak_price:.4f} to ${exec_p:.4f} (Profit Captured)"
                     return "TP", exec_p, reason, 0.0, {}, "TRAILING_STOP"
                     
-            # SCALP RULE 3: Hard 2.5 Minute Limit
-            # Ensure trades do not live beyond their 150-second (2.5m) designated slot limit.
+            # SCALP RULE 3: Adaptive Time Stop
+            # For wide-reversal strategies ($10 SL), give full room (up to 280s / end of candle).
+            max_hold_seconds = 280.0 if sl_limit >= 5.0 else 145.0
             if trade.entry_time is not None:
                 trade_entry_dt = trade.entry_time
                 if trade_entry_dt.tzinfo is None:
                     trade_entry_dt = trade_entry_dt.replace(tzinfo=timezone.utc)
                 elapsed_seconds = (now - trade_entry_dt).total_seconds()
-                if elapsed_seconds > 145.0:  # 2.5 minutes = 150s. Exit slightly before to ensure fill.
-                    reason = f"HYPER SCALP TIME STOP: Trade exceeded 2.5m slot limit ({elapsed_seconds:.0f}s elapsed)"
+                if elapsed_seconds > max_hold_seconds or t_rem < 15.0:
+                    reason = f"TIME STOP: Window expiry ({elapsed_seconds:.0f}s elapsed, {t_rem:.0f}s left in candle)"
                     return "HARD_EXIT", exec_p, reason, 100.0, {}, "TIME_STOP_TRIGGERED"
 
         # ── 3. COMPUTE THESIS FAILURE SCORE ────────────────────────────────────
