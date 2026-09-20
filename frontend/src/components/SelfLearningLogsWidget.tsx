@@ -27,12 +27,28 @@ export default function SelfLearningLogsWidget() {
             <p className="text-xs text-slate-500 font-medium">Gemini 3.1 Pro continuous strategy optimizer</p>
           </div>
         </div>
-        <button 
-          onClick={() => setRefresh(r => r + 1)}
-          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-transparent hover:border-indigo-100"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={async () => {
+              try {
+                const client = (await import('../api/client')).default;
+                await client.post('/btc5m/optimize-now');
+                setRefresh(r => r + 1);
+              } catch (e) {
+                console.error(e);
+              }
+            }}
+            className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm"
+          >
+            Run Sweep
+          </button>
+          <button 
+            onClick={() => setRefresh(r => r + 1)}
+            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-transparent hover:border-indigo-100"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3">
