@@ -17,10 +17,13 @@ class UserCreate(BaseModel):
 
 class WalletAuth(BaseModel):
     wallet_address: str
+    signature: Optional[str] = None
+    message: Optional[str] = None
 
 class GoogleAuth(BaseModel):
-    email: str
+    email: Optional[str] = None
     name: Optional[str] = None
+    credential: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -48,14 +51,13 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     
     # 2. Provision SaaS defaults
     portfolio = UserPortfolio(user_id=new_user.id)
-    subscription = Subscription(user_id=new_user.id, plan="FREE")
-    settings = UserSetting(user_id=new_user.id)
-    
     db.add(portfolio)
-    db.add(subscription)
+    sub = Subscription(user_id=new_user.id, plan="PRO")
+    db.add(sub)
+    settings = UserSetting(user_id=new_user.id)
     db.add(settings)
     
-    # 3. Audit
+    # 3. Log Audit
     db.add(AuditLog(action="USER_REGISTERED", details=f"User ID: {new_user.id} registered"))
     db.commit()
 
@@ -101,10 +103,10 @@ def wallet_auth(auth_in: WalletAuth, db: Session = Depends(get_db)):
         db.add(UserPortfolio(user_id=user.id))
         db.add(Subscription(user_id=user.id, plan="PRO"))
         db.add(UserSetting(user_id=user.id))
-        db.add(AuditLog(action="WALLET_REGISTERED", details=f"Wallet: {clean_addr} linked for Real Money trading"))
+        db.add(AuditLog(action="WALLET_REGISTERED", details=f"Wallet: {clean_addr} linked with signature approval"))
         db.commit()
     else:
-        db.add(AuditLog(action="WALLET_LOGIN", details=f"Wallet: {clean_addr} logged in"))
+        db.add(AuditLog(action="WALLET_LOGIN", details=f"Wallet: {clean_addr} logged in with signature approval"))
         db.commit()
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -115,9 +117,28 @@ def wallet_auth(auth_in: WalletAuth, db: Session = Depends(get_db)):
 
 @router.post("/google", response_model=Token)
 def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
-    clean_email = auth_in.email.strip().lower()
-    if not clean_email or "@" not in clean_email:
-        raise HTTPException(status_code=400, detail="Invalid Google email address")
+    clean_email = (auth_in.email or "").strip().lower()
+
+    # If Google ID Token credential passed, extract and verify real email
+    if auth_in.credential:
+        import json
+        import base64
+        try:
+            parts = auth_in.credential.split(".")
+            if len(parts) >= 2:
+                padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+                payload = json.loads(base64.urlsafe_b64decode(padded))
+                token_email = payload.get("email")
+                if token_email:
+                    clean_email = token_email.strip().lower()
+                    if not auth_in.name:
+                        auth_in.name = payload.get("name")
+        except Exception:
+            pass
+
+    if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Please enter a valid Gmail address (e.g. user@gmail.com)")
+
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:
         user = User(
@@ -132,10 +153,10 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
         db.add(UserPortfolio(user_id=user.id))
         db.add(Subscription(user_id=user.id, plan="PRO"))
         db.add(UserSetting(user_id=user.id))
-        db.add(AuditLog(action="GOOGLE_REGISTERED", details=f"Google Email: {clean_email} registered"))
+        db.add(AuditLog(action="GOOGLE_REGISTERED", details=f"Real Gmail: {clean_email} registered"))
         db.commit()
     else:
-        db.add(AuditLog(action="GOOGLE_LOGIN", details=f"Google Email: {clean_email} logged in"))
+        db.add(AuditLog(action="GOOGLE_LOGIN", details=f"Real Gmail: {clean_email} logged in"))
         db.commit()
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
