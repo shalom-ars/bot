@@ -821,7 +821,17 @@ class BTC5MStrategy:
                 skip_flags.append(f"SKIP - AI Hedge Fund Committee Dissent: [{', '.join(dissenting_agents)}] rejected trade")
             
         state = "SKIP" if skip_flags else "READY"
-        reason = skip_flags[0] if skip_flags else f"Prediction: {best_side} (Score: {max(yes_score, no_score):.1f})"
+        
+        # Calculate EV Grade (Prediction Pilot Style Data-Driven Analysis)
+        target_edge = yes_edge if best_side == "YES" else no_edge
+        trade_grade = "F"
+        if target_edge > 0.08: trade_grade = "A+"
+        elif target_edge > 0.04: trade_grade = "A"
+        elif target_edge > 0.01: trade_grade = "B"
+        elif target_edge > -0.02: trade_grade = "C"
+        elif target_edge > -0.05: trade_grade = "D"
+        
+        reason = skip_flags[0] if skip_flags else f"[Grade {trade_grade}] EV: {target_edge*100:+.1f}% | Prediction: {best_side} (Score: {max(yes_score, no_score):.1f})"
         
         # Override side properly
         final_side = "BUY" if best_side == "YES" else ("SELL" if best_side == "NO" else "NONE")

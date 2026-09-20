@@ -245,8 +245,19 @@ class RiskManager:
                 decision["reason"] = "REJECTED_DUPLICATE_POSITION"
                 return decision
                 
-            # Check total exposure limit
+            # Turbine.fi Style Granular Risk Controls: Liquidity Gating
             requested_size = decision["requested_size"]
+            ask_depth = market_info.get("ask_depth", 0.0)
+            bid_depth = market_info.get("bid_depth", 0.0)
+            target_depth = ask_depth if signal_data.get("side", "BUY") == "BUY" else bid_depth
+            
+            # Require at least 2x the requested size in depth to prevent slippage traps
+            min_depth_required = requested_size * 2.0
+            if target_depth > 0 and target_depth < min_depth_required:
+                decision["reason"] = f"TURBINE_LIQUIDITY_GATE_FAILED: Depth (${target_depth:.2f}) insufficient for size (${requested_size:.2f})"
+                return decision
+
+            # Check total exposure limit
             max_allowed_total = self.starting_balance * self.max_total_exposure
             if (self.current_exposure + requested_size) > max_allowed_total:
                 decision["reason"] = "REJECTED_TOTAL_EXPOSURE"
