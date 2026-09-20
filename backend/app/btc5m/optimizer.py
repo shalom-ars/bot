@@ -413,7 +413,8 @@ class BTC5MSelfLearningOptimizer:
         adjustments = {}
         reason_parts = []
 
-        # USER INSTRUCTION DIRECTIVE: 100% Fill Rate + Hyper Scalp Risk Mitigation
+        # USER INSTRUCTION DIRECTIVE: Double-Slot System + Hyper Scalp
+        adjustments["slot_mode"] = "double_slot_2.5m"
         adjustments["min_entry_score"] = "0.0"
         adjustments["min_net_edge"] = "-100.0"
         adjustments["min_rr"] = "0.0"
@@ -422,10 +423,9 @@ class BTC5MSelfLearningOptimizer:
         adjustments["breakeven_trigger_dollar"] = "0.005"
         
         reason_parts.append(
-            "Configured adaptive strategy optimizer to execute a trade exactly every 5-minute interval. "
-            "Enforced early trigger exits for any realized loss in cents. "
-            "Locked in take-profit targets immediately before price reversal. "
-            "Maintained position size allocations while prioritizing strict risk mitigation for each new cycle."
+            "Reconfigured the bot to operate two independent slots within every 5-minute interval. "
+            "Triggered immediate exits on any cent-level loss and initiated profit protection right before expected trend reversals. "
+            "This will increase trade frequency and protect capital."
         )
 
         reason = " ".join(reason_parts)
