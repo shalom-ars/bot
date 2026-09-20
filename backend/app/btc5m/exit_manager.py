@@ -324,14 +324,25 @@ class BTC5MExitManager:
             # If we achieved ANY profit (e.g. > $0.005) at the peak
             peak_unrealized = (peak_price - float(trade.entry_price)) * float(trade.quantity)
             if peak_unrealized >= breakeven_trigger_dollar:
-                # We are in profit! Use a hyper-tight trailing drop (e.g., a 2-cent drop from peak)
-                trailing_drop_allowance = 0.02 # 2 cents drop tolerance to avoid micro-noise
+                # We are in profit! Use a hyper-tight trailing drop (0.5 cents drop tolerance to lock profit immediately on reversal)
+                trailing_drop_allowance = 0.005 
                 trailing_sl_price = peak_price - (trailing_drop_allowance / max(0.1, float(trade.quantity)))
                 
                 # If current price reversed and hit the tight trailing SL, and we are still above or near breakeven
                 if exec_p <= trailing_sl_price:
                     reason = f"HYPER SCALP PROFIT LOCKED: Reversed from Peak ${peak_price:.4f} to ${exec_p:.4f} (Profit Captured)"
                     return "TP", exec_p, reason, 0.0, {}, "TRAILING_STOP"
+                    
+            # SCALP RULE 3: Hard 2.5 Minute Limit
+            # Ensure trades do not live beyond their 150-second (2.5m) designated slot limit.
+            if trade.entry_time is not None:
+                trade_entry_dt = trade.entry_time
+                if trade_entry_dt.tzinfo is None:
+                    trade_entry_dt = trade_entry_dt.replace(tzinfo=timezone.utc)
+                elapsed_seconds = (now - trade_entry_dt).total_seconds()
+                if elapsed_seconds > 145.0:  # 2.5 minutes = 150s. Exit slightly before to ensure fill.
+                    reason = f"HYPER SCALP TIME STOP: Trade exceeded 2.5m slot limit ({elapsed_seconds:.0f}s elapsed)"
+                    return "HARD_EXIT", exec_p, reason, 100.0, {}, "TIME_STOP_TRIGGERED"
 
         # ── 3. COMPUTE THESIS FAILURE SCORE ────────────────────────────────────
         thesis_score, breakdown, primary_reason = calculate_thesis_failure_score(

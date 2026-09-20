@@ -52,7 +52,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "atr_period": "14",
     "atr_trailing_multiplier": "3.0",
     "breakeven_trigger_dollar": "0.005",
-    "micro_loss_tolerance": "0.10",
+    "micro_loss_tolerance": "0.005",
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.0",
@@ -167,6 +167,13 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     
     if instance_id == "instance_2":
         loosened_sync["slot_mode"] = "double_slot_2.5m"
+        loosened_sync["micro_loss_tolerance"] = "0.005"
+        loosened_sync["breakeven_trigger_dollar"] = "0.005"
+        loosened_sync["hard_stop_delta"] = "0.005"
+        loosened_sync["min_entry_score"] = "0.0"
+        loosened_sync["cooldown_seconds"] = "0.0"
+        loosened_sync["min_liquidity"] = "0.0"
+        loosened_sync["max_spread"] = "1.0"
     else:
         loosened_sync["slot_mode"] = "single_5m"
 
