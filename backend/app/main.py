@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Wipe logic
+    try:
+        from app.db.wipe_handler import check_and_wipe_db
+        check_and_wipe_db()
+    except Exception as e:
+        logger.error(f"Wipe handler error: {e}")
+
     # Setup
     Base.metadata.create_all(bind=engine)
     ensure_btc5m_schema(engine)

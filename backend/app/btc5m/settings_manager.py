@@ -15,11 +15,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "account_mode": "demo",
     "slot_mode": "single_5m",
     "risk_reward_ratio": "0.0:1",
-    "min_entry_score": "75.0",         # Optimal strategy alignment
-    "min_net_edge": "-100.0",
+    "min_entry_score": "85.0",         # Ultra-strict target 95% WR
+    "min_net_edge": "0.02",            # Require minimum positive EV
     "min_rr": "0.0",
-    "max_spread": "0.02",              # Optimal strategy alignment
-    "min_liquidity": "30.0",           # Optimal strategy alignment
+    "max_spread": "0.015",             # Max 1.5 cents spread
+    "min_liquidity": "50.0",           # Deep liquidity only
     "min_time_remaining": "0.0",
     "max_time_remaining": "300.0",
     "take_profit_delta": "0.05",
@@ -28,8 +28,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
-    "tp_dollar": "2.00",               # Updated from 1.50
-    "sl_dollar": "1.00",               # Updated from 0.90
+    "tp_dollar": "2.00",               
+    "sl_dollar": "1.00",               
     "hard_cap_dollar": "1.20",         
     "side_bias": "ANY",
     "only_short": "false",
@@ -39,11 +39,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_entry_price": "0.01",
     "max_entry_price": "0.99",
     "min_p2b_diff": "0.0",
-    "min_entry_probability": "0.58",   # Optimal strategy alignment
+    "min_entry_probability": "0.65",   # 65% minimum ML probability for extreme safety
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
-    "rsi_overbought": "70.0",
-    "rsi_oversold": "30.0",
+    "rsi_overbought": "75.0",
+    "rsi_oversold": "25.0",
     "macd_fast": "12",
     "macd_slow": "26",
     "macd_signal": "9",
@@ -51,8 +51,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "bb_std": "2.0",
     "atr_period": "14",
     "atr_trailing_multiplier": "3.0",
-    "breakeven_trigger_dollar": "0.02",   # Optimal trailing lock
-    "micro_loss_tolerance": "0.035",      # Survive spread
+    "breakeven_trigger_dollar": "0.02",
+    "micro_loss_tolerance": "0.035",
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.0",
@@ -65,14 +65,17 @@ DEFAULT_SETTINGS: Dict[str, str] = {
 DEFAULT_SETTINGS_INSTANCE_2 = DEFAULT_SETTINGS.copy()
 DEFAULT_SETTINGS_INSTANCE_2.update({
     "slot_mode": "double_slot_2.5m",
-    "min_entry_score": "75.0",
-    "min_entry_probability": "0.58",
-    "min_liquidity": "30.0",
-    "max_spread": "0.02",
+    "min_entry_score": "85.0",         # Ultra-strict target 95% WR
+    "min_entry_probability": "0.65",   # Extreme ML confidence
+    "min_liquidity": "50.0",           # Deep order book
+    "max_spread": "0.015",             # Stop slippage trap (Max 1.5 cents)
+    "min_net_edge": "0.02",            # Positive EV requirement
     "micro_loss_tolerance": "0.035",
     "breakeven_trigger_dollar": "0.02",
-    "cooldown_seconds": "15.0",
+    "cooldown_seconds": "20.0",        # Quick recovery for double slot
     "hard_stop_delta": "0.01",
+    "tp_dollar": "1.50",               # Slightly tighter for faster 2.5m scalps
+    "sl_dollar": "1.00",
     "rsi_period": "14",
     "macd_fast": "12",
     "macd_slow": "26"
