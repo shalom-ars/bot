@@ -4,7 +4,7 @@ import { useApi } from '../hooks/useApi';
 
 export default function SelfLearningLogsWidget() {
   const [refresh, setRefresh] = useState(0);
-  const { data, loading, error } = useApi<any>(`/btc5m/learning-summary?limit=5&instance_id=instance_1&_t=${refresh}`, null);
+  const { data, loading, error } = useApi<any>(`/btc5m/self-learning-logs?limit=5&instance_id=instance_1&_t=${refresh}`, null);
 
   if (loading) {
     return <div className="p-4 text-center text-slate-500 animate-pulse">Loading AI logs...</div>;
