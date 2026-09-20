@@ -11,10 +11,83 @@ from typing import Dict, Any, Optional, Tuple, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
+import os
 from app.db.models import BTC5MTrade, BTC5MSelfLearningLog
 from app.btc5m.settings_manager import get_btc5m_settings, update_btc5m_settings
 
 logger = logging.getLogger(__name__)
+
+OPTIMIZER_LOG_FILE = os.environ.get(
+    "OPTIMIZER_LOG_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "self_learning_optimizer.log")
+)
+
+
+def append_optimizer_log_entry(
+    event_type: str,
+    instance_id: str,
+    trade_id: Optional[int],
+    outcome: str,
+    root_cause: str,
+    error_analysis: str,
+    param_adjusted: str,
+    old_value: str,
+    new_value: str,
+    adaptation_delta: str,
+    pnl: Optional[float] = None
+) -> None:
+    """Appends an immutable audit entry to the physical self_learning_optimizer.log file on disk."""
+    try:
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        pnl_str = f" | PnL: ${pnl:+.2f}" if pnl is not None else ""
+        trade_str = f"Trade #{trade_id}" if trade_id is not None else "Periodic Sweep"
+        
+        # Initialize file with header if missing
+        if not os.path.exists(OPTIMIZER_LOG_FILE):
+            os.makedirs(os.path.dirname(OPTIMIZER_LOG_FILE), exist_ok=True)
+            with open(OPTIMIZER_LOG_FILE, "w", encoding="utf-8") as f:
+                f.write(
+                    "================================================================================\n"
+                    "JONANDA BTC 5M AUTONOMOUS SELF-LEARNING OPTIMIZER LOG FILE\n"
+                    f"Initialized: {now_str} | Module: BTC 5M Multi-Factor Engine\n"
+                    "Tracks persistent post-mortem error analyses, filter tuning, and optimization sweeps.\n"
+                    "================================================================================\n\n"
+                )
+
+        entry = (
+            f"--------------------------------------------------------------------------------\n"
+            f"[{now_str}] [{event_type.upper()}] Instance: {instance_id} | {trade_str}{pnl_str}\n"
+            f"Outcome: {outcome} | Root Cause: {root_cause}\n"
+            f"Diagnostic Analysis: {error_analysis}\n"
+            f"Parameter Tuned: {param_adjusted}\n"
+            f"Value Transition: {old_value} -> {new_value} (Delta: {adaptation_delta})\n"
+            f"Status: APPLIED & COMMITTED TO RUNTIME ENGINE\n"
+            f"--------------------------------------------------------------------------------\n\n"
+        )
+        with open(OPTIMIZER_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception as e:
+        logger.warning(f"[Self-Learning Optimizer] Failed to write to disk log {OPTIMIZER_LOG_FILE}: {e}")
+
+
+def read_optimizer_log_file(max_lines: int = 500) -> str:
+    """Reads the tail of self_learning_optimizer.log file."""
+    if not os.path.exists(OPTIMIZER_LOG_FILE):
+        return (
+            "================================================================================\n"
+            "JONANDA BTC 5M AUTONOMOUS SELF-LEARNING OPTIMIZER LOG FILE\n"
+            "Status: STANDBY / ACTIVE LISTENING\n"
+            "No log events recorded yet. The engine logs every lost-trade post-mortem diagnosis\n"
+            "and continuous optimization sweep automatically to this file.\n"
+            "================================================================================"
+        )
+    try:
+        with open(OPTIMIZER_LOG_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            return "".join(lines[-max_lines:])
+    except Exception as e:
+        return f"Error reading log file {OPTIMIZER_LOG_FILE}: {e}"
+
 
 # Strict Safety Boundaries to prevent over-tightening or reckless widening
 SAFETY_BOUNDS: Dict[str, Tuple[float, float]] = {
@@ -114,6 +187,21 @@ class BTC5MSelfLearningOptimizer:
             db.add(log_entry)
             db.commit()
             db.refresh(log_entry)
+
+            # Persist to physical disk log file
+            append_optimizer_log_entry(
+                event_type="POST_MORTEM_DIAGNOSIS",
+                instance_id=self.instance_id,
+                trade_id=trade.id,
+                outcome="LOSS",
+                root_cause=root_cause,
+                error_analysis=error_analysis,
+                param_adjusted=target_param,
+                old_value=old_val_str,
+                new_value=new_val_str,
+                adaptation_delta=f"{adjustment_delta:+.3f}",
+                pnl=trade.pnl
+            )
 
             logger.info(
                 f"[Self-Learning Optimizer] Diagnosed Trade #{trade.id} loss (${trade.pnl:.2f}) as [{root_cause}]. "
@@ -305,6 +393,21 @@ class BTC5MSelfLearningOptimizer:
             db.add(opt_log)
             db.commit()
 
+            # Persist continuous optimization event to physical disk log file
+            append_optimizer_log_entry(
+                event_type="PERIODIC_OPTIMIZATION",
+                instance_id=self.instance_id,
+                trade_id=None,
+                outcome="PERIODIC_SWEEP",
+                root_cause="TRADE_FREQUENCY_OPTIMIZATION",
+                error_analysis=reason,
+                param_adjusted=", ".join(adjustments.keys()),
+                old_value=f"edge={current_net_edge:.3f}, p2b=${current_p2b_diff:.1f}, score={current_score:.1f}",
+                new_value=f"{adjustments}",
+                adaptation_delta=f"WinRate: {win_rate:.1f}%",
+                pnl=None
+            )
+
         return {
             "status": "OPTIMIZED" if adjustments else "OPTIMAL",
             "analyzed_trades": len(recent_trades),
@@ -350,10 +453,14 @@ class BTC5MSelfLearningOptimizer:
             })
 
         current_settings = get_btc5m_settings(db, instance_id=self.instance_id)
+        log_file_size = os.path.getsize(OPTIMIZER_LOG_FILE) if os.path.exists(OPTIMIZER_LOG_FILE) else 0
 
         return {
             "total_adaptations": total_adaptations,
             "error_distribution": error_counts,
+            "log_file_name": "self_learning_optimizer.log",
+            "log_file_path": OPTIMIZER_LOG_FILE,
+            "log_file_size_bytes": log_file_size,
             "current_settings": {
                 "min_entry_score": current_settings.get("min_entry_score"),
                 "min_entry_probability": current_settings.get("min_entry_probability"),

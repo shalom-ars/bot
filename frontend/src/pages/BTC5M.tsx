@@ -5,7 +5,8 @@ import {
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
   AlertTriangle, ShieldAlert,
   LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical,
-  ArrowUpRight, ArrowDownRight, Timer, Cpu, Sparkles
+  ArrowUpRight, ArrowDownRight, Timer, Cpu, Sparkles,
+  FileText, Download, Copy, Check
 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 
@@ -739,6 +740,10 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
   const [isOptimizing, setIsOptimizing] = useState<boolean>(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [optResult, setOptResult] = useState<string | null>(null);
+  const [showRawLog, setShowRawLog] = useState<boolean>(false);
+  const [rawLogContent, setRawLogContent] = useState<string>('');
+  const [rawLogLoading, setRawLogLoading] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
 
   const fetchSummary = async () => {
     try {
@@ -750,6 +755,36 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
       }
     } catch (e) {
       setLoading(false);
+    }
+  };
+
+  const fetchRawLog = async () => {
+    setRawLogLoading(true);
+    try {
+      const res = await fetch('/api/btc5m/self-learning/raw-log?max_lines=500');
+      if (res.ok) {
+        const json = await res.json();
+        setRawLogContent(json.content || '');
+      }
+    } catch (e) {
+      setRawLogContent('Failed to load physical log file from server disk.');
+    } finally {
+      setRawLogLoading(false);
+    }
+  };
+
+  const handleToggleRawLog = () => {
+    if (!showRawLog) {
+      fetchRawLog();
+    }
+    setShowRawLog(!showRawLog);
+  };
+
+  const handleCopyLog = () => {
+    if (rawLogContent) {
+      navigator.clipboard.writeText(rawLogContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -782,6 +817,7 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
   const totalAdaptations = data?.total_adaptations ?? 0;
   const errorDistribution = data?.error_distribution || {};
   const currentSettings = data?.current_settings || {};
+  const logFileSize = data?.log_file_size_bytes ?? 0;
 
   const filteredLogs = logs.filter((l: any) => {
     if (filter === 'all') return true;
@@ -791,7 +827,7 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-center text-purple-600">
             <Cpu className="w-4 h-4" />
@@ -804,13 +840,43 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
               </span>
             </h3>
             <p className="text-[11px] text-slate-400">
-              Autonomous post-mortem error diagnosis after every lost trade, dynamically adjusting filters & safety boundaries.
+              Autonomous post-mortem error diagnosis after every lost trade, saved permanently in disk log history.
             </p>
           </div>
         </div>
 
-        {/* Manual Sweep Action */}
-        <div className="flex items-center gap-2">
+        {/* Action Controls: View File, Download Log, Export CSV, Run Sweep */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleToggleRawLog}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition-all cursor-pointer border ${
+              showRawLog 
+                ? 'bg-slate-900 text-white border-slate-900' 
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-purple-600" />
+            <span>{showRawLog ? 'HIDE LOG FILE' : 'VIEW LOG FILE (.log)'}</span>
+          </button>
+
+          <a
+            href="/api/btc5m/self-learning/download-log"
+            download="self_learning_optimizer.log"
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition-all border border-slate-200 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-600" />
+            <span>DOWNLOAD .LOG</span>
+          </a>
+
+          <a
+            href={`/api/btc5m/self-learning/export-csv?instance_id=${instanceId}`}
+            download="self_learning_optimizer_history.csv"
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition-all border border-slate-200 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-600" />
+            <span>EXPORT CSV</span>
+          </a>
+
           <button
             onClick={handleManualOptimize}
             disabled={isOptimizing}
@@ -835,6 +901,58 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
         <div className="p-2.5 bg-purple-50 border border-purple-200 rounded-xl text-xs text-purple-900 flex items-center justify-between">
           <span className="font-semibold">⚡ {optResult}</span>
           <button onClick={() => setOptResult(null)} className="text-purple-500 hover:text-purple-800 font-bold ml-2">×</button>
+        </div>
+      )}
+
+      {/* Embedded Raw Log File Viewer */}
+      {showRawLog && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2 text-white shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+              <span className="font-mono text-xs font-bold text-emerald-400">self_learning_optimizer.log</span>
+              <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">
+                {logFileSize > 0 ? `${(logFileSize / 1024).toFixed(1)} KB` : 'Active Disk Log'}
+              </span>
+              <span className="text-[10px] text-slate-400 font-sans hidden sm:inline">
+                (Immutable disk file of all error diagnoses, filter tuning, and optimization sweeps)
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyLog}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copied ? 'COPIED!' : 'COPY LOG'}</span>
+              </button>
+              <button
+                onClick={fetchRawLog}
+                disabled={rawLogLoading}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${rawLogLoading ? 'animate-spin' : ''}`} />
+                <span>REFRESH</span>
+              </button>
+              <button
+                onClick={() => setShowRawLog(false)}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-rose-900/50 text-slate-400 hover:text-rose-300 rounded-lg text-xs font-bold transition-all cursor-pointer"
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-slate-950 rounded-xl p-3 border border-slate-800/80 font-mono text-xs text-slate-300 max-h-80 overflow-y-auto whitespace-pre leading-relaxed select-text shadow-inner">
+            {rawLogLoading ? (
+              <div className="py-8 text-center text-slate-500 flex items-center justify-center gap-2 font-sans">
+                <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                <span>Reading physical log file from server disk...</span>
+              </div>
+            ) : (
+              rawLogContent || 'No raw log entries found yet. The log file records all error analyses and sweeps.'
+            )}
+          </div>
         </div>
       )}
 

@@ -3,7 +3,7 @@ BTC 5M API endpoints.
 Provides dashboard data for the BTC 5M module.
 """
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.session import get_db
@@ -1084,5 +1084,79 @@ def trigger_continuous_optimization(
     result = optimizer.run_continuous_optimization(db=db, lookback=lookback)
     _safe_broadcast(instance_id)
     return result
+
+
+@router.get("/self-learning/raw-log")
+def get_self_learning_raw_log(max_lines: int = 500):
+    """Retrieve raw text content of the self_learning_optimizer.log disk file."""
+    from app.btc5m.optimizer import read_optimizer_log_file, OPTIMIZER_LOG_FILE
+    content = read_optimizer_log_file(max_lines=max_lines)
+    size = os.path.getsize(OPTIMIZER_LOG_FILE) if os.path.exists(OPTIMIZER_LOG_FILE) else 0
+    return {
+        "file_name": "self_learning_optimizer.log",
+        "file_path": OPTIMIZER_LOG_FILE,
+        "size_bytes": size,
+        "content": content
+    }
+
+
+@router.get("/self-learning/download-log")
+def download_self_learning_log():
+    """Download the complete physical self_learning_optimizer.log file."""
+    from app.btc5m.optimizer import read_optimizer_log_file
+    content = read_optimizer_log_file(max_lines=20000)
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=self_learning_optimizer.log"}
+    )
+
+
+@router.get("/self-learning/export-csv")
+def export_self_learning_csv(
+    instance_id: Optional[str] = "instance_1",
+    db: Session = Depends(get_db)
+):
+    """Export complete self-learning audit history as a downloadable CSV."""
+    import csv
+    import io
+    from app.db.models import BTC5MSelfLearningLog
+    
+    logs = db.query(BTC5MSelfLearningLog).filter(
+        BTC5MSelfLearningLog.instance_id == instance_id
+    ).order_by(BTC5MSelfLearningLog.id.asc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "id", "timestamp_utc", "instance_id", "trade_id", "market_id",
+        "outcome", "pnl", "root_cause", "parameter_adjusted",
+        "old_value", "new_value", "adaptation_delta", "status", "error_analysis"
+    ])
+    for l in logs:
+        writer.writerow([
+            l.id,
+            l.timestamp.isoformat() if l.timestamp else "",
+            l.instance_id,
+            l.trade_id or "",
+            l.market_id or "",
+            l.outcome,
+            f"{l.pnl:.2f}" if l.pnl is not None else "",
+            l.root_cause,
+            l.parameter_adjusted,
+            l.old_value,
+            l.new_value,
+            l.adaptation_delta,
+            l.status,
+            (l.error_analysis or "").replace("\n", " ")
+        ])
+    
+    csv_content = output.getvalue()
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=self_learning_optimizer_history.csv"}
+    )
+
 
 
