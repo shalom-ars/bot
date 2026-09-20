@@ -29,6 +29,9 @@ DEFAULT_SOFT_STOP_CONFIRMATION_SECONDS = 10.0
 DEFAULT_THESIS_FAILURE_THRESHOLD = 60.0
 DEFAULT_HARD_STOP_DELTA = 0.10  # Catastrophic distance below soft stop
 
+# In-memory tracking of real peak prices observed during active trades
+_trade_peak_prices: Dict[Any, float] = {}
+
 
 def calculate_thesis_failure_score(
     trade: BTC5MTrade,
@@ -294,45 +297,38 @@ class BTC5MExitManager:
                 reason = f"Take profit target reached: ${exec_p:.4f} >= ${tp_p:.4f}"
                 return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"
 
-        # ── 2B. HYPER SCALP TRAILING & LOSS CUT ────────────────────────────────
-        breakeven_trigger_dollar = float(settings.get("breakeven_trigger_dollar", 0.02))
-        
-        # Calculate dynamic ATR (normalized for 5M prediction contracts)
-        rolling_vol = float(features.get("rolling_volatility", 0.005))
-        market_atr = max(0.02, min(0.08, rolling_vol * 10.0))
-
+        # ── 2B. TRAILING PROFIT & LOSS PROTECTION ──────────────────────────────
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
-            
+            trade_key = trade.id or id(trade)
+
+            # Initialize peak price strictly to entry_price (NEVER use entry_target_price which is the TP target!)
+            if trade_key not in _trade_peak_prices:
+                _trade_peak_prices[trade_key] = float(trade.entry_price)
+
+            if exec_p > _trade_peak_prices[trade_key]:
+                _trade_peak_prices[trade_key] = exec_p
+
+            peak_p = _trade_peak_prices[trade_key]
+            peak_unrealized = (peak_p - float(trade.entry_price)) * float(trade.quantity)
+
             # SCALP RULE 1: Micro-Loss Cut (Only active if explicitly set below full SL limit)
             micro_loss_tolerance = float(settings.get("micro_loss_tolerance", sl_limit))
-            # If sl_limit is >= 5.0 (e.g. $10 SL mode to give room for reversal), do not cut prematurely on cents
-            if sl_limit < 5.0 and micro_loss_tolerance < sl_limit and unrealized <= -micro_loss_tolerance:
-                reason = f"HYPER SCALP CUT: Trade went into immediate loss -${abs(unrealized):.2f} (Tolerance: -${micro_loss_tolerance:.2f})"
+            # If sl_limit is >= 5.0 (e.g. $10 SL mode for reversal), do NOT cut prematurely on minor cents
+            if sl_limit < 2.0 and micro_loss_tolerance < sl_limit and unrealized <= -micro_loss_tolerance:
+                reason = f"MICRO LOSS CUT: Loss -${abs(unrealized):.2f} hit tolerance -${micro_loss_tolerance:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
-            
-            # Peak Price tracking for Trailing
-            peak_price = getattr(trade, "entry_target_price", None)
-            if peak_price is None or exec_p > float(peak_price):
-                trade.entry_target_price = exec_p
-                peak_price = exec_p
-            else:
-                try:
-                    peak_price = float(peak_price)
-                except (ValueError, TypeError):
-                    peak_price = exec_p
 
-            # SCALP RULE 2: Trailing Profit
-            peak_unrealized = (peak_price - float(trade.entry_price)) * float(trade.quantity)
-            if peak_unrealized >= breakeven_trigger_dollar:
-                trailing_drop_allowance = 0.01 if sl_limit >= 5.0 else 0.005
-                trailing_sl_price = peak_price - (trailing_drop_allowance / max(0.1, float(trade.quantity)))
-                
-                # If current price reversed and hit the trailing SL
-                if exec_p <= trailing_sl_price:
-                    reason = f"PROFIT LOCKED: Reversed from Peak ${peak_price:.4f} to ${exec_p:.4f} (Profit Captured)"
+            # SCALP RULE 2: Trailing Profit Locking
+            # CRITICAL: Trailing Stop MUST NEVER lock in a negative loss!
+            # It only locks if the trade climbed near the target (>= +$0.75) and secures positive gain (>= +$0.25)
+            if peak_unrealized >= 0.75 and unrealized >= 0.25:
+                trailing_drop_allowance = 0.02
+                trailing_sl_price = peak_p - (trailing_drop_allowance / max(0.1, float(trade.quantity)))
+                if exec_p <= trailing_sl_price and exec_p > float(trade.entry_price) and unrealized > 0:
+                    reason = f"PROFIT LOCKED: Captured profit +${unrealized:.2f} (Reversed from Peak ${peak_p:.4f})"
                     return "TP", exec_p, reason, 0.0, {}, "TRAILING_STOP"
-                    
+
             # SCALP RULE 3: Adaptive Time Stop
             # For wide-reversal strategies ($10 SL), give full room (up to 280s / end of candle).
             max_hold_seconds = 280.0 if sl_limit >= 5.0 else 145.0
