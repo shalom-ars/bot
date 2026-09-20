@@ -5,7 +5,7 @@ import {
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
   AlertTriangle, ShieldAlert,
   LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical,
-  ArrowUpRight, ArrowDownRight
+  ArrowUpRight, ArrowDownRight, Timer
 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 
@@ -1101,15 +1101,15 @@ function InnerBTC5M() {
         {/* Main Row: Left (Genanda Bot + Timer + Bitcoin Up/Down), Right (Uniform Metrics + Adjacent Logout) */}
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           
-          {/* BOT SECTION */}
-          <div className="flex items-start gap-3.5 min-w-0">
-            <div className="shrink-0 p-1 bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md mt-0.5">
-              <BrandLogo size={44} glow={true} />
+          {/* BOT SECTION: Lowered and centered with logo, Bitcoin Up/Down written small underneath */}
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="shrink-0 p-1 bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md">
+              <BrandLogo size={46} glow={true} />
             </div>
-            <div className="min-w-0">
-              {/* Top line: Genanda Bot in larger font + Pause/Start toggle button beside it */}
+            <div className="min-w-0 flex flex-col justify-center">
+              {/* Jonanda Bot + Pause/Start toggle button */}
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-black text-white tracking-tight leading-tight">Genanda Bot</h1>
+                <h1 className="text-2xl font-black text-white tracking-tight leading-tight">Jonanda Bot</h1>
                 <button
                   onClick={() => handleToggleTrading(!isTradingActive)}
                   disabled={isTogglingTrading}
@@ -1123,22 +1123,30 @@ function InnerBTC5M() {
                 </button>
               </div>
 
-              {/* Below bot name: Only countdown timer and Bitcoin Up/Down */}
-              <div className="mt-2.5 flex items-center gap-2.5">
-                <div className="px-3 py-1 bg-slate-950/90 rounded-xl border border-slate-800 shadow-inner flex items-center">
-                  <span className="text-2xl sm:text-3xl font-black font-mono tracking-widest text-amber-400">
-                    {countdownDisplay}
-                  </span>
-                </div>
-                <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800/90 border border-slate-700/80 text-slate-300 font-mono tracking-wide">
-                  Bitcoin Up/Down
-                </span>
-              </div>
+              {/* Bitcoin Up/Down written small beneath Jonanda Bot */}
+              <p className="mt-1 text-xs font-semibold text-slate-400 font-mono tracking-wide flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Bitcoin Up/Down</span>
+              </p>
             </div>
           </div>
 
-          {/* DISPLAY BOXES: TOTAL INCOME, TOTAL LOSS, VIRTUAL EQUITY (UNIFORM SIZE) + ADJACENT LOGOUT */}
+          {/* RIGHT METRICS GROUP: COUNTDOWN TIMER (BESIDE TOTAL INCOME) + TOTAL LOSS + VIRTUAL EQUITY + LOGOUT */}
           <div className="flex items-center gap-2.5 self-start xl:self-auto shrink-0 flex-wrap sm:flex-nowrap">
+            {/* Countdown Timer (visible beside Total Income) */}
+            <div className="w-32 sm:w-36 h-[82px] bg-slate-950/90 border border-slate-800 p-2.5 rounded-xl text-right flex flex-col justify-between shadow-inner">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider">TIMER</span>
+                <Timer className="w-3.5 h-3.5 text-amber-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black text-amber-400 font-mono tracking-widest leading-none my-auto text-center">
+                {countdownDisplay}
+              </div>
+              <div className="text-[9px] text-slate-400 font-mono font-bold text-center">
+                {countdownSeconds > 0 ? `${countdownSeconds}s remaining` : 'Expired'}
+              </div>
+            </div>
+
             {/* Total Income */}
             <div className="w-32 sm:w-36 h-[82px] bg-emerald-950/40 border border-emerald-500/30 p-2.5 rounded-xl text-right flex flex-col justify-between">
               <div className="flex items-center justify-between gap-1">
