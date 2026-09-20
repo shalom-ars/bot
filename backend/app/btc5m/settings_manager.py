@@ -167,13 +167,16 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     
     if instance_id == "instance_2":
         loosened_sync["slot_mode"] = "double_slot_2.5m"
-        loosened_sync["micro_loss_tolerance"] = "0.005"
-        loosened_sync["breakeven_trigger_dollar"] = "0.005"
+        # Deep analysis update: Minimize losses by increasing accuracy requirements
+        loosened_sync["min_entry_score"] = "75.0"       # High strategy score required
+        loosened_sync["min_entry_probability"] = "0.58" # Strict ML model confidence
+        loosened_sync["min_liquidity"] = "25.0"         # Ensure real CLOB depth
+        loosened_sync["max_spread"] = "0.02"            # Stop slippage trap (Max 2 cents)
+        # Adapt micro loss tolerance to SURVIVE the 2-cent spread, but trigger immediately after
+        loosened_sync["micro_loss_tolerance"] = "0.025" 
+        loosened_sync["breakeven_trigger_dollar"] = "0.015"
         loosened_sync["hard_stop_delta"] = "0.005"
-        loosened_sync["min_entry_score"] = "0.0"
-        loosened_sync["cooldown_seconds"] = "0.0"
-        loosened_sync["min_liquidity"] = "0.0"
-        loosened_sync["max_spread"] = "1.0"
+        loosened_sync["cooldown_seconds"] = "10.0"
     else:
         loosened_sync["slot_mode"] = "single_5m"
 
