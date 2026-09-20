@@ -731,7 +731,27 @@ def get_btc5m_status(instance_id: str = "instance_1", db: Session = Depends(get_
 def get_btc5m_skips(db: Session = Depends(get_db), limit: int = 50):
     from app.db.models import BTC5MSkip
     skips = db.query(BTC5MSkip).order_by(BTC5MSkip.timestamp.desc()).limit(limit).all()
-    return [{"id": s.id, "market_id": s.market_id, "question": s.question, "yes_score": s.yes_score, "no_score": s.no_score, "net_edge": s.net_edge, "spread": s.spread, "liquidity": s.liquidity, "time_remaining": s.time_remaining, "planned_rr": s.planned_rr, "skip_reason": s.skip_reason, "timestamp": s.timestamp.isoformat() if s.timestamp else None, "actual_resolution": s.actual_resolution, "hypothetical_outcome": s.hypothetical_outcome} for s in skips]
+    return [{
+        "id": s.id,
+        "market_id": s.market_id,
+        "question": s.question,
+        "yes_score": s.yes_score,
+        "no_score": s.no_score,
+        "yes_prob": s.yes_prob,
+        "no_prob": s.no_prob,
+        "net_edge": s.net_edge,
+        "spread": s.spread,
+        "liquidity": s.liquidity,
+        "volatility": s.volatility,
+        "time_remaining": s.time_remaining,
+        "planned_rr": s.planned_rr,
+        "skip_reason": s.skip_reason,
+        "predicted_side": s.predicted_side,
+        "gate_results": s.gate_results,
+        "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+        "actual_resolution": s.actual_resolution,
+        "hypothetical_outcome": s.hypothetical_outcome
+    } for s in skips]
 
 @router.get("/stats")
 def get_btc5m_stats(db: Session = Depends(get_db)):

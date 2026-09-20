@@ -3,8 +3,10 @@ import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Clock, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
-  Bot, AlertTriangle, ShieldAlert, RotateCcw, DollarSign, Layers
+  AlertTriangle, ShieldAlert, RotateCcw, DollarSign, Layers,
+  LogOut, ChevronDown, ChevronUp
 } from 'lucide-react';
+import BrandLogo from '../components/BrandLogo';
 
 
 
@@ -433,6 +435,283 @@ function TradeHistorySection({ refreshTrigger, instanceId = 'instance_1' }: { re
   );
 }
 
+// Skip Logs & Rejection Audit History Section
+function SkipLogsSection({ refreshTrigger }: { refreshTrigger?: number }) {
+  const [skips, setSkips] = useState<any[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [filter, setFilter] = useState<'all' | 'consensus' | 'obi' | 'cooldown'>('all');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  const fetchSkips = async () => {
+    try {
+      const res = await fetch('/api/btc5m/skips?limit=50');
+      if (res.ok) {
+        const json = await res.json();
+        setSkips(json);
+        setLoading(false);
+      }
+    } catch (e) {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSkips();
+    const interval = setInterval(fetchSkips, 3000);
+    return () => clearInterval(interval);
+  }, [refreshTrigger]);
+
+  const filteredSkips = skips.filter((s: any) => {
+    if (filter === 'all') return true;
+    const reason = (s.skip_reason || '').toLowerCase();
+    if (filter === 'consensus') return reason.includes('consensus') || reason.includes('committee') || reason.includes('dissent');
+    if (filter === 'obi') return reason.includes('hummingbot') || reason.includes('obi');
+    if (filter === 'cooldown') return reason.includes('cooldown') || reason.includes('late-candle') || reason.includes('spread');
+    return true;
+  });
+
+  const totalSkips = skips.length;
+  const consensusVetos = skips.filter((s: any) => (s.skip_reason || '').toLowerCase().includes('consensus') || (s.skip_reason || '').toLowerCase().includes('committee')).length;
+  const obiVetos = skips.filter((s: any) => (s.skip_reason || '').toLowerCase().includes('hummingbot') || (s.skip_reason || '').toLowerCase().includes('obi')).length;
+  const savedLosses = skips.filter((s: any) => s.hypothetical_outcome === 'LOSS').length;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
+      {/* Header and Filter Tabs */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+            <ShieldAlert className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <span>SKIP LOGS & REJECTION AUDIT</span>
+              <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">
+                {totalSkips} Logged
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              Filtered market history with exact indicator thresholds and safety veto triggers.
+            </p>
+          </div>
+        </div>
+
+        {/* Filter Tabs */}
+        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-black">
+          <button
+            onClick={() => setFilter('all')}
+            className={`px-2.5 py-1 rounded-lg transition-all ${
+              filter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            ALL ({totalSkips})
+          </button>
+          <button
+            onClick={() => setFilter('consensus')}
+            className={`px-2.5 py-1 rounded-lg transition-all ${
+              filter === 'consensus' ? 'bg-white text-purple-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            CONSENSUS ({consensusVetos})
+          </button>
+          <button
+            onClick={() => setFilter('obi')}
+            className={`px-2.5 py-1 rounded-lg transition-all ${
+              filter === 'obi' ? 'bg-white text-amber-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            OBI ({obiVetos})
+          </button>
+          <button
+            onClick={() => setFilter('cooldown')}
+            className={`px-2.5 py-1 rounded-lg transition-all ${
+              filter === 'cooldown' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            COOLDOWN
+          </button>
+        </div>
+      </div>
+
+      {/* Summary Badges */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Total Skips
+          </span>
+          <span className="text-base font-black text-slate-900 font-mono tracking-tight">
+            {totalSkips}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            AI Consensus Vetos
+          </span>
+          <span className="text-base font-black text-purple-600 font-mono tracking-tight">
+            {consensusVetos}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Hummingbot OBI
+          </span>
+          <span className="text-base font-black text-amber-600 font-mono tracking-tight">
+            {obiVetos}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Saved From Loss
+          </span>
+          <span className="text-base font-black text-emerald-600 font-mono tracking-tight">
+            {savedLosses}
+          </span>
+        </div>
+      </div>
+
+      {/* Skips Table */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full text-left border-collapse min-w-[650px]">
+          <thead>
+            <tr className="bg-slate-50/80 border-b border-slate-200 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+              <th className="py-2 px-3">Skip Time (UTC)</th>
+              <th className="py-2 px-3">Market / Side</th>
+              <th className="py-2 px-3">Primary Reason</th>
+              <th className="py-2 px-3">Key Indicators</th>
+              <th className="py-2 px-3">Protection Outcome</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-xs font-mono">
+            {filteredSkips.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-6 text-center text-slate-400 font-sans text-xs">
+                  {loading ? 'Loading skip records...' : 'No skipped market records match current filter.'}
+                </td>
+              </tr>
+            ) : (
+              filteredSkips.map((s: any) => {
+                const isExpanded = expandedId === s.id;
+                const rawReasons = (s.skip_reason || '')
+                  .split('|')
+                  .map((r: string) => r.trim().replace(/^SKIP\s*-\s*/i, ''))
+                  .filter(Boolean);
+                const primaryReason = rawReasons[0] || s.skip_reason || 'Criteria not met';
+                const marketName = (s.question || 'BTC 5M Market').replace('Bitcoin Up or Down - ', '');
+
+                const isConsensusVeto = (s.skip_reason || '').includes('Committee') || (s.skip_reason || '').includes('Consensus');
+                const isObiVeto = (s.skip_reason || '').includes('Hummingbot') || (s.skip_reason || '').includes('OBI');
+                const isCooldownVeto = (s.skip_reason || '').includes('Cooldown');
+
+                return (
+                  <React.Fragment key={s.id}>
+                    <tr
+                      onClick={() => setExpandedId(isExpanded ? null : s.id)}
+                      className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                    >
+                      <td className="py-2 px-3 text-slate-600 whitespace-nowrap text-[11px]">
+                        {fmtDate(s.timestamp)}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <div className="font-bold text-slate-800 text-[11px] truncate max-w-[150px]" title={s.question}>
+                          {marketName}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {s.predicted_side && s.predicted_side !== 'NONE' ? (
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-black ${
+                              s.predicted_side === 'YES' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {s.predicted_side} (Y:{(s.yes_score ?? 0).toFixed(0)} N:{(s.no_score ?? 0).toFixed(0)})
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-slate-100 text-slate-600">
+                              NO BIAS (Y:{(s.yes_score ?? 0).toFixed(0)} N:{(s.no_score ?? 0).toFixed(0)})
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-black truncate max-w-[200px] inline-block ${
+                            isConsensusVeto
+                              ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                              : isObiVeto
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : isCooldownVeto
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`} title={primaryReason}>
+                            {primaryReason}
+                          </span>
+                        </div>
+                        {rawReasons.length > 1 && (
+                          <span className="text-[9px] text-blue-600 font-sans font-medium block mt-0.5 flex items-center gap-0.5">
+                            +{rawReasons.length - 1} more checks failed {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap text-[10px]">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-bold" title="Net Edge">
+                            Edge: {s.net_edge != null ? `${(s.net_edge * 100).toFixed(1)}%` : '0%'}
+                          </span>
+                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-bold" title="Spread">
+                            Sprd: {s.spread != null ? `${(s.spread * 100).toFixed(1)}%` : '—'}
+                          </span>
+                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-bold" title="Time Remaining">
+                            {s.time_remaining ? `${Math.round(s.time_remaining)}s left` : '—'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap text-[10px]">
+                        {s.hypothetical_outcome === 'LOSS' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            🛡️ SAVED LOSS
+                          </span>
+                        ) : s.hypothetical_outcome === 'WIN' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-black bg-amber-100 text-amber-800 border border-amber-300">
+                            MISSED WIN
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full font-black bg-slate-100 text-slate-600">
+                            PENDING CANDLE
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-amber-50/40">
+                        <td colSpan={5} className="p-3">
+                          <div className="space-y-1.5 text-xs font-sans">
+                            <p className="font-black text-slate-800 flex items-center gap-1.5">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                              <span>FAILED GATES & DETAILED REJECTION CRITERIA:</span>
+                            </p>
+                            <ul className="list-disc pl-5 space-y-1 text-slate-700 font-mono text-[11px]">
+                              {rawReasons.map((r: string, idx: number) => (
+                                <li key={idx} className="text-rose-800 font-semibold">{r}</li>
+                              ))}
+                            </ul>
+                            <div className="flex items-center gap-3 pt-2 text-[10px] font-mono text-slate-600 border-t border-slate-200/60 flex-wrap">
+                              <span>YES Prob: {s.yes_prob != null ? `${(s.yes_prob * 100).toFixed(1)}%` : '—'}</span>
+                              <span>NO Prob: {s.no_prob != null ? `${(s.no_prob * 100).toFixed(1)}%` : '—'}</span>
+                              <span>Liquidity: ${s.liquidity ? Number(s.liquidity).toLocaleString() : '—'}</span>
+                              <span>Market ID: {s.market_id ? s.market_id.slice(0, 16) + '...' : '—'}</span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function InnerBTC5M() {
   const [selectedInstance] = useState<'instance_1'>('instance_1');
   const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus(selectedInstance);
@@ -515,6 +794,14 @@ function InnerBTC5M() {
     } finally {
       setIsResetting(false);
     }
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {}
+    window.location.href = '/login';
   };
 
   const handleCloseTrade = async () => {
@@ -649,21 +936,22 @@ function InnerBTC5M() {
 
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
-      {/* TOP CONTROL BAR: INSTANCES, DEMO/REAL MONEY TOGGLE, RESET */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-col lg:flex-row items-center justify-between gap-2.5 shadow-sm">
-        {/* Left: Single Bot Badge */}
-        <div className="flex items-center gap-1.5 w-full lg:w-auto">
-          <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20 text-xs font-black">
-            <Bot className="w-4 h-4" />
-            <span>BTC 5M TRADING BOT (YES / NO)</span>
-            {isTradingActive && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
-            )}
-          </div>
+      {/* TOP CONTROL BAR: PLAN BADGE, ACCOUNT MODE SWITCHER, RESET & LOGOUT */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5 shadow-sm">
+        {/* Left: Mode & Pro Plan Badges */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <span className="bg-blue-500/15 text-blue-400 text-xs font-black px-3 py-1 rounded-full border border-blue-500/30 flex items-center gap-1.5 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+            PRO PLAN
+          </span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+            <ShieldAlert className="w-3 h-3 text-amber-400" />
+            <span>PAPER TRADING · $500 SEED</span>
+          </span>
         </div>
 
-        {/* Right: Demo vs Real Money Toggle & Reset History Button */}
-        <div className="flex items-center gap-2 w-full lg:w-auto justify-end flex-wrap">
+        {/* Right: Demo vs Real Money Toggle, Reset History Button & Logout */}
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
           {/* Account Mode Switcher */}
           <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
             <button
@@ -701,6 +989,16 @@ function InnerBTC5M() {
           >
             <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
             <span>RESET ($500)</span>
+          </button>
+
+          {/* Logout Button */}
+          <button
+            onClick={handleLogout}
+            title="Sign out of your session"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-slate-800 text-slate-300 border border-slate-700 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30 transition-all cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5 text-rose-400" />
+            <span>LOGOUT</span>
           </button>
         </div>
       </div>
@@ -742,18 +1040,25 @@ function InnerBTC5M() {
         </div>
       )}
 
-      {/* 1. FULL-WIDTH RESOLUTION COUNTDOWN TIMER BANNER (AT THE VERY TOP) */}
+      {/* 1. FULL-WIDTH RESOLUTION COUNTDOWN TIMER BANNER (WITH BOT LOGO) */}
       <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
-        {/* Top Row inside Timer Banner: Market Question, Big Countdown, and Virtual Equity */}
+        {/* Top Row inside Timer Banner: Bot Logo, Market Question, Big Countdown, and Virtual Equity */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Left: Active Contract & Status */}
+          {/* Left: Bot Logo, Active Contract & Status */}
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-              <Clock className="w-5 h-5 animate-pulse" />
+            <div className="shrink-0 flex items-center justify-center p-1 bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md">
+              <BrandLogo size={42} glow={true} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-black text-amber-400 uppercase tracking-widest">RESOLUTION COUNTDOWN</span>
+                <span className="text-base font-black text-white tracking-tight leading-tight">JONANDA BOT</span>
+                <span className="text-[10px] bg-blue-500/20 text-blue-300 font-bold px-2 py-0.5 rounded border border-blue-500/30 uppercase font-mono">
+                  BTC 5M TERMINAL
+                </span>
+                <span className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5 ml-1 pl-2 border-l border-slate-700">
+                  <Clock className="w-3.5 h-3.5 animate-pulse text-amber-400" />
+                  RESOLUTION COUNTDOWN
+                </span>
                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${isTradingActive ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>
                   {isTradingActive ? '● ENGINE RUNNING' : '● BOT IDLE'}
                 </span>
@@ -789,23 +1094,10 @@ function InnerBTC5M() {
                   {isTogglingTrading ? 'Updating...' : isTradingActive ? '■ PAUSE BOT' : '▶ START BOT'}
                 </button>
               </div>
-              <p className="text-sm font-black text-white truncate mt-0.5">
+              <p className="text-sm font-black text-white truncate mt-1">
                 {current?.question || 'Searching active BTC 5M market window...'}
               </p>
-              <div className="flex items-center gap-2 mt-1 text-[9px] font-mono text-slate-400 flex-wrap">
-                <span className="text-amber-400 font-bold uppercase">TARGETING:</span>
-                <span className="text-indigo-300 font-bold">YES &amp; NO SIGNALS</span>
-                <span>&bull;</span>
-                <span className="text-emerald-400 font-bold">TP $1.00 / SL $10.00</span>
-                <span>&bull;</span>
-                <span>Score &ge; {targetSettings?.min_entry_score ?? 55}</span>
-                <span>&bull;</span>
-                <span>Edge &ge; {((targetSettings?.min_net_edge ?? 0.005) * 100).toFixed(1)}%</span>
-                <span>&bull;</span>
-                <span>TP +${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'}</span>
-                <span>&bull;</span>
-                <span className="text-emerald-400 font-bold ml-1">🔒 PERSISTENT</span>
-                <span className="mx-1 text-slate-600">|</span>
+              <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-slate-400">
                 {wsConnected ? (
                   <span className="inline-flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
@@ -1319,8 +1611,11 @@ function InnerBTC5M() {
 
       </div>
 
-      {/* 4. CATEGORIZED TRADE HISTORY (WEEKLY & MONTHLY AUDIT LOG) */}
-      <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={selectedInstance} />
+      {/* 4. SIDE-BY-SIDE: CATEGORIZED TRADE HISTORY & SKIPPED TRADES AUDIT LOG */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+        <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={selectedInstance} />
+        <SkipLogsSection refreshTrigger={refreshTrigger} />
+      </div>
     </div>
   );
 }
