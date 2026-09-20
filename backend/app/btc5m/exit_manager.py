@@ -259,22 +259,22 @@ class BTC5MExitManager:
             reason = "HARD SAFETY STOP: RiskManager circuit breaker active (trading paused)"
             return "HARD_EXIT", current_executable_price or trade.stop_loss_price, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # C. Explicit Hard Safety Stop Loss (-$0.60 to -$0.80 per trade strictly enforced)
-        sl_limit = float(settings.get("sl_dollar", 0.80))
-        max_loss_cap = min(sl_limit, 0.80)
+        # C. Explicit Hard Safety Stop Loss (-$0.60 to -$0.90 per trade strictly enforced)
+        sl_limit = float(settings.get("sl_dollar", 0.90))
+        max_loss_cap = min(sl_limit, 0.90)
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
             if unrealized <= -max_loss_cap:
                 reason = f"HARD SAFETY STOP breached: Maximum loss cap -${abs(unrealized):.2f} <= -${max_loss_cap:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-            max_allowed_loss = (float(trade.planned_risk) if trade.planned_risk else (float(trade.position_size) if trade.position_size else 0.80)) * 1.1
+            max_allowed_loss = (float(trade.planned_risk) if trade.planned_risk else (float(trade.position_size) if trade.position_size else 0.90)) * 1.1
             if unrealized <= -max_allowed_loss:
                 reason = f"HARD SAFETY STOP: Unrealized loss -${abs(unrealized):.2f} exceeded max trade boundary -${max_allowed_loss:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # ── 2. TAKE PROFIT TARGET ($1.20 Win Target for 1.5:1 R:R) ─────────────
-        tp_target = float(settings.get("tp_dollar", 1.20))
+        # ── 2. TAKE PROFIT TARGET ($1.50 Win Target for 1.6:1 R:R) ─────────────
+        tp_target = float(settings.get("tp_dollar", 1.50))
         try:
             tp_p = float(trade.take_profit_price) if trade.take_profit_price is not None else None
         except (ValueError, TypeError):

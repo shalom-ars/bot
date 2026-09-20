@@ -992,10 +992,10 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
-            TP / SL (1.5:1 R:R)
+            TP / SL (1.6:1 R:R)
           </span>
           <span className="text-base font-black text-slate-900 font-mono tracking-tight">
-            ${Number(currentSettings.tp_dollar || 1.20).toFixed(2)} / ${Number(currentSettings.sl_dollar || 0.80).toFixed(2)}
+            ${Number(currentSettings.tp_dollar || 1.50).toFixed(2)} / ${Number(currentSettings.sl_dollar || 0.90).toFixed(2)}
           </span>
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
@@ -1003,7 +1003,7 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
             Hard Safety Stop Cap
           </span>
           <span className="text-base font-black text-rose-600 font-mono tracking-tight flex items-center gap-1">
-            <CheckCircle className="w-3.5 h-3.5 text-rose-600" /> -${Number(currentSettings.hard_cap_dollar || currentSettings.sl_dollar || 0.80).toFixed(2)} Cap
+            <CheckCircle className="w-3.5 h-3.5 text-rose-600" /> -${Number(currentSettings.hard_cap_dollar || currentSettings.sl_dollar || 0.90).toFixed(2)} Cap
           </span>
         </div>
       </div>
