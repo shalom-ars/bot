@@ -1096,28 +1096,36 @@ function InnerBTC5M() {
 
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
-      {/* 1. MASTER TOP HEADER & TIMER BANNER */}
+      {/* 1. MASTER TOP HEADER */}
       <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
-        {/* Main Row: Top Left (Bot + Toggle + Pair Info), Center (Timer), Top Right (Total Income & Loss) */}
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        {/* Extreme Top Right Corner: Logout Button */}
+        <div className="flex justify-end -mb-1">
+          <button
+            onClick={handleLogout}
+            title="Sign out of session"
+            className="px-2.5 py-1 rounded-lg text-[10px] font-black text-slate-400 hover:text-rose-300 bg-slate-800/90 hover:bg-rose-500/20 border border-slate-700 hover:border-rose-500/30 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+          >
+            <LogOut className="w-3 h-3 text-rose-400" />
+            <span>LOGOUT</span>
+          </button>
+        </div>
+
+        {/* Main Row: Left (Jenanda Bot + Bitcoin Up/Down + Timer) & Right (Total Income, Total Loss, Virtual Equity) */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           
-          {/* TOP LEFT: Bot Logo, Name, Pause/Start Toggle, and Trading Pair Info Below */}
-          <div className="flex items-start gap-3 min-w-0">
+          {/* BOT SECTION */}
+          <div className="flex items-start gap-3.5 min-w-0">
             <div className="shrink-0 p-1 bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md mt-0.5">
-              <BrandLogo size={42} glow={true} />
+              <BrandLogo size={44} glow={true} />
             </div>
             <div className="min-w-0">
-              {/* Top line: Bot Name + Pause/Start Toggle beside it */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-base font-black text-white tracking-tight leading-tight">JONANDA BOT</span>
-                <span className="text-[10px] bg-blue-500/20 text-blue-300 font-bold px-2 py-0.5 rounded border border-blue-500/30 uppercase font-mono">
-                  BTC 5M TERMINAL
-                </span>
-                {/* Pause/Start Toggle Button beside Bot Name */}
+              {/* Top line: Jenanda Bot in larger font + Pause/Start toggle button beside it */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="text-2xl font-black text-white tracking-tight leading-tight">Jenanda Bot</h1>
                 <button
                   onClick={() => handleToggleTrading(!isTradingActive)}
                   disabled={isTogglingTrading}
-                  className={`px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs ${
                     isTradingActive
                       ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
                       : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse'
@@ -1127,32 +1135,23 @@ function InnerBTC5M() {
                 </button>
               </div>
 
-              {/* Trading Pair Info below Bot Name */}
-              <div className="mt-1 space-y-0.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-amber-400 font-mono">
-                  <span className="bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
-                    BTC / USD · 5-MIN ROLLING BINARY
-                  </span>
-                </div>
-                <p className="text-xs font-medium text-slate-300 truncate max-w-lg" title={current?.question}>
-                  {current?.question || 'Searching active BTC 5M market window...'}
-                </p>
+              {/* Below bot name: Show ONLY "Bitcoin Up/Down" and the timer */}
+              <div className="mt-2 flex items-center gap-2.5 flex-wrap">
+                <span className="text-xs font-bold text-amber-400 font-mono bg-amber-500/15 px-2.5 py-1 rounded-lg border border-amber-500/30">
+                  Bitcoin Up/Down
+                </span>
+                <span className="text-xl font-black font-mono tracking-wider text-white bg-slate-950/80 px-3 py-0.5 rounded-lg border border-slate-800 shadow-inner">
+                  {countdownDisplay}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* CENTER: ONLY THE TIMER REMAINS */}
-          <div className="flex items-center justify-center px-6 py-2.5 bg-slate-950/70 rounded-2xl border border-slate-800 shadow-inner">
-            <span className="text-3xl font-black font-mono tracking-wider text-amber-400">
-              {countdownDisplay}
-            </span>
-          </div>
-
-          {/* TOP RIGHT CORNER: Total Income, Total Loss, Virtual Equity & Logout */}
-          <div className="flex items-center gap-2 self-start xl:self-auto shrink-0 flex-wrap sm:flex-nowrap">
+          {/* DISPLAY BOXES: TOTAL INCOME, TOTAL LOSS, VIRTUAL EQUITY (SAME SIZE) */}
+          <div className="flex items-center gap-2.5 self-start lg:self-auto shrink-0 flex-wrap sm:flex-nowrap">
             {/* Total Income */}
-            <div className="bg-emerald-950/40 border border-emerald-500/30 p-2.5 rounded-xl min-w-[125px] text-right">
-              <div className="flex items-center justify-between gap-1 mb-0.5">
+            <div className="w-36 sm:w-40 h-[84px] bg-emerald-950/40 border border-emerald-500/30 p-2.5 rounded-xl text-right flex flex-col justify-between">
+              <div className="flex items-center justify-between gap-1">
                 <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider">TOTAL INCOME</span>
                 <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
               </div>
@@ -1165,8 +1164,8 @@ function InnerBTC5M() {
             </div>
 
             {/* Total Loss */}
-            <div className="bg-rose-950/40 border border-rose-500/30 p-2.5 rounded-xl min-w-[125px] text-right">
-              <div className="flex items-center justify-between gap-1 mb-0.5">
+            <div className="w-36 sm:w-40 h-[84px] bg-rose-950/40 border border-rose-500/30 p-2.5 rounded-xl text-right flex flex-col justify-between">
+              <div className="flex items-center justify-between gap-1">
                 <span className="text-[9px] font-black text-rose-400 uppercase tracking-wider">TOTAL LOSS</span>
                 <ArrowDownRight className="w-3.5 h-3.5 text-rose-400" />
               </div>
@@ -1178,23 +1177,18 @@ function InnerBTC5M() {
               </div>
             </div>
 
-            {/* Virtual Equity & Logout */}
-            <div className="flex flex-col gap-1.5">
-              <div className="bg-slate-800/90 border border-slate-700 px-3 py-1.5 rounded-xl text-right min-w-[110px]">
-                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">VIRTUAL EQUITY</span>
-                <div className="text-xs font-black text-white font-mono">{fmtCurrency(currentEquity)}</div>
-                <div className={`text-[9px] font-bold font-mono ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)}
-                </div>
+            {/* Virtual Equity */}
+            <div className="w-36 sm:w-40 h-[84px] bg-slate-800/90 border border-slate-700 p-2.5 rounded-xl text-right flex flex-col justify-between">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[9px] font-black text-slate-300 uppercase tracking-wider">VIRTUAL EQUITY</span>
+                <Shield className="w-3.5 h-3.5 text-slate-400" />
               </div>
-              <button
-                onClick={handleLogout}
-                title="Sign out of session"
-                className="px-2.5 py-1 rounded-lg text-[10px] font-black text-slate-300 bg-slate-800 hover:bg-rose-500/20 hover:text-rose-300 border border-slate-700 hover:border-rose-500/30 transition-all flex items-center justify-center gap-1 cursor-pointer"
-              >
-                <LogOut className="w-3 h-3 text-rose-400" />
-                <span>LOGOUT</span>
-              </button>
+              <div className="text-lg font-black text-white font-mono tracking-tight">
+                {fmtCurrency(currentEquity)}
+              </div>
+              <div className={`text-[9px] font-bold font-mono ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)} P&L
+              </div>
             </div>
           </div>
         </div>
