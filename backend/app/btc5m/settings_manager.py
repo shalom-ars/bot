@@ -18,7 +18,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_entry_score": "60.0",         # Fast responsive entry when movement occurs
     "min_direction_lead": "4.0",       # Decisive score gap to ensure direction accuracy
     "min_net_edge": "0.00",            # Positive mathematical expectation
-    "min_rr": "1.0",                   # 1:1 minimum planned R:R
+    "min_rr": "0.0",                   # Let 1:1 strategy execute without friction cost rejection
     "max_spread": "0.02",              # Max 2.0 cents spread
     "min_liquidity": "20.0",           # High execution responsiveness
     "min_time_remaining": "0.0",
@@ -74,7 +74,7 @@ DEFAULT_SETTINGS_INSTANCE_2.update({
     "min_liquidity": "20.0",           # High execution responsiveness
     "max_spread": "0.02",              # Max 2.0 cents spread
     "min_net_edge": "0.00",            # Positive mathematical expectation
-    "min_rr": "1.0",
+    "min_rr": "0.0",                   # Let 1:1 strategy execute without friction cost rejection
     "micro_loss_tolerance": "1.00",    # 1:1 Stop Loss Tolerance
     "breakeven_trigger_dollar": "0.50",
     "cooldown_seconds": "10.0",        # Quick recovery for double slot
@@ -183,7 +183,7 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["min_direction_lead"] = "4.0"
         loosened_sync["min_entry_probability"] = "0.50"
         loosened_sync["min_net_edge"] = "0.00"
-        loosened_sync["min_rr"] = "1.0"
+        loosened_sync["min_rr"] = "0.0"
         loosened_sync["max_spread"] = "0.02"
         loosened_sync["instant_profit_harvest_dollar"] = "0.02"
     else:
@@ -200,7 +200,7 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["min_direction_lead"] = "4.0"
         loosened_sync["min_entry_probability"] = "0.50"
         loosened_sync["min_net_edge"] = "0.00"
-        loosened_sync["min_rr"] = "1.0"
+        loosened_sync["min_rr"] = "0.0"
         loosened_sync["max_spread"] = "0.02"
         loosened_sync["instant_profit_harvest_dollar"] = "0.02"
         
