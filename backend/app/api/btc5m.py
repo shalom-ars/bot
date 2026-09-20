@@ -12,8 +12,32 @@ from app.api.security import get_current_user
 from datetime import datetime, timezone, timedelta
 from app.btc5m.latency import latency_tracker
 import time
-import httpx
 import os
+from sqlalchemy import text
+
+@router.get("/hard_reset")
+def hard_reset_database(db: Session = Depends(get_db)):
+    """
+    EMERGENCY ENDPOINT: Completely obliterates all BTC5M history and settings.
+    Forces the bot to reboot and reload from the extreme defaults.
+    """
+    tables = ["btc5m_trades", "btc5m_settings", "btc5m_signals", "btc5m_audits", "trades", "positions", "signals", "risk_decisions"]
+    for table in tables:
+        try:
+            db.execute(text(f"DELETE FROM {table}"))
+        except Exception:
+            pass
+    db.commit()
+    
+    # Try to delete the wipe flags so startup hooks run again
+    for f in [".wiped_v2_95wr", "wipe.flag"]:
+        try:
+            if os.path.exists(f): os.remove(f)
+        except: pass
+        
+    # Reboot process (PM2 will restart it)
+    os._exit(0)
+    return {"status": "success", "message": "Rebooting and wiping database..."}
 from app.config import settings
 
 router = APIRouter()

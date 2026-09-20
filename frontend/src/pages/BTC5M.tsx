@@ -1452,6 +1452,17 @@ function InnerBTC5M() {
     }
   };
 
+  const handleFactoryReset = async () => {
+    if (!window.confirm("WARNING: This will completely obliterate the database and reset all settings to extreme defaults! Continue?")) return;
+    try {
+      await fetch('/api/btc5m/hard_reset');
+      alert("Database wiped. The server is restarting. Please refresh the page in a few seconds.");
+      setTimeout(() => window.location.reload(), 3000);
+    } catch (e) {
+      alert("Reset triggered.");
+    }
+  };
+
   const handleLogout = () => {
     try {
       localStorage.clear();
@@ -1693,6 +1704,16 @@ function InnerBTC5M() {
                 {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)} P&L
               </div>
             </div>
+
+              {/* Factory Reset */}
+              <button
+                onClick={handleFactoryReset}
+                title="Wipe database and reset settings"
+                className="h-[82px] px-3.5 rounded-xl text-xs font-black text-rose-100 hover:text-white bg-rose-900/40 hover:bg-rose-600 border border-rose-500/30 hover:border-rose-500 transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer shadow-xs hover:shadow-sm"
+              >
+                <ShieldAlert className="w-4 h-4 text-rose-400" />
+                <span className="text-[10px] tracking-wider font-mono">WIPE DB</span>
+              </button>
 
             {/* Adjacent Logout */}
             <button
