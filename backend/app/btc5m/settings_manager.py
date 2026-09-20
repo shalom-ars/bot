@@ -164,6 +164,11 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         "rsi_overbought": "100.0",
         "rsi_oversold": "0.0",
     }
+    
+    if instance_id == "instance_2":
+        loosened_sync["slot_mode"] = "double_slot_2.5m"
+    else:
+        loosened_sync["slot_mode"] = "single_5m"
 
     for k, v in defaults.items():
         db_key = f"{prefix}{k}"
