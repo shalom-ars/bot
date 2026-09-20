@@ -46,7 +46,7 @@ MIN_NET_EDGE          = -0.005 # Minimum net edge (-0.50% loosened threshold)
 MAX_SPREAD_STABILITY  = 0.02   # Spread must be stable (low std)
 MIN_MOMENTUM_PERSIST  = 0.40   # Momentum must be persistent (40% consistent direction)
 STALENESS_THRESHOLD_S = 10.0   # Data older than 10s is stale
-MIN_ENTRY_SCORE       = 50.0   # Score threshold (loosened to 50.0)
+MIN_ENTRY_SCORE       = 40.0   # Score threshold (loosened to 40.0)
 MIN_RR                = 0.1    # Minimum Risk-Reward threshold
 
 
@@ -402,9 +402,9 @@ class BTC5MStrategy:
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
         if is_fixed:
             tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 1.0))
-            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 1.0))
+            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 2.0))
             hard_cap = float(self.settings.get("hard_cap_dollar", 10.0))
-            dynamic_sl_delta = float(self.settings.get("dynamic_sl_delta", 0.20))
+            dynamic_sl_delta = float(self.settings.get("dynamic_sl_delta", 0.25))
             take_profit_price = min(0.99, entry_price + (tp_dollar / max(0.1, quantity)))
             max_sl_dist = min(dynamic_sl_delta, sl_dollar / max(0.1, quantity))
             stop_loss_price = max(0.10, entry_price - max_sl_dist)
@@ -414,11 +414,11 @@ class BTC5MStrategy:
         else:
             tp_delta = float(self.settings.get("take_profit_delta", 0.20))
             max_tp = float(self.settings.get("max_take_profit", 0.95))
-            sl_ratio = float(self.settings.get("stop_loss_ratio", 0.50))
+            sl_ratio = float(self.settings.get("stop_loss_ratio", 2.00))
 
             take_profit_price = min(max_tp, entry_price + tp_delta)  # Dynamic target
             reward_per_share = max(0.01, take_profit_price - entry_price)
-            risk_per_share = reward_per_share * sl_ratio  # 1:2 Risk to Reward (Profit is 2x loss)
+            risk_per_share = reward_per_share * sl_ratio  # 1:2 Risk to Reward ($1 win, $2 loss)
             stop_loss_price = max(0.01, entry_price - risk_per_share)
             planned_risk = risk_per_share * quantity  # Actual dollar risk (e.g. ~$2.00)
 
@@ -654,7 +654,7 @@ class BTC5MStrategy:
             btc_diff = abs(btc_price - price_to_beat)
             skip_flags.append(f"SKIP - Indecisive BTC vs P2B (${btc_diff:.1f} < ${min_p2b:.2f} threshold)")
 
-        min_prob = float(self.settings.get("min_entry_probability", 0.50))
+        min_prob = float(self.settings.get("min_entry_probability", 0.40))
         if fair_prob >= min_prob:
             gate_results["probability"]["pass"] = True
         else:

@@ -259,15 +259,21 @@ class BTC5MExitManager:
             reason = "HARD SAFETY STOP: RiskManager circuit breaker active (trading paused)"
             return "HARD_EXIT", current_executable_price or trade.stop_loss_price, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # C. Max trade risk breach (catastrophic drawdown > 1.5x planned risk)
+        # C. Explicit Stop-Loss Limit ($2.00 Stop-Loss Limit)
+        sl_limit = float(settings.get("sl_dollar", 2.00))
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
+            if unrealized <= -sl_limit:
+                reason = f"STOP LOSS LIMIT reached: Unrealized loss -${abs(unrealized):.2f} <= -${sl_limit:.2f}"
+                return "HARD_EXIT", exec_p, reason, 100.0, {}, "STOP_LOSS"
+
             max_allowed_loss = (float(trade.planned_risk) if trade.planned_risk else (float(trade.position_size) if trade.position_size else 10.0)) * 1.5
             if unrealized <= -max_allowed_loss:
                 reason = f"HARD SAFETY STOP: Unrealized loss ${abs(unrealized):.2f} exceeded max trade boundary ${max_allowed_loss:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # ── 2. TAKE PROFIT TARGET ──────────────────────────────────────────────
+        # ── 2. TAKE PROFIT TARGET ($1.00 Win Target) ───────────────────────────
+        tp_target = float(settings.get("tp_dollar", 1.00))
         try:
             tp_p = float(trade.take_profit_price) if trade.take_profit_price is not None else None
         except (ValueError, TypeError):
@@ -275,7 +281,7 @@ class BTC5MExitManager:
 
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
-            target_gain = float(trade.planned_reward) if (trade.planned_reward and float(trade.planned_reward) > 0) else 1.00
+            target_gain = float(trade.planned_reward) if (trade.planned_reward and float(trade.planned_reward) > 0) else tp_target
             if unrealized >= target_gain:
                 reason = f"Take profit target reached: +${unrealized:.2f} >= +${target_gain:.2f}"
                 return "TP", exec_p, reason, 0.0, {}, "TAKE_PROFIT"

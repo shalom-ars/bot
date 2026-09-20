@@ -14,8 +14,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "trading_active": "true",
     "account_mode": "demo",
     "slot_mode": "single_5m",
-    "risk_reward_ratio": "1:5",
-    "min_entry_score": "50.0",
+    "risk_reward_ratio": "1:2",
+    "min_entry_score": "40.0",
     "min_net_edge": "-0.005",
     "min_rr": "0.1",
     "max_spread": "0.02",
@@ -24,12 +24,12 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "max_time_remaining": "285.0",
     "take_profit_delta": "0.05",
     "max_take_profit": "0.95",
-    "stop_loss_ratio": "1.00",
+    "stop_loss_ratio": "2.00",
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
     "tp_dollar": "1.00",
-    "sl_dollar": "1.00",
+    "sl_dollar": "2.00",
     "hard_cap_dollar": "10.00",
     "side_bias": "ANY",
     "only_short": "false",
@@ -39,7 +39,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_entry_price": "0.40",
     "max_entry_price": "0.62",
     "min_p2b_diff": "10.0",
-    "min_entry_probability": "0.50",
+    "min_entry_probability": "0.40",
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
     "rsi_overbought": "70.0",
@@ -137,12 +137,15 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
 
     loosened_sync = {
-        "min_entry_score": "50.0",
+        "min_entry_score": "40.0",
         "min_net_edge": "-0.005",
-        "min_entry_probability": "0.50",
+        "min_entry_probability": "0.40",
         "min_order_book_imbalance": "0.02",
         "min_time_remaining": "45.0",
         "max_time_remaining": "285.0",
+        "risk_reward_ratio": "1:2",
+        "tp_dollar": "1.00",
+        "sl_dollar": "2.00",
     }
 
     for k, v in defaults.items():
