@@ -2160,11 +2160,19 @@ function InnerBTC5M() {
             </div>
           </div>
 
-          <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
-            <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
-            <span className="font-bold text-slate-700">
-              Fixed ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '2.00'} SL ($10 / trade)
-            </span>
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-col gap-1 text-[10px] font-mono text-slate-500">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
+              <span className="font-bold text-slate-700">
+                Fixed ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '2.00'} SL
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Slot System</span>
+              <span className="font-bold text-indigo-600">
+                {targetSettings?.slot_mode === 'double_slot_2.5m' ? 'DOUBLE SLOT (2.5m)' : 'SINGLE SLOT (5m)'}
+              </span>
+            </div>
           </div>
         </div>
 
