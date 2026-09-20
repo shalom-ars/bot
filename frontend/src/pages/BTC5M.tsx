@@ -4,7 +4,8 @@ import {
   RefreshCw, Clock, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
   AlertTriangle, ShieldAlert, RotateCcw, DollarSign, Layers,
-  LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical
+  LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical,
+  ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 
@@ -253,6 +254,8 @@ function TradeHistorySection({ refreshTrigger, instanceId = 'instance_1' }: { re
   const losses = historyData?.losses ?? 0;
   const winRate = historyData?.win_rate ?? 0.0;
   const realizedPnl = historyData?.realized_pnl ?? 0.0;
+  const periodIncome = trades.filter((t: any) => (t.pnl || 0) > 0).reduce((sum: number, t: any) => sum + (t.pnl || 0), 0);
+  const periodLoss = trades.filter((t: any) => (t.pnl || 0) < 0).reduce((sum: number, t: any) => sum + Math.abs(t.pnl || 0), 0);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
@@ -313,7 +316,7 @@ function TradeHistorySection({ refreshTrigger, instanceId = 'instance_1' }: { re
       </div>
 
       {/* Summary Badges for the selected period */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
             {period === 'all' ? 'All Records' : period === 'weekly' ? 'Weekly Volume' : 'Monthly Volume'}
@@ -336,6 +339,22 @@ function TradeHistorySection({ refreshTrigger, instanceId = 'instance_1' }: { re
           </span>
           <span className="text-base font-black text-slate-900 font-mono tracking-tight">
             <span className="text-emerald-600">{wins}W</span> - <span className="text-rose-600">{losses}L</span>
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Total Income ({period})
+          </span>
+          <span className="text-base font-black text-emerald-600 font-mono tracking-tight">
+            +{fmtCurrency(periodIncome)}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Total Loss ({period})
+          </span>
+          <span className="text-base font-black text-rose-600 font-mono tracking-tight">
+            -{fmtCurrency(periodLoss)}
           </span>
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
@@ -1368,8 +1387,8 @@ function InnerBTC5M() {
         </div>
       </div>
 
-      {/* 2. TOP STATS BAR: TOTAL TRADES, WINS, LOSSES, WIN RATE, PROFIT FACTOR, NET RETURN */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      {/* 2. TOP STATS BAR: TOTAL TRADES, WINS, LOSSES, WIN RATE, TOTAL INCOME, TOTAL LOSS, PROFIT FACTOR, NET RETURN */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
           <div className="flex items-center justify-between mb-0.5">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL TRADES</span>
@@ -1419,6 +1438,32 @@ function InnerBTC5M() {
           </span>
           <span className="text-[9px] text-slate-400 font-mono block truncate">
             Target &gt;55%
+          </span>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL INCOME</span>
+            <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" />
+          </div>
+          <span className="text-xl font-black text-emerald-600 font-mono tracking-tight block">
+            +{fmtCurrency(statsData?.total_income ?? 0)}
+          </span>
+          <span className="text-[9px] text-emerald-600/80 font-mono block truncate font-bold">
+            Gross Profit
+          </span>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL LOSS</span>
+            <ArrowDownRight className="w-3.5 h-3.5 text-rose-500" />
+          </div>
+          <span className="text-xl font-black text-rose-600 font-mono tracking-tight block">
+            -{fmtCurrency(statsData?.total_loss ?? 0)}
+          </span>
+          <span className="text-[9px] text-rose-600/80 font-mono block truncate font-bold">
+            Gross Losses
           </span>
         </div>
 

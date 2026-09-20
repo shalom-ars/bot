@@ -809,6 +809,8 @@ def get_btc5m_stats(db: Session = Depends(get_db)):
         "hypothetical_skip_wins": hypothetical_wins,
         "hypothetical_skip_losses": hypothetical_losses,
         "realized_pnl": round(realized_pnl, 4),
+        "total_income": round(sum(t.pnl for t in winning_trades), 2) if winning_trades else 0.0,
+        "total_loss": round(sum(abs(t.pnl) for t in losing_trades), 2) if losing_trades else 0.0,
         "wins": wins,
         "losses": losses,
         "win_rate": round(win_rate, 2),
