@@ -1094,24 +1094,39 @@ function InnerBTC5M() {
   const p2bPct = (p2bDiff !== null && priceToBeat) ? (p2bDiff / priceToBeat) * 100 : null;
   const isBtcAboveP2B = p2bDiff !== null ? p2bDiff >= 0 : true;
 
+  const marketWindowText = (() => {
+    if (current?.question) return current.question;
+    if (current?.start_time && current?.end_time) {
+      try {
+        const s = new Date(current.start_time.endsWith('Z') ? current.start_time : current.start_time + 'Z');
+        const e = new Date(current.end_time.endsWith('Z') ? current.end_time : current.end_time + 'Z');
+        const dateStr = s.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const sTime = s.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        const eTime = e.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        return `Bitcoin Up or Down · ${dateStr}, ${sTime} – ${eTime}`;
+      } catch (err) {}
+    }
+    return 'Bitcoin Up or Down · 5-Minute Window';
+  })();
+
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
       {/* 1. MASTER TOP HEADER */}
-      <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
-        {/* Extreme Top Right Corner: Logout Button */}
-        <div className="flex justify-end -mb-1">
+      <div className="relative w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 pt-3 shadow-sm text-white space-y-2">
+        {/* Extreme Top Right Corner: Logout Button lifted up with generous breathing room */}
+        <div className="flex justify-end pb-2">
           <button
             onClick={handleLogout}
             title="Sign out of session"
-            className="px-2.5 py-1 rounded-lg text-[10px] font-black text-slate-400 hover:text-rose-300 bg-slate-800/90 hover:bg-rose-500/20 border border-slate-700 hover:border-rose-500/30 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            className="px-2.5 py-1 rounded-lg text-[10px] font-black text-slate-400 hover:text-rose-300 bg-slate-800/90 hover:bg-rose-500/20 border border-slate-700/80 hover:border-rose-500/30 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs hover:shadow-sm"
           >
             <LogOut className="w-3 h-3 text-rose-400" />
             <span>LOGOUT</span>
           </button>
         </div>
 
-        {/* Main Row: Left (Jenanda Bot + Bitcoin Up/Down + Timer) & Right (Total Income, Total Loss, Virtual Equity) */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        {/* Main Row: Left (Jenanda Bot + Date/Time), Center (Timer), Right (Total Income, Total Loss, Virtual Equity) */}
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           
           {/* BOT SECTION */}
           <div className="flex items-start gap-3.5 min-w-0">
@@ -1135,20 +1150,26 @@ function InnerBTC5M() {
                 </button>
               </div>
 
-              {/* Below bot name: Show ONLY "Bitcoin Up/Down" and the timer */}
-              <div className="mt-2 flex items-center gap-2.5 flex-wrap">
-                <span className="text-xs font-bold text-amber-400 font-mono bg-amber-500/15 px-2.5 py-1 rounded-lg border border-amber-500/30">
-                  Bitcoin Up/Down
-                </span>
-                <span className="text-xl font-black font-mono tracking-wider text-white bg-slate-950/80 px-3 py-0.5 rounded-lg border border-slate-800 shadow-inner">
-                  {countdownDisplay}
-                </span>
+              {/* Below bot name: Bitcoin Date Time, which minute to which minute the 5-minute trade is running */}
+              <div className="mt-1.5 flex items-center gap-2">
+                <p className="text-xs font-semibold text-slate-300 font-mono truncate max-w-lg" title={marketWindowText}>
+                  {marketWindowText}
+                </p>
               </div>
             </div>
           </div>
 
+          {/* CENTER: COUNTDOWN TIMER IN THE CENTER OF SCREEN */}
+          <div className="flex items-center justify-center my-1 xl:my-0">
+            <div className="flex items-center justify-center px-6 py-2.5 bg-slate-950/80 rounded-2xl border border-slate-800 shadow-inner">
+              <span className="text-3xl sm:text-4xl font-black font-mono tracking-widest text-amber-400">
+                {countdownDisplay}
+              </span>
+            </div>
+          </div>
+
           {/* DISPLAY BOXES: TOTAL INCOME, TOTAL LOSS, VIRTUAL EQUITY (SAME SIZE) */}
-          <div className="flex items-center gap-2.5 self-start lg:self-auto shrink-0 flex-wrap sm:flex-nowrap">
+          <div className="flex items-center gap-2.5 self-start xl:self-auto shrink-0 flex-wrap sm:flex-nowrap">
             {/* Total Income */}
             <div className="w-36 sm:w-40 h-[84px] bg-emerald-950/40 border border-emerald-500/30 p-2.5 rounded-xl text-right flex flex-col justify-between">
               <div className="flex items-center justify-between gap-1">
