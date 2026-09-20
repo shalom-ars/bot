@@ -612,6 +612,27 @@ class BTC5MStrategy:
             gate_results["liquidity"]["pass"] = True
         else:
             skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {min_liq:.0f}")
+
+        # Hummingbot Order Book Imbalance (OBI) Filter
+        total_depth = bid_depth + ask_depth
+        obi = (bid_depth - ask_depth) / (total_depth + 1e-9) if total_depth > 0 else 0.0
+        min_obi = float(self.settings.get("min_order_book_imbalance", 0.20))
+        gate_results["obi"] = {
+            "pass": False,
+            "value": f"{obi:+.2f} (Target: {min_obi:+.2f})"
+        }
+        if predicted_side == "YES":
+            if obi >= min_obi:
+                gate_results["obi"]["pass"] = True
+            else:
+                skip_flags.append(f"SKIP - Hummingbot OBI: Bid pressure {obi:+.2f} < +{min_obi:.2f} threshold for YES")
+        elif predicted_side == "NO":
+            if obi <= -min_obi:
+                gate_results["obi"]["pass"] = True
+            else:
+                skip_flags.append(f"SKIP - Hummingbot OBI: Ask pressure {obi:+.2f} > -{min_obi:.2f} threshold for NO")
+        else:
+            gate_results["obi"]["pass"] = True
             
         if time_remaining < min_time:
             skip_flags.append(f"SKIP - Late-candle entry rejected ({time_remaining:.0f}s < {min_time:.0f}s left)")
@@ -725,6 +746,20 @@ class BTC5MStrategy:
                 BTC5MTrade.market_id == market_id,
                 BTC5MTrade.instance_id == self.instance_id
             ).all()
+
+            # Freqtrade Cooldown Guard: Disallow re-entry within cooldown window after trade closure
+            cooldown_seconds = float(self.settings.get("cooldown_seconds", 300.0))
+            last_closed = db.query(BTC5MTrade).filter(
+                BTC5MTrade.status == "CLOSED",
+                BTC5MTrade.instance_id == self.instance_id
+            ).order_by(BTC5MTrade.id.desc()).first()
+
+            if last_closed and last_closed.exit_time:
+                exit_dt = last_closed.exit_time.replace(tzinfo=timezone.utc) if last_closed.exit_time.tzinfo is None else last_closed.exit_time
+                elapsed_since_exit = (now - exit_dt).total_seconds()
+                if elapsed_since_exit < cooldown_seconds:
+                    rem_cd = int(cooldown_seconds - elapsed_since_exit)
+                    skip_flags.append(f"SKIP - Freqtrade Cooldown active ({rem_cd}s remaining after trade #{last_closed.id} exit)")
         finally:
             db.close()
 
@@ -756,9 +791,30 @@ class BTC5MStrategy:
             if len(existing_market_trades) >= 1:
                 skip_flags.append("SKIP - Single trade per 5M candle already executed")
 
-            
         if current_balance <= 0:
             skip_flags.append("SKIP - Risk limit (Zero or negative balance)")
+
+        # AI Hedge Fund 4-Agent Consensus Committee (Unanimous 4/4 Agreement Required)
+        if self.settings.get("unanimous_consensus_required", True):
+            # 1. Trend & Momentum Agent (RSI, MACD, Bollinger, MTF)
+            agent_trend_pass = gate_results.get("rsi", {}).get("pass", False) and gate_results.get("macd", {}).get("pass", False) and gate_results.get("bollinger", {}).get("pass", False)
+            # 2. Oracle Valuation Agent (Chainlink Spot vs P2B strike lead >= $20, Fair Probability >= 74%)
+            p2b_delta = abs((btc_price or 0.0) - (price_to_beat or 0.0))
+            agent_oracle_pass = (p2b_delta >= float(self.settings.get("min_p2b_diff", 20.0))) and gate_results.get("probability", {}).get("pass", False)
+            # 3. Microstructure & Liquidity Agent (Hummingbot OBI, Spread <= 2%, Depth >= $10k)
+            agent_micro_pass = gate_results.get("spread", {}).get("pass", False) and gate_results.get("liquidity", {}).get("pass", False) and gate_results.get("obi", {}).get("pass", False)
+            # 4. Risk Guardian Agent (Account Capital, Cooldown, and Drawdown Limits)
+            agent_risk_pass = (current_balance > 0) and not any("Cooldown" in s for s in skip_flags) and not any("Max" in s for s in skip_flags)
+
+            committee_votes = {
+                "Trend_Agent": "APPROVE" if agent_trend_pass else "DISSENT",
+                "Oracle_Agent": "APPROVE" if agent_oracle_pass else "DISSENT",
+                "Microstructure_Agent": "APPROVE" if agent_micro_pass else "DISSENT",
+                "Risk_Guardian": "APPROVE" if agent_risk_pass else "DISSENT"
+            }
+            dissenting_agents = [agent for agent, vote in committee_votes.items() if vote == "DISSENT"]
+            if dissenting_agents:
+                skip_flags.append(f"SKIP - AI Hedge Fund Committee Dissent: [{', '.join(dissenting_agents)}] rejected trade")
             
         state = "SKIP" if skip_flags else "READY"
         reason = skip_flags[0] if skip_flags else f"Prediction: {best_side} (Score: {max(yes_score, no_score):.1f})"

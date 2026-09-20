@@ -54,6 +54,9 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "breakeven_trigger_dollar": "0.50",
     "mtf_confirmation_enabled": "true",
     "consecutive_loss_dampener_enabled": "true",
+    "min_order_book_imbalance": "0.20",
+    "cooldown_seconds": "300.0",
+    "unanimous_consensus_required": "true",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
@@ -102,6 +105,9 @@ TYPED_FIELDS = {
     "breakeven_trigger_dollar": float,
     "mtf_confirmation_enabled": bool,
     "consecutive_loss_dampener_enabled": bool,
+    "min_order_book_imbalance": float,
+    "cooldown_seconds": float,
+    "unanimous_consensus_required": bool,
 }
 
 
