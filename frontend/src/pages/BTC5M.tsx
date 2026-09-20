@@ -3,7 +3,7 @@ import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Clock, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
-  AlertTriangle, ShieldAlert, RotateCcw, DollarSign, Layers,
+  AlertTriangle, ShieldAlert, DollarSign,
   LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical,
   ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
@@ -930,7 +930,6 @@ function InnerBTC5M() {
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [isTogglingTrading, setIsTogglingTrading] = useState<boolean>(false);
-  const [isResetting, setIsResetting] = useState<boolean>(false);
   const [isTogglingAccount, setIsTogglingAccount] = useState<boolean>(false);
   const [showRealMoneyConfirm, setShowRealMoneyConfirm] = useState<boolean>(false);
 
@@ -980,29 +979,6 @@ function InnerBTC5M() {
       console.error('Failed to toggle account mode:', err);
     } finally {
       setIsTogglingAccount(false);
-    }
-  };
-
-  const handleResetHistory = async () => {
-    if (isResetting) return;
-    const confirm = window.confirm(
-      "⚠️ RESET ALL TRADING HISTORY?\n\nThis will clear all historical trades, signals, price history, and audits across all bot instances, and restart virtual equity at $500.00.\n\nProceed?"
-    );
-    if (!confirm) return;
-    setIsResetting(true);
-    try {
-      const res = await fetch('/api/btc5m/reset_history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (res.ok) {
-        refetchStatus();
-        setRefreshTrigger(prev => prev + 1);
-      }
-    } catch (err) {
-      console.error('Failed to reset history:', err);
-    } finally {
-      setIsResetting(false);
     }
   };
 
@@ -1146,77 +1122,6 @@ function InnerBTC5M() {
 
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
-      {/* TOP CONTROL BAR: PLAN BADGE, ACCOUNT MODE SWITCHER, RESET & LOGOUT */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5 shadow-sm">
-        {/* Left: Mode & Pro Plan Badges */}
-        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
-          <span className="bg-blue-500/15 text-blue-400 text-xs font-black px-3 py-1 rounded-full border border-blue-500/30 flex items-center gap-1.5 shadow-xs">
-            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-            PRO PLAN
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 font-mono">
-            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-            <span>DEMO MODE · $500 SEED</span>
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">
-            <Clock className="w-3 h-3 text-amber-400" />
-            <span>RUNNING 5-MIN WINDOW · SINGLE 5M SLOT</span>
-          </span>
-        </div>
-
-        {/* Right: Demo vs Real Money Toggle, Reset History Button & Logout */}
-        <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
-          {/* Account Mode Switcher */}
-          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-            <button
-              onClick={() => handleToggleAccountMode('demo')}
-              disabled={isTogglingAccount}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                (statusData?.account_mode || 'demo') === 'demo'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>DEMO ($500)</span>
-            </button>
-            <button
-              onClick={() => handleToggleAccountMode('real_money')}
-              disabled={isTogglingAccount}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                statusData?.account_mode === 'real_money'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <DollarSign className="w-3.5 h-3.5" />
-              <span>REAL MONEY</span>
-            </button>
-          </div>
-
-          {/* Reset All History Button */}
-          <button
-            onClick={handleResetHistory}
-            disabled={isResetting}
-            title="Reset all trades, signals, and restart equity at $500.00"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-rose-500/10 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20 transition-all cursor-pointer disabled:opacity-50"
-          >
-            <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
-            <span>RESET ($500)</span>
-          </button>
-
-          {/* Logout Button */}
-          <button
-            onClick={handleLogout}
-            title="Sign out of your session"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-slate-800 text-slate-300 border border-slate-700 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30 transition-all cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5 text-rose-400" />
-            <span>LOGOUT</span>
-          </button>
-        </div>
-      </div>
-
       {/* REAL MONEY SAFETY CONFIRMATION MODAL */}
       {showRealMoneyConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -1254,64 +1159,28 @@ function InnerBTC5M() {
         </div>
       )}
 
-      {/* 1. FULL-WIDTH RESOLUTION COUNTDOWN TIMER BANNER (WITH BOT LOGO) */}
+      {/* 1. MASTER TOP HEADER & RESOLUTION COUNTDOWN BANNER */}
       <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
-        {/* Top Row inside Timer Banner: Bot Logo, Market Question, Big Countdown, and Virtual Equity */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Left: Bot Logo, Active Contract & Status */}
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="shrink-0 flex items-center justify-center p-1 bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md">
+        {/* Main Row: Top Left (Bot + Toggle + Pair Info), Center (Header Badges & Countdown), Top Right (Total Income & Loss) */}
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          
+          {/* TOP LEFT: Bot Logo, Name, Pause/Start Toggle, and Trading Pair Info Below */}
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="shrink-0 p-1 bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md mt-0.5">
               <BrandLogo size={42} glow={true} />
             </div>
             <div className="min-w-0">
+              {/* Top line: Bot Name + Pause/Start Toggle beside it */}
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-base font-black text-white tracking-tight leading-tight">JONANDA BOT</span>
                 <span className="text-[10px] bg-blue-500/20 text-blue-300 font-bold px-2 py-0.5 rounded border border-blue-500/30 uppercase font-mono">
                   BTC 5M TERMINAL
                 </span>
-                <span className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5 ml-1 pl-2 border-l border-slate-700">
-                  <Clock className="w-3.5 h-3.5 animate-pulse text-amber-400" />
-                  RESOLUTION COUNTDOWN
-                </span>
-                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${isTradingActive ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>
-                  {isTradingActive ? '● ENGINE RUNNING' : '● BOT IDLE'}
-                </span>
-                <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black px-2 py-0.5 rounded border border-amber-500/30 font-mono">
-                  5-MIN WINDOW
-                </span>
-                {statusData?.slot_mode === 'double_slot_2.5m' ? (
-                  <span className="bg-indigo-500/20 text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded border border-indigo-500/30 font-mono flex items-center gap-1">
-                    <Layers className="w-3 h-3" />
-                    SLOT {statusData?.current_slot ?? 1} OF 2 ({statusData?.current_slot === 1 ? 'FIRST 2.5M' : 'SECOND 2.5M'})
-                  </span>
-                ) : (
-                  <span className="bg-blue-500/20 text-blue-300 text-[9px] font-black px-2 py-0.5 rounded border border-blue-500/30 font-mono">
-                    SINGLE 5M SLOT
-                  </span>
-                )}
-                <span className={`text-[9px] font-black px-2 py-0.5 rounded border font-mono uppercase ${
-                  statusData?.account_mode === 'real_money'
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                }`}>
-                  {statusData?.account_mode === 'real_money' ? '● REAL MONEY' : '🧪 DEMO ($500)'}
-                </span>
-                {/* Demo Quick Reset Button */}
-                {(statusData?.account_mode || 'demo') === 'demo' && (
-                  <button
-                    onClick={handleResetHistory}
-                    disabled={isResetting}
-                    title="Reset virtual equity to $500.00 and clear demo records"
-                    className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border border-rose-500/40 bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    <RotateCcw className={`w-2.5 h-2.5 ${isResetting ? 'animate-spin' : ''}`} />
-                    <span>RESET ($500)</span>
-                  </button>
-                )}
+                {/* Pause/Start Toggle Button beside Bot Name */}
                 <button
                   onClick={() => handleToggleTrading(!isTradingActive)}
                   disabled={isTogglingTrading}
-                  className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
+                  className={`px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs ${
                     isTradingActive
                       ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
                       : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse'
@@ -1320,51 +1189,145 @@ function InnerBTC5M() {
                   {isTogglingTrading ? 'Updating...' : isTradingActive ? '■ PAUSE BOT' : '▶ START BOT'}
                 </button>
               </div>
-              <p className="text-sm font-black text-white truncate mt-1">
-                {current?.question || 'Searching active BTC 5M market window...'}
-              </p>
-              <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-slate-400">
-                {wsConnected ? (
-                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                    ⚡ REAL-TIME STREAM (&lt;20ms)
+
+              {/* Trading Pair Info below Bot Name */}
+              <div className="mt-1 space-y-0.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-400 font-mono">
+                  <span className="bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                    BTC / USD · 5-MIN ROLLING BINARY
                   </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                    REST POLLING FALLBACK
+                  <span className={`text-[10px] font-bold ${isTradingActive ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {isTradingActive ? '● ENGINE RUNNING' : '● BOT IDLE'}
                   </span>
-                )}
+                </div>
+                <p className="text-xs font-medium text-slate-300 truncate max-w-lg" title={current?.question}>
+                  {current?.question || 'Searching active BTC 5M market window...'}
+                </p>
               </div>
             </div>
           </div>
 
+          {/* TOP CENTER: Pro Plan, Demo Mode, 5-Minute Window & Resolution Countdown Label */}
+          <div className="flex flex-col items-center justify-center gap-1.5 px-3.5 py-2 bg-slate-950/60 rounded-xl border border-slate-800">
+            {/* Header Badges: Pro Plan, Demo Mode, 5-Min Window */}
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              <span className="bg-blue-500/15 text-blue-400 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-blue-500/30 flex items-center gap-1 shadow-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                PRO PLAN
+              </span>
 
-          {/* Right: Digital Timer & Virtual Equity */}
-          <div className="flex items-center gap-3 shrink-0 self-start md:self-auto">
-            {/* Digital Countdown */}
-            <div className="text-right">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">TIME TO SETTLE</span>
-              <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-white flex items-center gap-1.5">
-                <span>{countdownDisplay}</span>
+              {/* Demo Mode Switcher */}
+              <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700">
+                <button
+                  onClick={() => handleToggleAccountMode('demo')}
+                  disabled={isTogglingAccount}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer ${
+                    (statusData?.account_mode || 'demo') === 'demo'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Zap className="w-2.5 h-2.5" />
+                  <span>DEMO ($500)</span>
+                </button>
+                <button
+                  onClick={() => handleToggleAccountMode('real_money')}
+                  disabled={isTogglingAccount}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer ${
+                    statusData?.account_mode === 'real_money'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <DollarSign className="w-2.5 h-2.5" />
+                  <span>REAL MONEY</span>
+                </button>
+              </div>
+
+              <span className="bg-amber-500/20 text-amber-300 text-[10px] font-black px-2 py-0.5 rounded border border-amber-500/30 font-mono">
+                RUNNING 5-MIN WINDOW
+              </span>
+              <span className="bg-blue-500/20 text-blue-300 text-[10px] font-black px-2 py-0.5 rounded border border-blue-500/30 font-mono">
+                SINGLE 5M SLOT
+              </span>
+            </div>
+
+            {/* Resolution Countdown Label & Digital Timer */}
+            <div className="flex items-center gap-2.5 mt-0.5">
+              <span className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 animate-pulse text-amber-400" />
+                RESOLUTION COUNTDOWN:
+              </span>
+              <span className="text-2xl font-black font-mono tracking-tight text-white">
+                {countdownDisplay}
+              </span>
+              {wsConnected ? (
+                <span className="inline-flex items-center gap-1 text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded text-[9px] border border-emerald-500/30 font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  STREAM &lt;20ms
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded text-[9px] border border-amber-500/30 font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  POLLING
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* TOP RIGHT CORNER: Total Income, Total Loss, Virtual Equity & Logout */}
+          <div className="flex items-center gap-2 self-start xl:self-auto shrink-0 flex-wrap sm:flex-nowrap">
+            {/* Total Income */}
+            <div className="bg-emerald-950/40 border border-emerald-500/30 p-2.5 rounded-xl min-w-[125px] text-right">
+              <div className="flex items-center justify-between gap-1 mb-0.5">
+                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider">TOTAL INCOME</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="text-lg font-black text-emerald-400 font-mono tracking-tight">
+                +{fmtCurrency(statsData?.total_income ?? 0)}
+              </div>
+              <div className="text-[9px] text-emerald-500/80 font-mono font-bold">
+                Gross Profit ({statsData?.wins ?? 0}W)
               </div>
             </div>
 
-            {/* Virtual Balance Badge */}
-            <div className="bg-slate-800/90 border border-slate-700 px-3.5 py-1.5 rounded-xl text-right">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">VIRTUAL EQUITY</span>
-              <div className="flex items-baseline gap-1.5 font-mono">
-                <span className="text-sm font-black text-white">{fmtCurrency(currentEquity)}</span>
-                <span className={`text-[10px] font-bold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)}
-                </span>
+            {/* Total Loss */}
+            <div className="bg-rose-950/40 border border-rose-500/30 p-2.5 rounded-xl min-w-[125px] text-right">
+              <div className="flex items-center justify-between gap-1 mb-0.5">
+                <span className="text-[9px] font-black text-rose-400 uppercase tracking-wider">TOTAL LOSS</span>
+                <ArrowDownRight className="w-3.5 h-3.5 text-rose-400" />
               </div>
+              <div className="text-lg font-black text-rose-400 font-mono tracking-tight">
+                -{fmtCurrency(statsData?.total_loss ?? 0)}
+              </div>
+              <div className="text-[9px] text-rose-500/80 font-mono font-bold">
+                Gross Losses ({statsData?.losses ?? 0}L)
+              </div>
+            </div>
+
+            {/* Virtual Equity & Logout */}
+            <div className="flex flex-col gap-1.5">
+              <div className="bg-slate-800/90 border border-slate-700 px-3 py-1.5 rounded-xl text-right min-w-[110px]">
+                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">VIRTUAL EQUITY</span>
+                <div className="text-xs font-black text-white font-mono">{fmtCurrency(currentEquity)}</div>
+                <div className={`text-[9px] font-bold font-mono ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {totalPnl >= 0 ? '+' : ''}{fmtCurrency(totalPnl)}
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                title="Sign out of session"
+                className="px-2.5 py-1 rounded-lg text-[10px] font-black text-slate-300 bg-slate-800 hover:bg-rose-500/20 hover:text-rose-300 border border-slate-700 hover:border-rose-500/30 transition-all flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <LogOut className="w-3 h-3 text-rose-400" />
+                <span>LOGOUT</span>
+              </button>
             </div>
           </div>
         </div>
 
         {/* 5-Minute Window Full-Width Progress Bar */}
-        <div className="space-y-1">
+        <div className="space-y-1 pt-1">
           <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
             <span className="flex items-center gap-1.5">
               <span className={`w-1.5 h-1.5 rounded-full ${countdownSeconds > 30 ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400 animate-ping'}`}></span>
@@ -1387,8 +1350,8 @@ function InnerBTC5M() {
         </div>
       </div>
 
-      {/* 2. TOP STATS BAR: TOTAL TRADES, WINS, LOSSES, WIN RATE, TOTAL INCOME, TOTAL LOSS, PROFIT FACTOR, NET RETURN */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+      {/* 2. TOP STATS BAR: TOTAL TRADES, WINS, LOSSES, WIN RATE, PROFIT FACTOR, NET RETURN (PROFIT FACTOR NEXT TO WIN RATE) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
           <div className="flex items-center justify-between mb-0.5">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL TRADES</span>
@@ -1441,32 +1404,7 @@ function InnerBTC5M() {
           </span>
         </div>
 
-        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL INCOME</span>
-            <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" />
-          </div>
-          <span className="text-xl font-black text-emerald-600 font-mono tracking-tight block">
-            +{fmtCurrency(statsData?.total_income ?? 0)}
-          </span>
-          <span className="text-[9px] text-emerald-600/80 font-mono block truncate font-bold">
-            Gross Profit
-          </span>
-        </div>
-
-        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">TOTAL LOSS</span>
-            <ArrowDownRight className="w-3.5 h-3.5 text-rose-500" />
-          </div>
-          <span className="text-xl font-black text-rose-600 font-mono tracking-tight block">
-            -{fmtCurrency(statsData?.total_loss ?? 0)}
-          </span>
-          <span className="text-[9px] text-rose-600/80 font-mono block truncate font-bold">
-            Gross Losses
-          </span>
-        </div>
-
+        {/* Profit Factor placed next to Win Rate */}
         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs min-w-0">
           <div className="flex items-center justify-between mb-0.5">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">PROFIT FACTOR</span>
