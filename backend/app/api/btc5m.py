@@ -159,6 +159,8 @@ def get_btc5m_stats(instance_id: Optional[str] = None, db: Session = Depends(get
         "initial_balance": initial_balance,
         "current_balance": round(current_balance, 2),
         "realized_pnl": round(realized_pnl, 4),
+        "total_income": round(sum(winning_pnls), 2) if winning_pnls else 0.0,
+        "total_loss": round(sum(losing_pnls), 2) if losing_pnls else 0.0,
         "total_trades": total_trades,
         "open_trades": len(open_trades),
         "closed_trades": len(closed_trades),
