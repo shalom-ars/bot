@@ -377,6 +377,25 @@ class BTC5MStrategy:
         
         risk_pct = self.settings.get("risk_per_trade", settings.risk_per_trade)
         planned_risk = current_balance * risk_pct
+        
+        # Jesse Risk-of-Ruin: Dampen position size by 50% if previous trade was a loss
+        if self.settings.get("consecutive_loss_dampener_enabled", True):
+            try:
+                from app.db.session import SessionLocal
+                from app.db.models import BTC5MTrade
+                _db = SessionLocal()
+                try:
+                    last_closed = _db.query(BTC5MTrade).filter(
+                        BTC5MTrade.status == "CLOSED",
+                        BTC5MTrade.instance_id == self.instance_id
+                    ).order_by(BTC5MTrade.id.desc()).first()
+                    if last_closed and last_closed.pnl is not None and last_closed.pnl < 0:
+                        planned_risk *= 0.50
+                finally:
+                    _db.close()
+            except Exception:
+                pass
+
         position_size = planned_risk
         quantity = position_size / (entry_price + 1e-9)
 
@@ -671,6 +690,20 @@ class BTC5MStrategy:
             skip_flags.append(f"SKIP - Price pierced lower Bollinger Band (%B {bb_pct:.2f} < -0.10): high bounce risk")
         else:
             gate_results["bollinger"]["pass"] = True
+
+        # Jesse Multi-Timeframe (MTF) Trend Alignment (1m vs 5m)
+        if self.settings.get("mtf_confirmation_enabled", True):
+            spot_mom_1m = features.get("btc_momentum_1m")
+            clob_mom_1m = features.get("short_momentum_1m", 0.0)
+            m1_dir = spot_mom_1m if spot_mom_1m is not None else clob_mom_1m
+            m5_macd = float(features.get("macd_hist", 0.0))
+
+            if predicted_side == "YES":
+                if m1_dir < -0.0002 or m5_macd < -0.05:
+                    skip_flags.append(f"SKIP - Multi-timeframe trend divergence (1m mom: {m1_dir:+.4f}, 5m MACD: {m5_macd:+.4f}) - not aligned for UP")
+            elif predicted_side == "NO":
+                if m1_dir > 0.0002 or m5_macd > 0.05:
+                    skip_flags.append(f"SKIP - Multi-timeframe trend divergence (1m mom: {m1_dir:+.4f}, 5m MACD: {m5_macd:+.4f}) - not aligned for DOWN")
             
         best_side = predicted_side
         final_side = "BUY" if predicted_side == "YES" else ("SELL" if predicted_side == "NO" else "NONE")

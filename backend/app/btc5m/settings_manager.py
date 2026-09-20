@@ -49,6 +49,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "macd_signal": "9",
     "bb_period": "20",
     "bb_std": "2.0",
+    "atr_period": "14",
+    "atr_trailing_multiplier": "1.5",
+    "breakeven_trigger_dollar": "0.50",
+    "mtf_confirmation_enabled": "true",
+    "consecutive_loss_dampener_enabled": "true",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS
@@ -92,6 +97,11 @@ TYPED_FIELDS = {
     "macd_signal": int,
     "bb_period": int,
     "bb_std": float,
+    "atr_period": int,
+    "atr_trailing_multiplier": float,
+    "breakeven_trigger_dollar": float,
+    "mtf_confirmation_enabled": bool,
+    "consecutive_loss_dampener_enabled": bool,
 }
 
 
