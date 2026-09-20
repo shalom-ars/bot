@@ -992,10 +992,12 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
-            TP / SL (1.6:1 R:R)
+            {currentSettings.slot_mode === 'double_slot_2.5m' ? 'SCALP EXITS (Trail / Cut)' : 'TP / SL (1.6:1 R:R)'}
           </span>
           <span className="text-base font-black text-slate-900 font-mono tracking-tight">
-            ${Number(currentSettings.tp_dollar || 1.50).toFixed(2)} / ${Number(currentSettings.sl_dollar || 0.90).toFixed(2)}
+            {currentSettings.slot_mode === 'double_slot_2.5m'
+              ? `$${Number(currentSettings.breakeven_trigger_dollar || 0.005).toFixed(3)} / -$${Number(currentSettings.micro_loss_tolerance || 0.10).toFixed(2)}`
+              : `$${Number(currentSettings.tp_dollar || 1.50).toFixed(2)} / $${Number(currentSettings.sl_dollar || 0.90).toFixed(2)}`}
           </span>
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
@@ -2186,13 +2188,15 @@ function InnerBTC5M() {
             <div className="flex justify-between items-center">
               <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
               <span className="font-bold text-slate-700">
-                Fixed ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '2.00'} SL
+                {targetSettings?.slot_mode === 'double_slot_2.5m' 
+                  ? 'HYPER SCALP (Cent-Level SL & Profit Protect)' 
+                  : `Fixed $${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / $${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '2.00'} SL`}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Slot System</span>
               <span className="font-bold text-indigo-600">
-                {targetSettings?.slot_mode === 'double_slot_2.5m' ? 'DOUBLE SLOT (2.5m)' : 'SINGLE SLOT (5m)'}
+                {targetSettings?.slot_mode === 'double_slot_2.5m' ? 'DOUBLE SLOT (2.5m) ACTIVE' : 'SINGLE SLOT (5m)'}
               </span>
             </div>
           </div>
