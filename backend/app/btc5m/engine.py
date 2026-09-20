@@ -1275,8 +1275,8 @@ btc5m_engine = BTC5MEngine(
     instance_id="instance_1",
     name="BTC 5M Trading Bot",
     mode="fixed_dollar",
-    tp_dollar=1.0,
-    sl_dollar=2.0,
+    tp_dollar=1.20,
+    sl_dollar=0.80,
     only_short=False,
     slot_mode="single_5m"
 )

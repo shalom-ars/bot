@@ -91,15 +91,17 @@ def read_optimizer_log_file(max_lines: int = 500) -> str:
 
 # Strict Safety Boundaries to prevent over-tightening or reckless widening
 SAFETY_BOUNDS: Dict[str, Tuple[float, float]] = {
-    "min_entry_score": (35.0, 65.0),
-    "min_entry_probability": (0.35, 0.60),
+    "min_entry_score": (35.0, 75.0),
+    "min_entry_probability": (0.35, 0.65),
     "min_net_edge": (-0.035, 0.005),
     "min_order_book_imbalance": (0.01, 0.05),
     "min_p2b_diff": (0.5, 8.0),
     "min_entry_price": (0.25, 0.45),
     "max_entry_price": (0.55, 0.75),
-    "tp_dollar": (0.80, 2.50),
-    "sl_dollar": (1.50, 3.50),
+    "tp_dollar": (1.00, 2.50),
+    "sl_dollar": (0.50, 0.90),
+    "hard_cap_dollar": (0.50, 0.90),
+    "min_rr": (1.50, 3.00),
     "dynamic_sl_delta": (0.15, 0.35),
     "soft_stop_confirmation_seconds": (2.0, 8.0),
     "rsi_overbought": (64.0, 78.0),
@@ -121,6 +123,7 @@ class BTC5MSelfLearningOptimizer:
         Invoked immediately upon trade closure.
         If the trade was a loss, performs root-cause prediction error diagnosis
         and tunes strategy filters to prevent repeating the mistake.
+        Escalates penalty weights on consecutive stop-loss breaches.
         """
         try:
             if trade.pnl is None:
@@ -133,40 +136,55 @@ class BTC5MSelfLearningOptimizer:
 
             current_settings = get_btc5m_settings(db, instance_id=self.instance_id)
 
-            # 1. Diagnose Root Cause of the Prediction Error
-            root_cause, error_analysis, target_param, adjustment_delta = self._diagnose_prediction_error(
+            # 1. Diagnose Root Cause of the Prediction Error & Streak Escalation
+            root_cause, error_analysis, target_param, adjustment_delta, extra_updates = self._diagnose_prediction_error(
+                db=db,
                 trade=trade,
                 settings=current_settings
             )
 
             # 2. Compute New Value with Safety Clamping
-            old_val_raw = current_settings.get(target_param)
-            try:
-                old_val_float = float(old_val_raw)
-            except (ValueError, TypeError):
-                old_val_float = 40.0
+            updates_to_apply = {}
 
-            bounds = SAFETY_BOUNDS.get(target_param, (old_val_float * 0.7, old_val_float * 1.3))
-            new_val_float = max(bounds[0], min(bounds[1], old_val_float + adjustment_delta))
-            
-            # Format according to parameter precision
-            if target_param in ("min_entry_score", "min_p2b_diff", "rsi_overbought", "rsi_oversold"):
-                old_val_str = f"{old_val_float:.1f}"
-                new_val_str = f"{new_val_float:.1f}"
-            elif target_param in ("tp_dollar", "sl_dollar", "dynamic_sl_delta", "min_entry_price", "max_entry_price"):
-                old_val_str = f"{old_val_float:.2f}"
-                new_val_str = f"{new_val_float:.2f}"
-            else:
-                old_val_str = f"{old_val_float:.3f}"
-                new_val_str = f"{new_val_float:.3f}"
+            def _clamp_and_format(param: str, delta: float) -> Tuple[str, str]:
+                old_raw = current_settings.get(param)
+                try:
+                    old_flt = float(old_raw)
+                except (ValueError, TypeError):
+                    old_flt = 40.0 if "score" in param else (0.40 if "probability" in param else 1.0)
+
+                b = SAFETY_BOUNDS.get(param, (old_flt * 0.7, old_flt * 1.3))
+                new_flt = max(b[0], min(b[1], old_flt + delta))
+
+                if param in ("min_entry_score", "min_p2b_diff", "rsi_overbought", "rsi_oversold"):
+                    return f"{old_flt:.1f}", f"{new_flt:.1f}"
+                elif param in ("tp_dollar", "sl_dollar", "hard_cap_dollar", "min_rr", "dynamic_sl_delta", "min_entry_price", "max_entry_price"):
+                    return f"{old_flt:.2f}", f"{new_flt:.2f}"
+                elif param == "min_entry_probability":
+                    return f"{old_flt:.2f}", f"{new_flt:.2f}"
+                else:
+                    return f"{old_flt:.3f}", f"{new_flt:.3f}"
+
+            old_val_str, new_val_str = _clamp_and_format(target_param, adjustment_delta)
+            updates_to_apply[target_param] = new_val_str
+
+            extra_summary_parts = []
+            if extra_updates:
+                for ep, ed in extra_updates.items():
+                    e_old, e_new = _clamp_and_format(ep, ed)
+                    updates_to_apply[ep] = e_new
+                    extra_summary_parts.append(f"{ep}: {e_old} -> {e_new} ({ed:+.2f})")
 
             # 3. Apply Setting Adaptation to Database
             update_btc5m_settings(
                 db=db,
-                updates={target_param: new_val_str},
+                updates=updates_to_apply,
                 user_info=f"AI_OPTIMIZER_TRADE_{trade.id}",
                 instance_id=self.instance_id
             )
+
+            adjusted_params_str = ", ".join(updates_to_apply.keys())
+            delta_summary_str = f"{adjustment_delta:+.2f}" if not extra_summary_parts else f"{adjustment_delta:+.2f} | {'; '.join(extra_summary_parts)}"
 
             # 4. Create and Persist Self-Learning History Log
             log_entry = BTC5MSelfLearningLog(
@@ -178,10 +196,10 @@ class BTC5MSelfLearningOptimizer:
                 pnl=trade.pnl,
                 root_cause=root_cause,
                 error_analysis=error_analysis,
-                parameter_adjusted=target_param,
+                parameter_adjusted=adjusted_params_str,
                 old_value=old_val_str,
                 new_value=new_val_str,
-                adaptation_delta=f"{adjustment_delta:+.3f}",
+                adaptation_delta=delta_summary_str,
                 status="APPLIED"
             )
             db.add(log_entry)
@@ -196,16 +214,16 @@ class BTC5MSelfLearningOptimizer:
                 outcome="LOSS",
                 root_cause=root_cause,
                 error_analysis=error_analysis,
-                param_adjusted=target_param,
+                param_adjusted=adjusted_params_str,
                 old_value=old_val_str,
                 new_value=new_val_str,
-                adaptation_delta=f"{adjustment_delta:+.3f}",
+                adaptation_delta=delta_summary_str,
                 pnl=trade.pnl
             )
 
             logger.info(
                 f"[Self-Learning Optimizer] Diagnosed Trade #{trade.id} loss (${trade.pnl:.2f}) as [{root_cause}]. "
-                f"Adapted {target_param}: {old_val_str} -> {new_val_str} ({adjustment_delta:+.3f}). Log #{log_entry.id} saved."
+                f"Adapted {adjusted_params_str}: {delta_summary_str}. Log #{log_entry.id} saved."
             )
             return log_entry
 
@@ -216,13 +234,15 @@ class BTC5MSelfLearningOptimizer:
 
     def _diagnose_prediction_error(
         self,
+        db: Session,
         trade: BTC5MTrade,
         settings: Dict[str, Any]
-    ) -> Tuple[str, str, str, float]:
+    ) -> Tuple[str, str, str, float, Optional[Dict[str, float]]]:
         """
         Determines the exact reason a prediction failed and selects the optimal corrective delta.
+        If consecutive stop-loss breaches occur, penalizes entry thresholds aggressively.
         Returns:
-            (root_cause, error_analysis, target_parameter, adjustment_delta)
+            (root_cause, error_analysis, target_parameter, adjustment_delta, extra_updates)
         """
         locked_pred = trade.locked_predicted_side or ("YES" if trade.side == "BUY" else "NO")
         score = trade.entry_yes_score if locked_pred == "YES" else trade.entry_no_score
@@ -231,32 +251,90 @@ class BTC5MSelfLearningOptimizer:
         imbalance = trade.imbalance_at_entry or 0.0
         momentum = trade.momentum_at_entry or 0.0
 
-        # Case 1: Stop-Loss limit was hit ($2.00 hard stop or thesis collapse)
-        if "STOP LOSS" in exit_reason or "HARD SAFETY STOP" in exit_reason or trade.exit_decision_state == "HARD_EXIT":
+        is_current_stop_loss = (
+            "STOP LOSS" in exit_reason
+            or "HARD SAFETY STOP" in exit_reason
+            or trade.exit_decision_state == "HARD_EXIT"
+            or (trade.pnl is not None and trade.pnl <= -0.60)
+        )
+
+        # Check consecutive stop loss breaches on similar setups
+        consecutive_stop_losses = 1 if is_current_stop_loss else 0
+        similar_setup_stop_losses = 1 if is_current_stop_loss else 0
+
+        if is_current_stop_loss:
+            try:
+                prev_trades = db.query(BTC5MTrade).filter(
+                    BTC5MTrade.instance_id == self.instance_id,
+                    BTC5MTrade.status == "CLOSED",
+                    BTC5MTrade.id < trade.id
+                ).order_by(desc(BTC5MTrade.id)).limit(5).all()
+
+                for pt in prev_trades:
+                    pt_exit = (pt.exit_reason or "").upper()
+                    pt_is_sl = (
+                        "STOP LOSS" in pt_exit
+                        or "HARD SAFETY STOP" in pt_exit
+                        or pt.exit_decision_state == "HARD_EXIT"
+                        or (pt.pnl is not None and pt.pnl <= -0.60)
+                    )
+                    if pt_is_sl:
+                        consecutive_stop_losses += 1
+                        pt_pred = pt.locked_predicted_side or ("YES" if pt.side == "BUY" else "NO")
+                        if pt_pred == locked_pred:
+                            similar_setup_stop_losses += 1
+                    else:
+                        break
+            except Exception as e:
+                logger.warning(f"[Self-Learning Optimizer] Could not query streak history: {e}")
+
+        # Case 0: Consecutive Stop-Loss Breaches - Escalate penalty weights immediately
+        if is_current_stop_loss and consecutive_stop_losses >= 2:
+            escalated_score_penalty = min(12.0, 2.5 * consecutive_stop_losses)
+            escalated_prob_penalty = min(0.08, 0.02 * consecutive_stop_losses)
+
+            return (
+                "CONSECUTIVE_STOP_LOSS_CASCADE",
+                (
+                    f"Consecutive stop-loss breach #{consecutive_stop_losses} detected on {locked_pred} setups "
+                    f"(recent loss: -${abs(trade.pnl):.2f}). Escalate penalty weights immediately: "
+                    f"raising min entry score by +{escalated_score_penalty:.1f} and min entry probability by +{escalated_prob_penalty:.2f} "
+                    f"to prevent loss cascades on similar market setups."
+                ),
+                "min_entry_score",
+                escalated_score_penalty,
+                {"min_entry_probability": escalated_prob_penalty}
+            )
+
+        # Case 1: Single Stop-Loss limit was hit ($0.80 hard stop or thesis collapse)
+        if is_current_stop_loss:
             # If imbalance was marginal, orderbook spoofing likely gave a false entry trigger
             if abs(imbalance) < 0.035:
                 return (
                     "OBI_FAKE_WALL",
-                    f"Order book imbalance ({imbalance:+.2f}) was shallow and collapsed rapidly post-entry, leading to adverse stop-out.",
+                    f"Order book imbalance ({imbalance:+.2f}) was shallow and collapsed rapidly post-entry, leading to adverse stop-out at -${abs(trade.pnl):.2f}.",
                     "min_order_book_imbalance",
-                    +0.005
+                    +0.005,
+                    None
                 )
             
-            # If score was in the lower quartile (e.g. < 44.0), entry had insufficient conviction
+            # If score was in the lower quartile (e.g. < 45.0), entry had insufficient conviction
             if score is not None and score < 45.0:
                 return (
                     "LOW_CONVICTION_NOISE",
                     f"Entry prediction score ({score:.1f}) was near threshold ({settings.get('min_entry_score', 40):.1f}), making it vulnerable to random market noise.",
                     "min_entry_score",
-                    +2.0
+                    +3.0,
+                    None
                 )
 
-            # Otherwise, stop-loss was too tight for current candle volatility
+            # Otherwise, stop-loss breached maximum loss cap -$0.80
             return (
-                "STOP_LOSS_TOO_TIGHT",
-                f"Position stopped out at -${abs(trade.pnl):.2f} due to short-term candle volatility spikes before thesis could mature.",
-                "dynamic_sl_delta",
-                +0.02
+                "STOP_LOSS_HARD_CAP_BREACH",
+                f"Position triggered Hard Safety Stop at -${abs(trade.pnl):.2f} (loss cap: -$0.80). Raising conviction floor to protect against volatility whipsaws.",
+                "min_entry_score",
+                +2.0,
+                None
             )
 
         # Case 2: Market Resolution settled against predicted side
@@ -269,7 +347,8 @@ class BTC5MSelfLearningOptimizer:
                     "PROBABILITY_DEFICIT",
                     f"Directional probability ({effective_p*100:.1f}%) was insufficient to withstand binary settlement spread against {resolution}.",
                     "min_entry_probability",
-                    +0.02
+                    +0.02,
+                    None
                 )
 
             # Check if momentum reversed against the trade
@@ -278,7 +357,8 @@ class BTC5MSelfLearningOptimizer:
                     "MOMENTUM_REVERSAL",
                     f"Entry momentum ({momentum:+.3f}) diverged from market settlement direction ({resolution}), resulting in counter-trend lock.",
                     "min_entry_score",
-                    +1.5
+                    +1.5,
+                    None
                 )
 
             # Price-To-Beat chop near settlement
@@ -288,14 +368,16 @@ class BTC5MSelfLearningOptimizer:
                     "P2B_CHOP",
                     f"Final settlement resolved to {resolution} due to micro-price oscillation across Price-to-Beat boundary. Slightly adjusting P2B boundary without closing entry window.",
                     "min_p2b_diff",
-                    +0.3
+                    +0.3,
+                    None
                 )
             else:
                 return (
                     "P2B_CHOP",
                     f"Micro-price oscillation across Price-to-Beat boundary near resolution. Widening dynamic stop buffer to absorb boundary noise.",
                     "dynamic_sl_delta",
-                    +0.02
+                    +0.02,
+                    None
                 )
 
         # Default fallback diagnosis: General prediction error
@@ -303,7 +385,8 @@ class BTC5MSelfLearningOptimizer:
             "PREDICTION_DIVERGENCE",
             f"Trade incurred loss (-${abs(trade.pnl):.2f}) due to multi-factor decay between entry and exit.",
             "min_entry_score",
-            +0.5
+            +1.0,
+            None
         )
 
     def run_continuous_optimization(self, db: Session, lookback: int = 20) -> Dict[str, Any]:
@@ -358,9 +441,14 @@ class BTC5MSelfLearningOptimizer:
                 reason_parts.append(f"Win rate healthy ({win_rate:.1f}%): broadened opportunity window to maximize fill rate.")
         else:
             # When trade history is light, default to maximum trade execution mode
-            if current_score > 40.0:
+            # Protect elevated score if recent trades suffered stop losses
+            has_recent_sl = any(
+                ("STOP LOSS" in (t.exit_reason or "").upper() or "HARD SAFETY STOP" in (t.exit_reason or "").upper() or (t.pnl is not None and t.pnl <= -0.60))
+                for t in recent_trades[:2]
+            )
+            if not has_recent_sl and current_score > 40.0:
                 adjustments["min_entry_score"] = "40.0"
-            if current_prob > 0.40:
+            if not has_recent_sl and current_prob > 0.40:
                 adjustments["min_entry_probability"] = "0.40"
             if current_net_edge > -0.020:
                 adjustments["min_net_edge"] = "-0.020"

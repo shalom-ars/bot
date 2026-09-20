@@ -47,7 +47,7 @@ MAX_SPREAD_STABILITY  = 0.02   # Spread must be stable (low std)
 MIN_MOMENTUM_PERSIST  = 0.40   # Momentum must be persistent (40% consistent direction)
 STALENESS_THRESHOLD_S = 10.0   # Data older than 10s is stale
 MIN_ENTRY_SCORE       = 40.0   # Score threshold (loosened to 40.0)
-MIN_RR                = 0.1    # Minimum Risk-Reward threshold
+MIN_RR                = 1.5    # Minimum 1.5:1 Risk-Reward threshold
 
 
 @dataclass
@@ -401,9 +401,9 @@ class BTC5MStrategy:
 
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
         if is_fixed:
-            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 1.0))
-            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 2.0))
-            hard_cap = float(self.settings.get("hard_cap_dollar", 10.0))
+            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 1.20))
+            sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 0.80))
+            hard_cap = float(self.settings.get("hard_cap_dollar", 0.80))
             dynamic_sl_delta = float(self.settings.get("dynamic_sl_delta", 0.25))
             take_profit_price = min(0.99, entry_price + (tp_dollar / max(0.1, quantity)))
             max_sl_dist = min(dynamic_sl_delta, sl_dollar / max(0.1, quantity))
@@ -641,11 +641,11 @@ class BTC5MStrategy:
         else:
             gate_results["time"]["pass"] = True
             
-        is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
-        if is_fixed or actual_planned_rr >= min_rr:
+        # Enforce minimum 1.5:1 Risk-to-Reward entry requirement (low-upside trades skipped)
+        if actual_planned_rr >= min_rr:
             gate_results["rr"]["pass"] = True
         else:
-            skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
+            skip_flags.append(f"SKIP - Low upside R:R {actual_planned_rr:.2f} < {min_rr:.1f}:1 requirement")
             
         min_p2b = float(self.settings.get("min_p2b_diff", 1.5))
         if not btc_price or not price_to_beat:
