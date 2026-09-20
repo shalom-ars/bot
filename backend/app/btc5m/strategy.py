@@ -555,8 +555,9 @@ class BTC5MStrategy:
         no_breakdown["Time"] = round(no_time_pts, 1)
         
         import json
-        # 3. Determine Prediction (Independent of 70 threshold)
-        if abs(yes_score - no_score) < 0.001:
+        # 3. Determine Prediction with Decisive Lead (Prevents 50/50 Coin-Flips)
+        min_lead = float(self.settings.get("min_direction_lead", 4.0))
+        if abs(yes_score - no_score) < min_lead:
             predicted_side = "NONE"
         elif yes_score > no_score:
             predicted_side = "YES"
@@ -621,7 +622,9 @@ class BTC5MStrategy:
             "pass": False,
             "value": f"{obi:+.2f} (Target: {min_obi:+.2f})"
         }
-        if predicted_side == "YES":
+        if min_obi <= 0.001:
+            gate_results["obi"]["pass"] = True
+        elif predicted_side == "YES":
             if obi >= min_obi:
                 gate_results["obi"]["pass"] = True
             else:
@@ -834,8 +837,8 @@ class BTC5MStrategy:
         
         if state == "READY" and self.risk_manager:
             risk_decision = self.risk_manager.evaluate_trade(
-                {"market_id": market_id},
-                {"condition_id": condition_id, "ask_depth": ask_depth}
+                {"market_id": market_id, "side": final_side},
+                {"condition_id": condition_id, "ask_depth": ask_depth, "bid_depth": bid_depth}
             )
             is_approved = False
             if isinstance(risk_decision, dict):

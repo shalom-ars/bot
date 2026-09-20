@@ -350,6 +350,12 @@ class BTC5MEngine:
                 self.risk_manager.current_exposure = max(0, self.risk_manager.current_exposure - trade.position_size)
                 db.commit()
                 self.strategy.record_exit(trade.market_id)
+                try:
+                    from app.btc5m.exit_manager import _trade_peak_prices
+                    _trade_peak_prices.pop(trade.id, None)
+                    _trade_peak_prices.pop(id(trade), None)
+                except Exception:
+                    pass
                 logger.info(f"[BTC5M Fast Exit Monitor {self.instance_id}] INSTANT EXIT {decision} trade #{trade.id} ({trade.side}) @ ${exit_price:.4f} | PnL: ${trade.pnl:.2f} | Reason: {reason}")
 
                 # Trigger Autonomous Self-Learning Optimizer
