@@ -62,8 +62,21 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "rsi_oversold": "0.0",
 }
 
-DEFAULT_SETTINGS_INSTANCE_2: Dict[str, str] = DEFAULT_SETTINGS.copy()
-DEFAULT_SETTINGS_INSTANCE_2["slot_mode"] = "double_slot_2.5m"
+DEFAULT_SETTINGS_INSTANCE_2 = DEFAULT_SETTINGS.copy()
+DEFAULT_SETTINGS_INSTANCE_2.update({
+    "slot_mode": "double_slot_2.5m",
+    "min_entry_score": "75.0",
+    "min_entry_probability": "0.58",
+    "min_liquidity": "30.0",
+    "max_spread": "0.02",
+    "micro_loss_tolerance": "0.035",
+    "breakeven_trigger_dollar": "0.02",
+    "cooldown_seconds": "15.0",
+    "hard_stop_delta": "0.01",
+    "rsi_period": "14",
+    "macd_fast": "12",
+    "macd_slow": "26"
+})
 
 TYPED_FIELDS = {
     "trading_active": bool,
@@ -140,43 +153,12 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     prefix = "" if instance_id in ("instance_1", "default") else f"{instance_id}:"
     defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
 
-    loosened_sync = {
-        "min_entry_score": "0.0",
-        "min_net_edge": "-100.0",
-        "min_entry_probability": "0.0",
-        "min_order_book_imbalance": "0.0",
-        "min_time_remaining": "0.0",
-        "max_time_remaining": "300.0",
-        "risk_reward_ratio": "0.0:1",
-        "min_rr": "0.0",
-        "max_spread": "1.0",
-        "min_liquidity": "0.0",
-        "min_p2b_diff": "0.0",
-        "min_entry_price": "0.01",
-        "max_entry_price": "0.99",
-        "atr_trailing_multiplier": "3.0",
-        "breakeven_trigger_dollar": "0.005",
-        "micro_loss_tolerance": "0.10",
-        "mtf_confirmation_enabled": "false",
-        "consecutive_loss_dampener_enabled": "false",
-        "cooldown_seconds": "0.0",
-        "unanimous_consensus_required": "false",
-        "rsi_overbought": "100.0",
-        "rsi_oversold": "0.0",
-    }
+    # To allow the AI Self-Optimizer to function, we MUST NOT forcefully override its learned settings.
+    # We only lock structural settings (like slot_mode) here.
+    loosened_sync = {}
     
     if instance_id == "instance_2":
         loosened_sync["slot_mode"] = "double_slot_2.5m"
-        # Deep analysis update: Minimize losses by increasing accuracy requirements
-        loosened_sync["min_entry_score"] = "75.0"       # High strategy score required
-        loosened_sync["min_entry_probability"] = "0.58" # Strict ML model confidence
-        loosened_sync["min_liquidity"] = "25.0"         # Ensure real CLOB depth
-        loosened_sync["max_spread"] = "0.02"            # Stop slippage trap (Max 2 cents)
-        # Adapt micro loss tolerance to SURVIVE the 2-cent spread, but trigger immediately after
-        loosened_sync["micro_loss_tolerance"] = "0.025" 
-        loosened_sync["breakeven_trigger_dollar"] = "0.015"
-        loosened_sync["hard_stop_delta"] = "0.005"
-        loosened_sync["cooldown_seconds"] = "10.0"
     else:
         loosened_sync["slot_mode"] = "single_5m"
 
