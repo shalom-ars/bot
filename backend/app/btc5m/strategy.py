@@ -35,19 +35,19 @@ logger = logging.getLogger(__name__)
 
 # ── BTC5M Strategy Parameters ────────────────────────────────
 MIN_MOMENTUM          = 0.01   # Minimum short_momentum_1m to consider entry
-MIN_IMBALANCE         = 0.05   # Minimum |imbalance| indicating directional pressure
-MAX_VOLATILITY        = 0.08   # Reject if rolling_vol exceeds this (too noisy)
-MIN_VOLATILITY        = 0.001  # Reject if market is completely flat (stale)
-MAX_SPREAD            = 0.05   # 5% max spread for trade eligibility
-MIN_DEPTH             = 50.0   # Minimum ask_depth in $ for order fill
-MIN_LIQUIDITY         = 100.0  # Minimum total liquidity
-MIN_TIME_REMAINING    = 45.0   # At least 45 seconds before resolution (broadened entry window)
-MIN_NET_EDGE          = -0.020 # Minimum net edge (-2.00% loosened threshold)
-MAX_SPREAD_STABILITY  = 0.02   # Spread must be stable (low std)
-MIN_MOMENTUM_PERSIST  = 0.40   # Momentum must be persistent (40% consistent direction)
-STALENESS_THRESHOLD_S = 10.0   # Data older than 10s is stale
-MIN_ENTRY_SCORE       = 40.0   # Score threshold (loosened to 40.0)
-MIN_RR                = 1.6    # Minimum 1.6:1 Risk-Reward threshold
+MIN_IMBALANCE         = 0.0    # Bypass
+MAX_VOLATILITY        = 999.0  # Bypass
+MIN_VOLATILITY        = 0.0    # Bypass
+MAX_SPREAD            = 1.0    # Bypass
+MIN_DEPTH             = 0.0    # Bypass
+MIN_LIQUIDITY         = 0.0    # Bypass
+MIN_TIME_REMAINING    = 0.0    # Bypass
+MIN_NET_EDGE          = -100.0 # Allow negative edge
+MAX_SPREAD_STABILITY  = 999.0  # Bypass
+MIN_MOMENTUM_PERSIST  = 0.0    # Bypass
+STALENESS_THRESHOLD_S = 10.0   # Keep
+MIN_ENTRY_SCORE       = 0.0    # Bypass score
+MIN_RR                = 0.0    # Bypass R:R
 
 
 @dataclass
@@ -556,7 +556,7 @@ class BTC5MStrategy:
         
         import json
         # 3. Determine Prediction (Independent of 70 threshold)
-        if abs(yes_score - no_score) < 3.0:
+        if abs(yes_score - no_score) < 0.001:
             predicted_side = "NONE"
         elif yes_score > no_score:
             predicted_side = "YES"
