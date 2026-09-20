@@ -52,6 +52,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "atr_period": "14",
     "atr_trailing_multiplier": "3.0",
     "breakeven_trigger_dollar": "0.50",
+    "instant_profit_harvest_dollar": "0.02", # Harvest instantly upon turning positive by even 2 cents
     "micro_loss_tolerance": "10.00",    # $10 Loss Tolerance for full reversal breathing room
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
@@ -125,6 +126,7 @@ TYPED_FIELDS = {
     "atr_period": int,
     "atr_trailing_multiplier": float,
     "breakeven_trigger_dollar": float,
+    "instant_profit_harvest_dollar": float,
     "mtf_confirmation_enabled": bool,
     "consecutive_loss_dampener_enabled": bool,
     "min_order_book_imbalance": float,
@@ -174,6 +176,7 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["min_entry_probability"] = "0.50"
         loosened_sync["min_net_edge"] = "-0.05"
         loosened_sync["max_spread"] = "0.02"
+        loosened_sync["instant_profit_harvest_dollar"] = "0.02"
     else:
         loosened_sync["slot_mode"] = "single_5m"
         loosened_sync["tp_dollar"] = "1.00"
@@ -186,6 +189,7 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["min_entry_probability"] = "0.50"
         loosened_sync["min_net_edge"] = "-0.05"
         loosened_sync["max_spread"] = "0.02"
+        loosened_sync["instant_profit_harvest_dollar"] = "0.02"
         
     for k, v in defaults.items():
         db_key = f"{prefix}{k}"
