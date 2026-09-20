@@ -590,7 +590,7 @@ function SkipLogsSection({ refreshTrigger }: { refreshTrigger?: number }) {
       </div>
 
       {/* Skips Table */}
-      <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <div className="overflow-x-auto overflow-y-auto max-h-[700px] rounded-xl border border-slate-200">
         <table className="w-full text-left border-collapse min-w-[650px]">
           <thead>
             <tr className="bg-slate-50/80 border-b border-slate-200 text-[9px] font-black text-slate-500 uppercase tracking-wider">

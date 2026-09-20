@@ -15,11 +15,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "account_mode": "demo",
     "slot_mode": "single_5m",
     "risk_reward_ratio": "0.0:1",
-    "min_entry_score": "0.0",
+    "min_entry_score": "75.0",         # Optimal strategy alignment
     "min_net_edge": "-100.0",
     "min_rr": "0.0",
-    "max_spread": "1.0",
-    "min_liquidity": "0.0",
+    "max_spread": "0.02",              # Optimal strategy alignment
+    "min_liquidity": "30.0",           # Optimal strategy alignment
     "min_time_remaining": "0.0",
     "max_time_remaining": "300.0",
     "take_profit_delta": "0.05",
@@ -28,18 +28,18 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
-    "tp_dollar": "1.50",
-    "sl_dollar": "0.90",
-    "hard_cap_dollar": "0.90",
+    "tp_dollar": "2.00",               # Updated from 1.50
+    "sl_dollar": "1.00",               # Updated from 0.90
+    "hard_cap_dollar": "1.20",         
     "side_bias": "ANY",
     "only_short": "false",
     "soft_stop_confirmation_seconds": "3.0",
     "thesis_failure_threshold": "60.0",
-    "hard_stop_delta": "0.02",
+    "hard_stop_delta": "0.01",
     "min_entry_price": "0.01",
     "max_entry_price": "0.99",
     "min_p2b_diff": "0.0",
-    "min_entry_probability": "0.0",
+    "min_entry_probability": "0.58",   # Optimal strategy alignment
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
     "rsi_overbought": "70.0",
@@ -51,12 +51,12 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "bb_std": "2.0",
     "atr_period": "14",
     "atr_trailing_multiplier": "3.0",
-    "breakeven_trigger_dollar": "0.005",
-    "micro_loss_tolerance": "0.005",
+    "breakeven_trigger_dollar": "0.02",   # Optimal trailing lock
+    "micro_loss_tolerance": "0.035",      # Survive spread
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.0",
-    "cooldown_seconds": "0.0",
+    "cooldown_seconds": "15.0",
     "unanimous_consensus_required": "false",
     "rsi_overbought": "100.0",
     "rsi_oversold": "0.0",
@@ -153,24 +153,41 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     prefix = "" if instance_id in ("instance_1", "default") else f"{instance_id}:"
     defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
 
-    # To allow the AI Self-Optimizer to function, we MUST NOT forcefully override its learned settings.
-    # We only lock structural settings (like slot_mode) here.
+    # To allow the AI Self-Optimizer to function, we MUST NOT forcefully override its learned settings continually.
+    # However, to migrate from the old '0.0' blind-trading values to the new optimal ones, we do a one-time upgrade if the value is dangerously low.
     loosened_sync = {}
     
     if instance_id == "instance_2":
         loosened_sync["slot_mode"] = "double_slot_2.5m"
     else:
         loosened_sync["slot_mode"] = "single_5m"
-
+        
     for k, v in defaults.items():
         db_key = f"{prefix}{k}"
         if db_key not in existing:
             db.add(BTC5MSetting(key=db_key, value=v))
             modified = True
-        elif k in loosened_sync:
+        else:
             setting_obj = existing[db_key]
-            # Automatically update existing DB record if it has older restrictive settings
-            if setting_obj.value != loosened_sync[k]:
+            # ONE-TIME MIGRATION: If the DB currently holds the legacy "0.0" bypass value for critical filters,
+            # or the old "1.50" TP for Bot 1, force upgrade it to the new optimal default.
+            if k in ["min_entry_score", "min_entry_probability", "min_liquidity"] and setting_obj.value == "0.0":
+                setting_obj.value = defaults[k]
+                setting_obj.updated_at = datetime.now(timezone.utc)
+                modified = True
+            elif k == "tp_dollar" and setting_obj.value == "1.50":
+                setting_obj.value = defaults[k]
+                modified = True
+            elif k == "sl_dollar" and setting_obj.value == "0.90":
+                setting_obj.value = defaults[k]
+                modified = True
+            elif k == "max_spread" and setting_obj.value == "1.0":
+                setting_obj.value = defaults[k]
+                modified = True
+            elif k == "micro_loss_tolerance" and setting_obj.value in ["0.10", "0.005"]:
+                setting_obj.value = defaults[k]
+                modified = True
+            elif k in loosened_sync and setting_obj.value != loosened_sync[k]:
                 setting_obj.value = loosened_sync[k]
                 setting_obj.updated_at = datetime.now(timezone.utc)
                 modified = True
