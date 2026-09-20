@@ -16,7 +16,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "slot_mode": "single_5m",
     "risk_reward_ratio": "1:2",
     "min_entry_score": "40.0",
-    "min_net_edge": "-0.005",
+    "min_net_edge": "-0.020",
     "min_rr": "0.1",
     "max_spread": "0.02",
     "min_liquidity": "10000.0",
@@ -36,9 +36,9 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "soft_stop_confirmation_seconds": "3.0",
     "thesis_failure_threshold": "60.0",
     "hard_stop_delta": "0.02",
-    "min_entry_price": "0.40",
-    "max_entry_price": "0.62",
-    "min_p2b_diff": "10.0",
+    "min_entry_price": "0.30",
+    "max_entry_price": "0.70",
+    "min_p2b_diff": "1.5",
     "min_entry_probability": "0.40",
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
@@ -138,7 +138,7 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
 
     loosened_sync = {
         "min_entry_score": "40.0",
-        "min_net_edge": "-0.005",
+        "min_net_edge": "-0.020",
         "min_entry_probability": "0.40",
         "min_order_book_imbalance": "0.02",
         "min_time_remaining": "45.0",
@@ -146,6 +146,9 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         "risk_reward_ratio": "1:2",
         "tp_dollar": "1.00",
         "sl_dollar": "2.00",
+        "min_p2b_diff": "1.5",
+        "min_entry_price": "0.30",
+        "max_entry_price": "0.70",
     }
 
     for k, v in defaults.items():

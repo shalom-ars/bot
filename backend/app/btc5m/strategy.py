@@ -42,7 +42,7 @@ MAX_SPREAD            = 0.05   # 5% max spread for trade eligibility
 MIN_DEPTH             = 50.0   # Minimum ask_depth in $ for order fill
 MIN_LIQUIDITY         = 100.0  # Minimum total liquidity
 MIN_TIME_REMAINING    = 45.0   # At least 45 seconds before resolution (broadened entry window)
-MIN_NET_EDGE          = -0.005 # Minimum net edge (-0.50% loosened threshold)
+MIN_NET_EDGE          = -0.020 # Minimum net edge (-2.00% loosened threshold)
 MAX_SPREAD_STABILITY  = 0.02   # Spread must be stable (low std)
 MIN_MOMENTUM_PERSIST  = 0.40   # Momentum must be persistent (40% consistent direction)
 STALENESS_THRESHOLD_S = 10.0   # Data older than 10s is stale
@@ -647,7 +647,7 @@ class BTC5MStrategy:
         else:
             skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
             
-        min_p2b = float(self.settings.get("min_p2b_diff", 5.0))
+        min_p2b = float(self.settings.get("min_p2b_diff", 1.5))
         if not btc_price or not price_to_beat:
             skip_flags.append("SKIP - Missing Price-to-Beat or Current BTC Price (Stale data)")
         elif abs(btc_price - price_to_beat) < min_p2b:
@@ -798,9 +798,9 @@ class BTC5MStrategy:
         if self.settings.get("unanimous_consensus_required", True):
             # 1. Trend & Momentum Agent (RSI, MACD, Bollinger, MTF)
             agent_trend_pass = gate_results.get("rsi", {}).get("pass", False) and gate_results.get("macd", {}).get("pass", False) and gate_results.get("bollinger", {}).get("pass", False)
-            # 2. Oracle Valuation Agent (Chainlink Spot vs P2B strike lead >= $10, Fair Probability >= 50%)
+            # 2. Oracle Valuation Agent (Chainlink Spot vs P2B strike lead >= $1.5, Fair Probability >= 40%)
             p2b_delta = abs((btc_price or 0.0) - (price_to_beat or 0.0))
-            agent_oracle_pass = (p2b_delta >= float(self.settings.get("min_p2b_diff", 10.0))) and gate_results.get("probability", {}).get("pass", False)
+            agent_oracle_pass = (p2b_delta >= float(self.settings.get("min_p2b_diff", 1.5))) and gate_results.get("probability", {}).get("pass", False)
             # 3. Microstructure & Liquidity Agent (Hummingbot OBI, Spread <= 2%, Depth >= $10k)
             agent_micro_pass = gate_results.get("spread", {}).get("pass", False) and gate_results.get("liquidity", {}).get("pass", False) and gate_results.get("obi", {}).get("pass", False)
             # 4. Risk Guardian Agent (Account Capital, Cooldown, and Drawdown Limits)

@@ -839,7 +839,7 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
       )}
 
       {/* Dynamic Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
             Total Adaptations
@@ -850,10 +850,26 @@ function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
-            Current Score / Prob Floor
+            Score / Prob Floor
           </span>
           <span className="text-base font-black text-slate-900 font-mono tracking-tight">
-            {currentSettings.min_entry_score ?? 50.0} / {currentSettings.min_entry_probability ? `${(currentSettings.min_entry_probability * 100).toFixed(0)}%` : '50%'}
+            {currentSettings.min_entry_score ?? 40.0} / {currentSettings.min_entry_probability ? `${(Number(currentSettings.min_entry_probability) * 100).toFixed(0)}%` : '40%'}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Net Edge Limit
+          </span>
+          <span className="text-base font-black text-blue-600 font-mono tracking-tight">
+            {currentSettings.min_net_edge != null ? `${(Number(currentSettings.min_net_edge) * 100).toFixed(1)}%` : '-2.0%'}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            P2B Window Lead
+          </span>
+          <span className="text-base font-black text-emerald-600 font-mono tracking-tight">
+            ${Number(currentSettings.min_p2b_diff || 1.5).toFixed(1)} Lead
           </span>
         </div>
         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">

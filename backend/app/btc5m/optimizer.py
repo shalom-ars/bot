@@ -20,8 +20,11 @@ logger = logging.getLogger(__name__)
 SAFETY_BOUNDS: Dict[str, Tuple[float, float]] = {
     "min_entry_score": (35.0, 65.0),
     "min_entry_probability": (0.35, 0.60),
+    "min_net_edge": (-0.035, 0.005),
     "min_order_book_imbalance": (0.01, 0.05),
-    "min_p2b_diff": (5.0, 25.0),
+    "min_p2b_diff": (0.5, 8.0),
+    "min_entry_price": (0.25, 0.45),
+    "max_entry_price": (0.55, 0.75),
     "tp_dollar": (0.80, 2.50),
     "sl_dollar": (1.50, 3.50),
     "dynamic_sl_delta": (0.15, 0.35),
@@ -77,7 +80,7 @@ class BTC5MSelfLearningOptimizer:
             if target_param in ("min_entry_score", "min_p2b_diff", "rsi_overbought", "rsi_oversold"):
                 old_val_str = f"{old_val_float:.1f}"
                 new_val_str = f"{new_val_float:.1f}"
-            elif target_param in ("tp_dollar", "sl_dollar", "dynamic_sl_delta"):
+            elif target_param in ("tp_dollar", "sl_dollar", "dynamic_sl_delta", "min_entry_price", "max_entry_price"):
                 old_val_str = f"{old_val_float:.2f}"
                 new_val_str = f"{new_val_float:.2f}"
             else:
@@ -191,56 +194,94 @@ class BTC5MSelfLearningOptimizer:
                 )
 
             # Price-To-Beat chop near settlement
-            return (
-                "P2B_CHOP",
-                f"Final settlement resolved to {resolution} due to micro-price oscillation across Price-to-Beat boundary in final candle window.",
-                "min_p2b_diff",
-                +2.0
-            )
+            p2b_diff_curr = float(settings.get("min_p2b_diff", 1.5))
+            if p2b_diff_curr < 2.5:
+                return (
+                    "P2B_CHOP",
+                    f"Final settlement resolved to {resolution} due to micro-price oscillation across Price-to-Beat boundary. Slightly adjusting P2B boundary without closing entry window.",
+                    "min_p2b_diff",
+                    +0.3
+                )
+            else:
+                return (
+                    "P2B_CHOP",
+                    f"Micro-price oscillation across Price-to-Beat boundary near resolution. Widening dynamic stop buffer to absorb boundary noise.",
+                    "dynamic_sl_delta",
+                    +0.02
+                )
 
         # Default fallback diagnosis: General prediction error
         return (
             "PREDICTION_DIVERGENCE",
             f"Trade incurred loss (-${abs(trade.pnl):.2f}) due to multi-factor decay between entry and exit.",
             "min_entry_score",
-            +1.0
+            +0.5
         )
 
-    def run_continuous_optimization(self, db: Session) -> Dict[str, Any]:
+    def run_continuous_optimization(self, db: Session, lookback: int = 20) -> Dict[str, Any]:
         """
         Periodic autonomous optimization loop:
-        Analyzes the distribution of recent closed trades to maintain peak profitability.
+        Analyzes recent closed trades and actively relaxes net edge and P2B window criteria
+        to maximize trade execution frequency while protecting profitability.
         """
         recent_trades = db.query(BTC5MTrade).filter(
             BTC5MTrade.instance_id == self.instance_id,
             BTC5MTrade.status == "CLOSED"
-        ).order_by(desc(BTC5MTrade.id)).limit(20).all()
-
-        if len(recent_trades) < 5:
-            return {"status": "INSUFFICIENT_HISTORY", "analyzed_trades": len(recent_trades)}
+        ).order_by(desc(BTC5MTrade.id)).limit(lookback).all()
 
         wins = sum(1 for t in recent_trades if t.pnl and t.pnl > 0)
         losses = sum(1 for t in recent_trades if t.pnl and t.pnl < 0)
-        win_rate = (wins / len(recent_trades)) * 100.0 if recent_trades else 0.0
+        win_rate = (wins / len(recent_trades)) * 100.0 if recent_trades else 50.0
 
         current_settings = get_btc5m_settings(db, instance_id=self.instance_id)
         current_score = float(current_settings.get("min_entry_score", 40.0))
         current_prob = float(current_settings.get("min_entry_probability", 0.40))
+        current_net_edge = float(current_settings.get("min_net_edge", -0.020))
+        current_p2b_diff = float(current_settings.get("min_p2b_diff", 1.5))
 
         adjustments = {}
-        reason = ""
+        reason_parts = []
 
-        # If win rate is below 45%, tighten entry criteria to eliminate low-conviction signals
-        if win_rate < 45.0 and current_score < 55.0:
-            adjustments["min_entry_score"] = f"{min(55.0, current_score + 1.5):.1f}"
-            adjustments["min_entry_probability"] = f"{min(0.55, current_prob + 0.02):.2f}"
-            reason = f"Periodic Optimizer: Win rate low ({win_rate:.1f}% across 20 trades). Tightening entry filters to protect capital."
-        
-        # If win rate is high (>65%), gently ease criteria to capture more profitable volume
-        elif win_rate > 65.0 and current_score > 38.0:
-            adjustments["min_entry_score"] = f"{max(38.0, current_score - 1.0):.1f}"
-            adjustments["min_entry_probability"] = f"{max(0.38, current_prob - 0.01):.2f}"
-            reason = f"Periodic Optimizer: Win rate strong ({win_rate:.1f}%). Broadening entry criteria to increase trade frequency."
+        # 1. Reduce stringent net edge requirement to allow more executions
+        if current_net_edge > -0.020:
+            adjustments["min_net_edge"] = "-0.020"
+            reason_parts.append("Reduced stringent net edge requirement to -2.00% (-0.020) to enable more trade executions.")
+
+        # 2. Widen entry price window relative to Price-to-Beat
+        if current_p2b_diff > 2.0:
+            adjustments["min_p2b_diff"] = "1.5"
+            reason_parts.append("Widened entry price window relative to Price-to-Beat to $1.50 (lowered lead threshold).")
+
+        # 3. Dynamic Win-Rate Curve Optimization
+        if len(recent_trades) >= 5:
+            if win_rate < 42.0 and current_score < 48.0:
+                adjustments["min_entry_score"] = f"{min(48.0, current_score + 1.0):.1f}"
+                adjustments["min_entry_probability"] = f"{min(0.48, current_prob + 0.01):.2f}"
+                reason_parts.append(f"Win rate curve rebalancing ({win_rate:.1f}%): calibrated entry filter floor.")
+            elif win_rate >= 50.0:
+                if current_score > 38.0:
+                    adjustments["min_entry_score"] = f"{max(38.0, current_score - 1.0):.1f}"
+                if current_prob > 0.38:
+                    adjustments["min_entry_probability"] = f"{max(0.38, current_prob - 0.01):.2f}"
+                if current_net_edge > -0.025:
+                    adjustments["min_net_edge"] = "-0.025"
+                if current_p2b_diff > 1.2:
+                    adjustments["min_p2b_diff"] = "1.2"
+                reason_parts.append(f"Win rate healthy ({win_rate:.1f}%): broadened opportunity window to maximize fill rate.")
+        else:
+            # When trade history is light, default to maximum trade execution mode
+            if current_score > 40.0:
+                adjustments["min_entry_score"] = "40.0"
+            if current_prob > 0.40:
+                adjustments["min_entry_probability"] = "0.40"
+            if current_net_edge > -0.020:
+                adjustments["min_net_edge"] = "-0.020"
+            if current_p2b_diff > 1.5:
+                adjustments["min_p2b_diff"] = "1.5"
+            if adjustments:
+                reason_parts.append("Baseline sweep: applied widened P2B entry window and relaxed net edge filters.")
+
+        reason = " ".join(reason_parts)
 
         if adjustments:
             update_btc5m_settings(db, adjustments, user_info="CONTINUOUS_OPTIMIZER", instance_id=self.instance_id)
@@ -253,10 +294,10 @@ class BTC5MSelfLearningOptimizer:
                 timestamp=datetime.now(timezone.utc),
                 outcome="PERIODIC_OPTIMIZATION",
                 pnl=None,
-                root_cause="WIN_RATE_CURVE_BALANCING",
+                root_cause="TRADE_FREQUENCY_OPTIMIZATION",
                 error_analysis=reason,
                 parameter_adjusted=", ".join(adjustments.keys()),
-                old_value=f"score={current_score:.1f}, prob={current_prob:.2f}",
+                old_value=f"edge={current_net_edge:.3f}, p2b=${current_p2b_diff:.1f}, score={current_score:.1f}",
                 new_value=f"{adjustments}",
                 adaptation_delta=f"WinRate: {win_rate:.1f}%",
                 status="APPLIED"
@@ -269,7 +310,7 @@ class BTC5MSelfLearningOptimizer:
             "analyzed_trades": len(recent_trades),
             "win_rate": round(win_rate, 1),
             "adjustments": adjustments,
-            "reason": reason or "Strategy parameters are currently operating in the optimal profit zone."
+            "reason": reason or "Strategy parameters are operating with widened entry windows and relaxed net edge for maximum trade executions."
         }
 
     def get_learning_summary(self, db: Session, limit: int = 30) -> Dict[str, Any]:
@@ -316,6 +357,10 @@ class BTC5MSelfLearningOptimizer:
             "current_settings": {
                 "min_entry_score": current_settings.get("min_entry_score"),
                 "min_entry_probability": current_settings.get("min_entry_probability"),
+                "min_net_edge": current_settings.get("min_net_edge"),
+                "min_p2b_diff": current_settings.get("min_p2b_diff"),
+                "min_entry_price": current_settings.get("min_entry_price"),
+                "max_entry_price": current_settings.get("max_entry_price"),
                 "tp_dollar": current_settings.get("tp_dollar"),
                 "sl_dollar": current_settings.get("sl_dollar"),
                 "min_order_book_imbalance": current_settings.get("min_order_book_imbalance"),
