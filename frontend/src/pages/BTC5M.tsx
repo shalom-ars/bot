@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '../hooks/useApi';
 import { 
-  RefreshCw, Clock, Shield, TrendingUp, 
+  RefreshCw, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
-  AlertTriangle, ShieldAlert, DollarSign,
+  AlertTriangle, ShieldAlert,
   LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical,
   ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
@@ -924,14 +924,12 @@ function ResizableHistoryLogsSplit({
 
 function InnerBTC5M() {
   const [selectedInstance] = useState<'instance_1'>('instance_1');
-  const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus(selectedInstance);
+  const { statusData, statusLoading, refetchStatus } = useBTC5MStatus(selectedInstance);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const { data: statsData } = useApi<any>(`/btc5m/stats?instance_id=${selectedInstance}&v=${refreshTrigger}`, null);
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [isTogglingTrading, setIsTogglingTrading] = useState<boolean>(false);
-  const [isTogglingAccount, setIsTogglingAccount] = useState<boolean>(false);
-  const [showRealMoneyConfirm, setShowRealMoneyConfirm] = useState<boolean>(false);
 
   const activeTradeId = statusData?.active_trade?.id ?? null;
   const activeTradeStatus = statusData?.active_trade?.status ?? null;
@@ -955,30 +953,6 @@ function InnerBTC5M() {
       console.error('Failed to toggle trading status:', err);
     } finally {
       setIsTogglingTrading(false);
-    }
-  };
-
-  const handleToggleAccountMode = async (targetMode: 'demo' | 'real_money') => {
-    if (isTogglingAccount) return;
-    if (targetMode === 'real_money' && !showRealMoneyConfirm) {
-      setShowRealMoneyConfirm(true);
-      return;
-    }
-    setShowRealMoneyConfirm(false);
-    setIsTogglingAccount(true);
-    try {
-      const res = await fetch('/api/btc5m/account_mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: targetMode, instance_id: selectedInstance })
-      });
-      if (res.ok) {
-        refetchStatus();
-      }
-    } catch (err) {
-      console.error('Failed to toggle account mode:', err);
-    } finally {
-      setIsTogglingAccount(false);
     }
   };
 
@@ -1122,46 +1096,9 @@ function InnerBTC5M() {
 
   return (
     <div className="space-y-3.5 max-w-7xl mx-auto pb-4">
-      {/* REAL MONEY SAFETY CONFIRMATION MODAL */}
-      {showRealMoneyConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border-2 border-amber-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-white">
-            <div className="flex items-center gap-3 text-amber-400">
-              <ShieldAlert className="w-8 h-8 shrink-0" />
-              <div>
-                <h3 className="text-base font-black uppercase tracking-wider">Switch to Real Money Account</h3>
-                <p className="text-xs text-slate-400">Live Trading Safety Confirmation</p>
-              </div>
-            </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Enabling Real Money mode instructs the bot to submit orders to Polymarket's live orderbook using real funds (USDC). Ensure your wallet private key and Polymarket API credentials are configured in your environment.
-            </p>
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-300 space-y-1">
-              <p className="font-bold">✓ Target Profit: ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '2.00'} | Stop Loss: ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} active</p>
-              <p className="font-bold">✓ Smart Stop-Loss / Confirmation Exit active</p>
-              <p className="font-bold">✓ Daily loss circuit breaker armed</p>
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                onClick={() => setShowRealMoneyConfirm(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleToggleAccountMode('real_money')}
-                className="px-4 py-2 rounded-xl text-xs font-black text-white bg-amber-600 hover:bg-amber-500 cursor-pointer"
-              >
-                Confirm Real Money Mode
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 1. MASTER TOP HEADER & RESOLUTION COUNTDOWN BANNER */}
+      {/* 1. MASTER TOP HEADER & TIMER BANNER */}
       <div className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-sm text-white space-y-3">
-        {/* Main Row: Top Left (Bot + Toggle + Pair Info), Center (Header Badges & Countdown), Top Right (Total Income & Loss) */}
+        {/* Main Row: Top Left (Bot + Toggle + Pair Info), Center (Timer), Top Right (Total Income & Loss) */}
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           
           {/* TOP LEFT: Bot Logo, Name, Pause/Start Toggle, and Trading Pair Info Below */}
@@ -1196,9 +1133,6 @@ function InnerBTC5M() {
                   <span className="bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
                     BTC / USD · 5-MIN ROLLING BINARY
                   </span>
-                  <span className={`text-[10px] font-bold ${isTradingActive ? 'text-emerald-400' : 'text-slate-400'}`}>
-                    {isTradingActive ? '● ENGINE RUNNING' : '● BOT IDLE'}
-                  </span>
                 </div>
                 <p className="text-xs font-medium text-slate-300 truncate max-w-lg" title={current?.question}>
                   {current?.question || 'Searching active BTC 5M market window...'}
@@ -1207,72 +1141,11 @@ function InnerBTC5M() {
             </div>
           </div>
 
-          {/* TOP CENTER: Pro Plan, Demo Mode, 5-Minute Window & Resolution Countdown Label */}
-          <div className="flex flex-col items-center justify-center gap-1.5 px-3.5 py-2 bg-slate-950/60 rounded-xl border border-slate-800">
-            {/* Header Badges: Pro Plan, Demo Mode, 5-Min Window */}
-            <div className="flex items-center gap-2 flex-wrap justify-center">
-              <span className="bg-blue-500/15 text-blue-400 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-blue-500/30 flex items-center gap-1 shadow-xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
-                PRO PLAN
-              </span>
-
-              {/* Demo Mode Switcher */}
-              <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700">
-                <button
-                  onClick={() => handleToggleAccountMode('demo')}
-                  disabled={isTogglingAccount}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer ${
-                    (statusData?.account_mode || 'demo') === 'demo'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <Zap className="w-2.5 h-2.5" />
-                  <span>DEMO ($500)</span>
-                </button>
-                <button
-                  onClick={() => handleToggleAccountMode('real_money')}
-                  disabled={isTogglingAccount}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer ${
-                    statusData?.account_mode === 'real_money'
-                      ? 'bg-amber-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <DollarSign className="w-2.5 h-2.5" />
-                  <span>REAL MONEY</span>
-                </button>
-              </div>
-
-              <span className="bg-amber-500/20 text-amber-300 text-[10px] font-black px-2 py-0.5 rounded border border-amber-500/30 font-mono">
-                RUNNING 5-MIN WINDOW
-              </span>
-              <span className="bg-blue-500/20 text-blue-300 text-[10px] font-black px-2 py-0.5 rounded border border-blue-500/30 font-mono">
-                SINGLE 5M SLOT
-              </span>
-            </div>
-
-            {/* Resolution Countdown Label & Digital Timer */}
-            <div className="flex items-center gap-2.5 mt-0.5">
-              <span className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 animate-pulse text-amber-400" />
-                RESOLUTION COUNTDOWN:
-              </span>
-              <span className="text-2xl font-black font-mono tracking-tight text-white">
-                {countdownDisplay}
-              </span>
-              {wsConnected ? (
-                <span className="inline-flex items-center gap-1 text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded text-[9px] border border-emerald-500/30 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                  STREAM &lt;20ms
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded text-[9px] border border-amber-500/30 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                  POLLING
-                </span>
-              )}
-            </div>
+          {/* CENTER: ONLY THE TIMER REMAINS */}
+          <div className="flex items-center justify-center px-6 py-2.5 bg-slate-950/70 rounded-2xl border border-slate-800 shadow-inner">
+            <span className="text-3xl font-black font-mono tracking-wider text-amber-400">
+              {countdownDisplay}
+            </span>
           </div>
 
           {/* TOP RIGHT CORNER: Total Income, Total Loss, Virtual Equity & Logout */}
