@@ -50,7 +50,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "bb_period": "20",
     "bb_std": "2.0",
     "atr_period": "14",
-    "atr_trailing_multiplier": "1.5",
+    "atr_trailing_multiplier": "3.0",
     "breakeven_trigger_dollar": "0.50",
     "mtf_confirmation_enabled": "true",
     "consecutive_loss_dampener_enabled": "true",
@@ -151,6 +151,7 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         "min_p2b_diff": "1.5",
         "min_entry_price": "0.30",
         "max_entry_price": "0.70",
+        "atr_trailing_multiplier": "3.0",
     }
 
     for k, v in defaults.items():

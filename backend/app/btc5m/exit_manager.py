@@ -294,7 +294,7 @@ class BTC5MExitManager:
 
         # ── 2B. JESSE DYNAMIC ATR TRAILING STOP & BREAK-EVEN LOCK ───────────────
         breakeven_trigger_dollar = float(settings.get("breakeven_trigger_dollar", 0.50))
-        atr_trailing_mult = float(settings.get("atr_trailing_multiplier", 1.5))
+        atr_trailing_mult = float(settings.get("atr_trailing_multiplier", 3.0))
         
         # Calculate dynamic ATR (normalized for 5M prediction contracts)
         rolling_vol = float(features.get("rolling_volatility", 0.005))
