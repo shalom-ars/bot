@@ -35,6 +35,11 @@ class PaperEngine:
         # Calculate actual execution price
         execution_price = entry_price + slippage + fees
         
+        # Hard filter against penny tokens and extreme prices
+        if execution_price < 0.20 or execution_price > 0.80:
+            logger.info(f"Signal rejected: execution price ${execution_price:.3f} outside safe corridor ($0.20 - $0.80)")
+            return False, "Rejected: Penny or extreme token price"
+
         size = decision["approved_size"]
         quantity = size / execution_price if execution_price > 0 else 0
         
@@ -132,24 +137,28 @@ class PaperEngine:
                 logger.info(f"Position closed on {market_id}, PnL: {pnl}")
                 return
                 
-            # P1: Adaptive Holding Time (Max 2 hours or Take Profit)
+            # P1: Adaptive Holding Time (Max 15 minutes), $1.00 TP, and strict Stop Loss
             hold_time_hours = (datetime.utcnow() - pos.timestamp).total_seconds() / 3600.0
             
             exit_reason = None
             exit_price = current_price
             
-            if hold_time_hours >= 2.0:
-                exit_reason = "TIME_STOP"
+            # Calculate profit margin and dollar PnL
+            if pos.side in ["BUY_YES", "BUY"]:
+                profit_margin = current_price - pos.entry_price
             else:
-                # Take profit early if edge decays and profit > 0.05
-                if pos.side in ["BUY_YES", "BUY"]:
-                    profit_margin = current_price - pos.entry_price
-                    if profit_margin > 0.05:
-                        exit_reason = "TAKE_PROFIT"
-                elif pos.side in ["BUY_NO", "SELL"]:
-                    profit_margin = pos.entry_price - current_price
-                    if profit_margin > 0.05:
-                        exit_reason = "TAKE_PROFIT"
+                profit_margin = pos.entry_price - current_price
+            dollar_pnl = profit_margin * (pos.quantity if pos.quantity else 0.0)
+
+            # 1. Take Profit ($1.00 target or >= 5c price delta)
+            if dollar_pnl >= 1.00 or profit_margin >= 0.05:
+                exit_reason = "TAKE_PROFIT"
+            # 2. Fast Stop Loss (cut loss if drawdown exceeds 10% or -$0.50)
+            elif dollar_pnl <= -0.50 or profit_margin <= -(0.10 * pos.entry_price):
+                exit_reason = "STOP_LOSS"
+            # 3. Time Stop (Max 15 minutes instead of 2 hours)
+            elif hold_time_hours >= 0.25:
+                exit_reason = "TIME_STOP"
                         
             if exit_reason:
                 pnl = 0.0

@@ -382,7 +382,7 @@ class BTC5MStrategy:
 
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
         if is_fixed:
-            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 2.0))
+            tp_dollar = float(self.settings.get("tp_dollar", self.tp_dollar or 1.0))
             sl_dollar = float(self.settings.get("sl_dollar", self.sl_dollar or 1.0))
             hard_cap = float(self.settings.get("hard_cap_dollar", 10.0))
             dynamic_sl_delta = float(self.settings.get("dynamic_sl_delta", 0.20))
