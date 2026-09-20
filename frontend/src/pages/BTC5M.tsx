@@ -5,7 +5,7 @@ import {
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
   AlertTriangle, ShieldAlert,
   LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical,
-  ArrowUpRight, ArrowDownRight, Timer
+  ArrowUpRight, ArrowDownRight, Timer, Cpu, Sparkles
 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 
@@ -731,7 +731,297 @@ function SkipLogsSection({ refreshTrigger }: { refreshTrigger?: number }) {
   );
 }
 
-// Adjustable Split Container for Trade History and Skip Logs
+// Self-Learning Optimizer & Root-Cause Error Analysis Section
+function SelfLearningOptimizerSection({ refreshTrigger, instanceId = 'instance_1' }: { refreshTrigger?: number, instanceId?: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [filter, setFilter] = useState<string>('all');
+  const [isOptimizing, setIsOptimizing] = useState<boolean>(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [optResult, setOptResult] = useState<string | null>(null);
+
+  const fetchSummary = async () => {
+    try {
+      const res = await fetch(`/api/btc5m/self-learning-logs?limit=50&instance_id=${instanceId}`);
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        setLoading(false);
+      }
+    } catch (e) {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSummary();
+    const interval = setInterval(fetchSummary, 3000);
+    return () => clearInterval(interval);
+  }, [refreshTrigger, instanceId]);
+
+  const handleManualOptimize = async () => {
+    setIsOptimizing(true);
+    setOptResult(null);
+    try {
+      const res = await fetch(`/api/btc5m/optimize-now?instance_id=${instanceId}&lookback=20`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setOptResult(json.reason || 'Optimizer sweep completed.');
+        await fetchSummary();
+      }
+    } catch (e: any) {
+      setOptResult('Error executing optimization sweep.');
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
+  const logs = data?.recent_logs || [];
+  const totalAdaptations = data?.total_adaptations ?? 0;
+  const errorDistribution = data?.error_distribution || {};
+  const currentSettings = data?.current_settings || {};
+
+  const filteredLogs = logs.filter((l: any) => {
+    if (filter === 'all') return true;
+    return (l.root_cause || '').toLowerCase() === filter.toLowerCase();
+  });
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-center text-purple-600">
+            <Cpu className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <span>ADAPTIVE STRATEGY OPTIMIZER & SELF-LEARNING LOG</span>
+              <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold">
+                {totalAdaptations} Adaptations
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              Autonomous post-mortem error diagnosis after every lost trade, dynamically adjusting filters & safety boundaries.
+            </p>
+          </div>
+        </div>
+
+        {/* Manual Sweep Action */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleManualOptimize}
+            disabled={isOptimizing}
+            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 active:scale-[0.98] disabled:opacity-50 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+          >
+            {isOptimizing ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Optimizing...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>RUN OPTIMIZER SWEEP</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {optResult && (
+        <div className="p-2.5 bg-purple-50 border border-purple-200 rounded-xl text-xs text-purple-900 flex items-center justify-between">
+          <span className="font-semibold">⚡ {optResult}</span>
+          <button onClick={() => setOptResult(null)} className="text-purple-500 hover:text-purple-800 font-bold ml-2">×</button>
+        </div>
+      )}
+
+      {/* Dynamic Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Total Adaptations
+          </span>
+          <span className="text-base font-black text-purple-600 font-mono tracking-tight">
+            {totalAdaptations} Logged
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Current Score / Prob Floor
+          </span>
+          <span className="text-base font-black text-slate-900 font-mono tracking-tight">
+            {currentSettings.min_entry_score ?? 50.0} / {currentSettings.min_entry_probability ? `${(currentSettings.min_entry_probability * 100).toFixed(0)}%` : '50%'}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Dynamic TP / SL Limits
+          </span>
+          <span className="text-base font-black text-slate-900 font-mono tracking-tight">
+            ${Number(currentSettings.tp_dollar || 1.00).toFixed(2)} / ${Number(currentSettings.sl_dollar || 2.00).toFixed(2)}
+          </span>
+        </div>
+        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 min-w-0">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+            Safety Guardrails
+          </span>
+          <span className="text-base font-black text-emerald-600 font-mono tracking-tight flex items-center gap-1">
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> ACTIVE
+          </span>
+        </div>
+      </div>
+
+      {/* Filter Tabs by Root Cause */}
+      <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-black">
+        <button
+          onClick={() => setFilter('all')}
+          className={`px-2.5 py-1 rounded-lg transition-all ${
+            filter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          ALL ({logs.length})
+        </button>
+        {Object.entries(errorDistribution).map(([cause, count]: [string, any]) => (
+          <button
+            key={cause}
+            onClick={() => setFilter(cause)}
+            className={`px-2.5 py-1 rounded-lg transition-all uppercase text-[11px] ${
+              filter === cause ? 'bg-white text-purple-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {cause.replace(/_/g, ' ')} ({count})
+          </button>
+        ))}
+      </div>
+
+      {/* Learning Logs Table */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full text-left border-collapse min-w-[720px]">
+          <thead>
+            <tr className="bg-slate-50/80 border-b border-slate-200 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+              <th className="py-2 px-3">Timestamp (UTC)</th>
+              <th className="py-2 px-3">Trigger / Trade</th>
+              <th className="py-2 px-3">Root Cause Diagnosis</th>
+              <th className="py-2 px-3">Parameter Adjusted</th>
+              <th className="py-2 px-3">Adaptation Delta</th>
+              <th className="py-2 px-3">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-xs font-mono">
+            {filteredLogs.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-6 text-center text-slate-400 font-sans text-xs">
+                  {loading ? 'Loading self-learning log...' : 'No learning adaptations recorded yet. The engine continuously watches all trade resolutions.'}
+                </td>
+              </tr>
+            ) : (
+              filteredLogs.map((l: any) => {
+                const isExpanded = expandedId === l.id;
+                const isPeriodic = l.outcome === 'PERIODIC_OPTIMIZATION';
+
+                return (
+                  <React.Fragment key={l.id}>
+                    <tr
+                      onClick={() => setExpandedId(isExpanded ? null : l.id)}
+                      className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                    >
+                      <td className="py-2 px-3 text-slate-600 whitespace-nowrap text-[11px]">
+                        {fmtDate(l.timestamp)}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        {isPeriodic ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
+                            PERIODIC SWEEP
+                          </span>
+                        ) : (
+                          <div>
+                            <span className="font-bold text-slate-800 text-[11px]">Trade #{l.trade_id || '—'}</span>
+                            {l.pnl != null && (
+                              <span className="text-rose-600 font-black ml-1.5 text-[11px]">
+                                {fmtUsd(l.pnl)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 max-w-[240px]">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-black inline-block uppercase truncate max-w-[220px] ${
+                          l.root_cause === 'OBI_FAKE_WALL'
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                            : l.root_cause === 'MOMENTUM_REVERSAL'
+                            ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                            : l.root_cause === 'P2B_CHOP'
+                            ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                            : l.root_cause === 'STOP_LOSS_TOO_TIGHT'
+                            ? 'bg-rose-100 text-rose-900 border border-rose-300'
+                            : 'bg-slate-100 text-slate-800 border border-slate-200'
+                        }`}>
+                          {l.root_cause ? l.root_cause.replace(/_/g, ' ') : 'DIAGNOSIS'}
+                        </span>
+                        <p className="text-[10px] text-slate-500 font-sans truncate mt-0.5">
+                          {l.error_analysis}
+                        </p>
+                      </td>
+                      <td className="py-2 px-3 text-[11px] font-bold text-slate-700 whitespace-nowrap">
+                        <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                          {l.parameter_adjusted}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap text-[11px]">
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-400 line-through">{l.old_value}</span>
+                          <span className="text-slate-400">➔</span>
+                          <span className="text-emerald-700 font-black">{l.new_value}</span>
+                        </div>
+                        {l.adaptation_delta && (
+                          <span className="text-[9px] text-purple-600 font-bold block">
+                            {l.adaptation_delta}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <CheckCircle className="w-2.5 h-2.5 text-emerald-600" /> {l.status || 'APPLIED'}
+                        </span>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-purple-50/40">
+                        <td colSpan={6} className="p-3">
+                          <div className="space-y-2 text-xs font-sans">
+                            <p className="font-black text-slate-900 flex items-center gap-1.5">
+                              <Cpu className="w-3.5 h-3.5 text-purple-600" />
+                              <span>IN-DEPTH POST-MORTEM & PARAMETER RE-TUNING RATIONALE:</span>
+                            </p>
+                            <p className="text-slate-700 font-medium leading-relaxed">
+                              {l.error_analysis}
+                            </p>
+                            <div className="flex items-center gap-4 pt-2 text-[10px] font-mono text-slate-600 border-t border-purple-200/60 flex-wrap">
+                              <span><strong>Parameter:</strong> {l.parameter_adjusted}</span>
+                              <span><strong>Before:</strong> {l.old_value}</span>
+                              <span><strong>After:</strong> {l.new_value}</span>
+                              <span><strong>Adjustment Delta:</strong> {l.adaptation_delta}</span>
+                              {l.market_id && <span><strong>Market ID:</strong> {l.market_id}</span>}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Adjustable Split Container for Trade History, Skip Logs, and Self-Learning Optimizer
 function ResizableHistoryLogsSplit({
   refreshTrigger,
   instanceId
@@ -739,6 +1029,8 @@ function ResizableHistoryLogsSplit({
   refreshTrigger?: number;
   instanceId?: string;
 }) {
+  const [activeTab, setActiveTab] = useState<'split' | 'trades' | 'skips' | 'optimizer'>('split');
+  const [rightPaneView, setRightPaneView] = useState<'skips' | 'optimizer'>('skips');
   const [splitPercent, setSplitPercent] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('btc5m_history_split');
@@ -817,107 +1109,175 @@ function ResizableHistoryLogsSplit({
   };
 
   return (
-    <div className="space-y-2">
-      {/* Quick Toolbar for Dynamic Sizing & Preset Ratios */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-        <div className="flex items-center gap-2 text-slate-600 font-bold text-xs">
-          <SplitSquareVertical className="w-4 h-4 text-blue-600" />
-          <span className="hidden sm:inline font-black tracking-tight">ADJUSTABLE DUAL AUDIT VIEW:</span>
-          <span className="text-slate-800 font-mono text-[11px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-            {Math.round(splitPercent)}% Trades · {Math.round(100 - splitPercent)}% Skip Logs
-          </span>
-          <span className="hidden md:inline text-[10px] text-slate-400 font-sans">
-            (Drag divider bar horizontally to resize)
-          </span>
+    <div className="space-y-3">
+      {/* Top View Mode Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-xs">
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-black">
+          <button
+            onClick={() => setActiveTab('split')}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'split' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <SplitSquareVertical className="w-3.5 h-3.5" />
+            <span>DUAL SPLIT VIEW</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('trades')}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'trades' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>TRADES AUDIT</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('skips')}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'skips' ? 'bg-white text-amber-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5" />
+            <span>SKIP LOGS</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('optimizer')}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'optimizer' ? 'bg-white text-purple-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5 text-purple-600" />
+            <span>AI SELF-LEARNING OPTIMIZER</span>
+          </button>
         </div>
 
-        {/* Quick Split Ratio Presets */}
-        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-black">
-          <button
-            onClick={() => setPreset(25)}
-            title="Expand Skip Logs (25% Trades / 75% Skips)"
-            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-              Math.round(splitPercent) === 25 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            25 / 75
-          </button>
-          <button
-            onClick={() => setPreset(50)}
-            title="Equal 50/50 Split"
-            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-              Math.round(splitPercent) === 50 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            50 / 50
-          </button>
-          <button
-            onClick={() => setPreset(75)}
-            title="Expand Trade History (75% Trades / 25% Skips)"
-            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-              Math.round(splitPercent) === 75 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            75 / 25
-          </button>
-        </div>
+        {/* In Split View: Right Pane Switcher & Ratio Presets */}
+        {activeTab === 'split' && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-black">
+              <span className="text-[10px] text-slate-400 px-2 uppercase">Right View:</span>
+              <button
+                onClick={() => setRightPaneView('skips')}
+                className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                  rightPaneView === 'skips' ? 'bg-white text-amber-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Skip Logs
+              </button>
+              <button
+                onClick={() => setRightPaneView('optimizer')}
+                className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                  rightPaneView === 'optimizer' ? 'bg-white text-purple-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                AI Optimizer
+              </button>
+            </div>
+
+            {/* Split presets */}
+            <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-black">
+              <button
+                onClick={() => setPreset(25)}
+                className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                  Math.round(splitPercent) === 25 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                25/75
+              </button>
+              <button
+                onClick={() => setPreset(50)}
+                className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                  Math.round(splitPercent) === 50 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                50/50
+              </button>
+              <button
+                onClick={() => setPreset(75)}
+                className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                  Math.round(splitPercent) === 75 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                75/25
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Resizable Container */}
-      <div
-        ref={containerRef}
-        className={`relative flex flex-col lg:flex-row items-stretch w-full ${
-          isDragging ? 'select-none cursor-col-resize' : ''
-        }`}
-      >
-        {/* Left Pane: Trade History */}
-        <div
-          className="w-full min-w-0"
-          style={{
-            width: isLargeScreen ? `calc(${splitPercent}% - 8px)` : '100%'
-          }}
-        >
-          <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={instanceId} />
-        </div>
+      {/* Render based on activeTab */}
+      {activeTab === 'trades' && (
+        <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={instanceId} />
+      )}
 
-        {/* Adjustable Divider (visible on large screens) */}
+      {activeTab === 'skips' && (
+        <SkipLogsSection refreshTrigger={refreshTrigger} />
+      )}
+
+      {activeTab === 'optimizer' && (
+        <SelfLearningOptimizerSection refreshTrigger={refreshTrigger} instanceId={instanceId} />
+      )}
+
+      {activeTab === 'split' && (
         <div
-          onMouseDown={handleMouseDown}
-          onTouchStart={handleTouchStart}
-          title="Drag left/right to resize views"
-          className={`hidden lg:flex flex-col items-center justify-center w-4 mx-0.5 cursor-col-resize group shrink-0 relative z-10 select-none ${
-            isDragging ? 'bg-blue-100 rounded-full' : 'hover:bg-slate-100 rounded-full'
+          ref={containerRef}
+          className={`relative flex flex-col lg:flex-row items-stretch w-full ${
+            isDragging ? 'select-none cursor-col-resize' : ''
           }`}
         >
+          {/* Left Pane: Trade History */}
           <div
-            className={`w-1.5 h-full min-h-[420px] rounded-full transition-all flex items-center justify-center ${
-              isDragging ? 'bg-blue-600 shadow-lg shadow-blue-500/40 w-2' : 'bg-slate-200 group-hover:bg-blue-500'
+            className="w-full min-w-0"
+            style={{
+              width: isLargeScreen ? `calc(${splitPercent}% - 8px)` : '100%'
+            }}
+          >
+            <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={instanceId} />
+          </div>
+
+          {/* Adjustable Divider */}
+          <div
+            onMouseDown={handleMouseDown}
+            onTouchStart={handleTouchStart}
+            title="Drag left/right to resize views"
+            className={`hidden lg:flex flex-col items-center justify-center w-4 mx-0.5 cursor-col-resize group shrink-0 relative z-10 select-none ${
+              isDragging ? 'bg-blue-100 rounded-full' : 'hover:bg-slate-100 rounded-full'
             }`}
           >
             <div
-              className={`p-1 rounded-md bg-white border shadow-xs transition-transform ${
-                isDragging ? 'border-blue-600 scale-125' : 'border-slate-300 group-hover:border-blue-500 group-hover:scale-110'
+              className={`w-1.5 h-full min-h-[420px] rounded-full transition-all flex items-center justify-center ${
+                isDragging ? 'bg-blue-600 shadow-lg shadow-blue-500/40 w-2' : 'bg-slate-200 group-hover:bg-blue-500'
               }`}
             >
-              <GripVertical
-                className={`w-3.5 h-3.5 ${
-                  isDragging ? 'text-blue-600' : 'text-slate-400 group-hover:text-blue-600'
+              <div
+                className={`p-1 rounded-md bg-white border shadow-xs transition-transform ${
+                  isDragging ? 'border-blue-600 scale-125' : 'border-slate-300 group-hover:border-blue-500 group-hover:scale-110'
                 }`}
-              />
+              >
+                <GripVertical
+                  className={`w-3.5 h-3.5 ${
+                    isDragging ? 'text-blue-600' : 'text-slate-400 group-hover:text-blue-600'
+                  }`}
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Right Pane: Skip Logs History */}
-        <div
-          className="w-full min-w-0 mt-4 lg:mt-0"
-          style={{
-            width: isLargeScreen ? `calc(${100 - splitPercent}% - 8px)` : '100%'
-          }}
-        >
-          <SkipLogsSection refreshTrigger={refreshTrigger} />
+          {/* Right Pane: Skip Logs OR AI Optimizer */}
+          <div
+            className="w-full min-w-0 mt-4 lg:mt-0"
+            style={{
+              width: isLargeScreen ? `calc(${100 - splitPercent}% - 8px)` : '100%'
+            }}
+          >
+            {rightPaneView === 'skips' ? (
+              <SkipLogsSection refreshTrigger={refreshTrigger} />
+            ) : (
+              <SelfLearningOptimizerSection refreshTrigger={refreshTrigger} instanceId={instanceId} />
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1669,7 +2029,7 @@ function InnerBTC5M() {
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] font-mono text-slate-500">
             <span className="text-slate-400 uppercase font-sans font-bold text-[9px]">Execution Mode</span>
             <span className="font-bold text-slate-700">
-              Fixed ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '2.00'} TP / ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '10.00'} SL ($10 / trade)
+              Fixed ${targetSettings?.tp_dollar ? Number(targetSettings.tp_dollar).toFixed(2) : '1.00'} TP / ${targetSettings?.sl_dollar ? Number(targetSettings.sl_dollar).toFixed(2) : '2.00'} SL ($10 / trade)
             </span>
           </div>
         </div>

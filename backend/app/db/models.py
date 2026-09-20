@@ -636,3 +636,27 @@ class BTC5MSetting(Base):
     value       = Column(String(256), nullable=False)
     updated_at  = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
 
+
+class BTC5MSelfLearningLog(Base):
+    """
+    Persistent self-learning and optimization history log.
+    Records every parameter adjustment, root-cause diagnosis of prediction errors,
+    and filter changes made by the autonomous strategy optimizer.
+    """
+    __tablename__ = "btc5m_self_learning_logs"
+    id                  = Column(Integer, primary_key=True, index=True)
+    instance_id         = Column(String, default="instance_1", index=True)
+    trade_id            = Column(Integer, ForeignKey("btc5m_trades.id", ondelete="SET NULL"), nullable=True, index=True)
+    market_id           = Column(String, index=True, nullable=True)
+    timestamp           = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc), index=True)
+    outcome             = Column(String, default="LOSS", index=True) # "LOSS", "PROFIT_LEAK", "PERIODIC_OPTIMIZATION"
+    pnl                 = Column(Float, nullable=True)
+    root_cause          = Column(String, index=True) # "MOMENTUM_REVERSAL", "OBI_FAKE_WALL", "RSI_EXTREME", "P2B_CHOP", etc.
+    error_analysis      = Column(String, nullable=False)
+    parameter_adjusted  = Column(String, nullable=False, index=True) # "min_entry_score", "min_entry_probability", etc.
+    old_value           = Column(String, nullable=False)
+    new_value           = Column(String, nullable=False)
+    adaptation_delta    = Column(String, nullable=True)
+    status              = Column(String, default="APPLIED")
+
+

@@ -1046,3 +1046,43 @@ def get_btc_candles(limit: int = 30):
         pass
     return {"candles": []}
 
+
+@router.get("/self-learning-logs")
+def get_self_learning_logs(
+    limit: int = 50,
+    instance_id: Optional[str] = "instance_1",
+    db: Session = Depends(get_db)
+):
+    """Retrieve history of self-learning parameter adaptations and error diagnoses."""
+    from app.btc5m.optimizer import BTC5MSelfLearningOptimizer
+    optimizer = BTC5MSelfLearningOptimizer(instance_id=instance_id)
+    return optimizer.get_learning_summary(db=db, limit=limit)
+
+
+@router.get("/optimizer-summary")
+def get_optimizer_summary(
+    instance_id: Optional[str] = "instance_1",
+    db: Session = Depends(get_db)
+):
+    """Retrieve current optimizer state, safety bounds, error distribution, and learning metrics."""
+    from app.btc5m.optimizer import BTC5MSelfLearningOptimizer, SAFETY_BOUNDS
+    optimizer = BTC5MSelfLearningOptimizer(instance_id=instance_id)
+    summary = optimizer.get_learning_summary(db=db, limit=20)
+    summary["safety_bounds"] = {k: {"min": v[0], "max": v[1]} for k, v in SAFETY_BOUNDS.items()}
+    return summary
+
+
+@router.post("/optimize-now")
+def trigger_continuous_optimization(
+    instance_id: Optional[str] = "instance_1",
+    lookback: int = 20,
+    db: Session = Depends(get_db)
+):
+    """Trigger manual optimizer sweep over recent trades to evaluate win-rate curve and auto-tune."""
+    from app.btc5m.optimizer import BTC5MSelfLearningOptimizer
+    optimizer = BTC5MSelfLearningOptimizer(instance_id=instance_id)
+    result = optimizer.run_continuous_optimization(db=db, lookback=lookback)
+    _safe_broadcast(instance_id)
+    return result
+
+

@@ -351,6 +351,15 @@ class BTC5MEngine:
                 db.commit()
                 self.strategy.record_exit(trade.market_id)
                 logger.info(f"[BTC5M Fast Exit Monitor {self.instance_id}] INSTANT EXIT {decision} trade #{trade.id} ({trade.side}) @ ${exit_price:.4f} | PnL: ${trade.pnl:.2f} | Reason: {reason}")
+
+                # Trigger Autonomous Self-Learning Optimizer
+                try:
+                    from app.btc5m.optimizer import BTC5MSelfLearningOptimizer
+                    optimizer = BTC5MSelfLearningOptimizer(instance_id=self.instance_id)
+                    optimizer.analyze_closed_trade(db, trade)
+                except Exception as opt_err:
+                    logger.warning(f"[BTC5M Engine] Self-learning exit analysis error: {opt_err}")
+
                 return True
             else:
                 db.commit()
@@ -1139,6 +1148,14 @@ class BTC5MEngine:
 
                                 db.commit()
                                 self.strategy.record_exit(trade.market_id)
+
+                                # Trigger Autonomous Self-Learning Optimizer
+                                try:
+                                    from app.btc5m.optimizer import BTC5MSelfLearningOptimizer
+                                    optimizer = BTC5MSelfLearningOptimizer(instance_id=self.instance_id)
+                                    optimizer.analyze_closed_trade(db, trade)
+                                except Exception as opt_err:
+                                    logger.warning(f"[BTC5M Engine] Self-learning resolution analysis error: {opt_err}")
                                 logger.info(f"[BTC5M Engine] SETTLED {trade.side} trade. Resolution: {resolution} | PnL: {trade.pnl:.2f} | Balance: {self.risk_manager.current_balance:.2f}")
                                 found_resolution = True
                                 any_settled = True
