@@ -15,13 +15,13 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "account_mode": "demo",
     "slot_mode": "single_5m",
     "risk_reward_ratio": "1:5",
-    "min_entry_score": "60.0",
-    "min_net_edge": "0.005",
+    "min_entry_score": "50.0",
+    "min_net_edge": "-0.005",
     "min_rr": "0.1",
     "max_spread": "0.02",
     "min_liquidity": "10000.0",
-    "min_time_remaining": "220.0",
-    "max_time_remaining": "240.0",
+    "min_time_remaining": "45.0",
+    "max_time_remaining": "285.0",
     "take_profit_delta": "0.05",
     "max_take_profit": "0.95",
     "stop_loss_ratio": "1.00",
@@ -38,8 +38,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "hard_stop_delta": "0.02",
     "min_entry_price": "0.40",
     "max_entry_price": "0.62",
-    "min_p2b_diff": "20.0",
-    "min_entry_probability": "0.74",
+    "min_p2b_diff": "10.0",
+    "min_entry_probability": "0.50",
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
     "rsi_overbought": "70.0",
@@ -54,7 +54,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "breakeven_trigger_dollar": "0.50",
     "mtf_confirmation_enabled": "true",
     "consecutive_loss_dampener_enabled": "true",
-    "min_order_book_imbalance": "0.20",
+    "min_order_book_imbalance": "0.02",
     "cooldown_seconds": "300.0",
     "unanimous_consensus_required": "true",
 }
@@ -130,23 +130,41 @@ def _cast_val(key: str, val: str) -> Any:
 
 
 def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
-    """Ensure all default keys exist in btc5m_settings for the specified instance."""
-    existing = {s.key for s in db.query(BTC5MSetting).all()}
-    added = False
+    """Ensure all default keys exist in btc5m_settings for the specified instance and sync loosened criteria."""
+    existing = {s.key: s for s in db.query(BTC5MSetting).all()}
+    modified = False
     prefix = "" if instance_id in ("instance_1", "default") else f"{instance_id}:"
     defaults = DEFAULT_SETTINGS_INSTANCE_2 if instance_id == "instance_2" else DEFAULT_SETTINGS
+
+    loosened_sync = {
+        "min_entry_score": "50.0",
+        "min_net_edge": "-0.005",
+        "min_entry_probability": "0.50",
+        "min_order_book_imbalance": "0.02",
+        "min_time_remaining": "45.0",
+        "max_time_remaining": "285.0",
+    }
+
     for k, v in defaults.items():
         db_key = f"{prefix}{k}"
         if db_key not in existing:
             db.add(BTC5MSetting(key=db_key, value=v))
-            added = True
-    if added:
+            modified = True
+        elif k in loosened_sync:
+            setting_obj = existing[db_key]
+            # Automatically update existing DB record if it has older restrictive settings
+            if setting_obj.value != loosened_sync[k]:
+                setting_obj.value = loosened_sync[k]
+                setting_obj.updated_at = datetime.now(timezone.utc)
+                modified = True
+
+    if modified:
         try:
             db.commit()
-            logger.info(f"[BTC5M Settings] Seeded default targeting settings for {instance_id} in database.")
+            logger.info(f"[BTC5M Settings] Seeded and synced loosened targeting settings for {instance_id} in database.")
         except Exception as e:
             db.rollback()
-            logger.warning(f"[BTC5M Settings] Failed to seed default settings for {instance_id}: {e}")
+            logger.warning(f"[BTC5M Settings] Failed to seed/sync default settings for {instance_id}: {e}")
 
 
 def get_btc5m_settings(db: Session, instance_id: str = "instance_1") -> Dict[str, Any]:

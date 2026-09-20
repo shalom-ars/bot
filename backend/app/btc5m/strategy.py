@@ -41,13 +41,13 @@ MIN_VOLATILITY        = 0.001  # Reject if market is completely flat (stale)
 MAX_SPREAD            = 0.05   # 5% max spread for trade eligibility
 MIN_DEPTH             = 50.0   # Minimum ask_depth in $ for order fill
 MIN_LIQUIDITY         = 100.0  # Minimum total liquidity
-MIN_TIME_REMAINING    = 60.0   # At least 60 seconds before resolution
-MIN_NET_EDGE          = 0.015  # Minimum net edge (lowered to 1.5% to permit trades with smaller statistical edge)
+MIN_TIME_REMAINING    = 45.0   # At least 45 seconds before resolution (broadened entry window)
+MIN_NET_EDGE          = -0.005 # Minimum net edge (-0.50% loosened threshold)
 MAX_SPREAD_STABILITY  = 0.02   # Spread must be stable (low std)
 MIN_MOMENTUM_PERSIST  = 0.40   # Momentum must be persistent (40% consistent direction)
 STALENESS_THRESHOLD_S = 10.0   # Data older than 10s is stale
-MIN_ENTRY_SCORE       = 60.0   # Score threshold (readjusted to permit more high-edge trades)
-MIN_RR                = 1.5    # Minimum Risk-Reward threshold (readjusted to 1.5)
+MIN_ENTRY_SCORE       = 50.0   # Score threshold (loosened to 50.0)
+MIN_RR                = 0.1    # Minimum Risk-Reward threshold
 
 
 @dataclass
@@ -526,14 +526,14 @@ class BTC5MStrategy:
         no_ep, no_fair, no_rr, no_edge, no_sl, no_tp, no_risk, no_pos_size = self._calc_edge_and_rr(False, features, current_balance, btc_price, price_to_beat, time_remaining)
         
         risk_pct = self.settings.get("risk_per_trade", settings.risk_per_trade)
-        min_rr = self.settings.get("min_rr", MIN_RR)
-        min_score = self.settings.get("min_entry_score", MIN_ENTRY_SCORE)
-        min_edge = self.settings.get("min_net_edge", MIN_NET_EDGE)
-        max_spr = self.settings.get("max_spread", MAX_SPREAD)
-        min_liq = self.settings.get("min_liquidity", MIN_LIQUIDITY)
-        min_time = float(self.settings.get("min_time_remaining", 210.0))
+        min_rr = float(self.settings.get("min_rr", MIN_RR))
+        min_score = float(self.settings.get("min_entry_score", MIN_ENTRY_SCORE))
+        min_edge = float(self.settings.get("min_net_edge", MIN_NET_EDGE))
+        max_spr = float(self.settings.get("max_spread", MAX_SPREAD))
+        min_liq = float(self.settings.get("min_liquidity", MIN_LIQUIDITY))
+        min_time = float(self.settings.get("min_time_remaining", 45.0))
         is_instance_1 = (self.instance_id == "instance_1" or getattr(self, "instance_id", None) is None)
-        default_max_time = 240.0
+        default_max_time = 285.0
         max_time = float(self.settings.get("max_time_remaining", default_max_time))
 
         # Add dynamic points (10 for edge, 5 for RR, 5 for time)
@@ -613,10 +613,10 @@ class BTC5MStrategy:
         else:
             skip_flags.append(f"SKIP - Liquidity {liquidity:.0f} < {min_liq:.0f}")
 
-        # Hummingbot Order Book Imbalance (OBI) Filter
+        # Hummingbot Order Book Imbalance (OBI) Filter (Broadened to 0.02)
         total_depth = bid_depth + ask_depth
         obi = (bid_depth - ask_depth) / (total_depth + 1e-9) if total_depth > 0 else 0.0
-        min_obi = float(self.settings.get("min_order_book_imbalance", 0.20))
+        min_obi = float(self.settings.get("min_order_book_imbalance", 0.02))
         gate_results["obi"] = {
             "pass": False,
             "value": f"{obi:+.2f} (Target: {min_obi:+.2f})"
@@ -647,14 +647,14 @@ class BTC5MStrategy:
         else:
             skip_flags.append(f"SKIP - R:R {actual_planned_rr:.2f} < {min_rr}")
             
-        min_p2b = float(self.settings.get("min_p2b_diff", 10.0))
+        min_p2b = float(self.settings.get("min_p2b_diff", 5.0))
         if not btc_price or not price_to_beat:
             skip_flags.append("SKIP - Missing Price-to-Beat or Current BTC Price (Stale data)")
         elif abs(btc_price - price_to_beat) < min_p2b:
             btc_diff = abs(btc_price - price_to_beat)
             skip_flags.append(f"SKIP - Indecisive BTC vs P2B (${btc_diff:.1f} < ${min_p2b:.2f} threshold)")
 
-        min_prob = float(self.settings.get("min_entry_probability", 0.70))
+        min_prob = float(self.settings.get("min_entry_probability", 0.50))
         if fair_prob >= min_prob:
             gate_results["probability"]["pass"] = True
         else:
@@ -798,9 +798,9 @@ class BTC5MStrategy:
         if self.settings.get("unanimous_consensus_required", True):
             # 1. Trend & Momentum Agent (RSI, MACD, Bollinger, MTF)
             agent_trend_pass = gate_results.get("rsi", {}).get("pass", False) and gate_results.get("macd", {}).get("pass", False) and gate_results.get("bollinger", {}).get("pass", False)
-            # 2. Oracle Valuation Agent (Chainlink Spot vs P2B strike lead >= $20, Fair Probability >= 74%)
+            # 2. Oracle Valuation Agent (Chainlink Spot vs P2B strike lead >= $10, Fair Probability >= 50%)
             p2b_delta = abs((btc_price or 0.0) - (price_to_beat or 0.0))
-            agent_oracle_pass = (p2b_delta >= float(self.settings.get("min_p2b_diff", 20.0))) and gate_results.get("probability", {}).get("pass", False)
+            agent_oracle_pass = (p2b_delta >= float(self.settings.get("min_p2b_diff", 10.0))) and gate_results.get("probability", {}).get("pass", False)
             # 3. Microstructure & Liquidity Agent (Hummingbot OBI, Spread <= 2%, Depth >= $10k)
             agent_micro_pass = gate_results.get("spread", {}).get("pass", False) and gate_results.get("liquidity", {}).get("pass", False) and gate_results.get("obi", {}).get("pass", False)
             # 4. Risk Guardian Agent (Account Capital, Cooldown, and Drawdown Limits)
