@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Clock, Shield, TrendingUp, 
   Activity, Zap, Lock, History, Calendar, CheckCircle, XCircle,
   AlertTriangle, ShieldAlert, RotateCcw, DollarSign, Layers,
-  LogOut, ChevronDown, ChevronUp
+  LogOut, ChevronDown, ChevronUp, GripVertical, SplitSquareVertical
 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 
@@ -712,6 +712,197 @@ function SkipLogsSection({ refreshTrigger }: { refreshTrigger?: number }) {
   );
 }
 
+// Adjustable Split Container for Trade History and Skip Logs
+function ResizableHistoryLogsSplit({
+  refreshTrigger,
+  instanceId
+}: {
+  refreshTrigger?: number;
+  instanceId?: string;
+}) {
+  const [splitPercent, setSplitPercent] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('btc5m_history_split');
+      return saved ? Math.min(Math.max(Number(saved), 18), 82) : 50;
+    } catch (e) {
+      return 50;
+    }
+  });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isLargeScreen, setIsLargeScreen] = useState<boolean>(() => {
+    return typeof window !== 'undefined' ? window.innerWidth >= 1024 : true;
+  });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsLargeScreen(window.innerWidth >= 1024);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleTouchStart = useCallback(() => {
+    setIsDragging(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const rawPercent = ((e.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(Math.max(rawPercent, 18), 82);
+      setSplitPercent(clamped);
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!containerRef.current || !e.touches[0]) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const rawPercent = ((e.touches[0].clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(Math.max(rawPercent, 18), 82);
+      setSplitPercent(clamped);
+    };
+
+    const handleEnd = () => {
+      setIsDragging(false);
+      try {
+        localStorage.setItem('btc5m_history_split', splitPercent.toString());
+      } catch (e) {}
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleEnd);
+    window.addEventListener('touchmove', handleTouchMove);
+    window.addEventListener('touchend', handleEnd);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleEnd);
+    };
+  }, [isDragging, splitPercent]);
+
+  const setPreset = (pct: number) => {
+    setSplitPercent(pct);
+    try {
+      localStorage.setItem('btc5m_history_split', pct.toString());
+    } catch (e) {}
+  };
+
+  return (
+    <div className="space-y-2">
+      {/* Quick Toolbar for Dynamic Sizing & Preset Ratios */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="flex items-center gap-2 text-slate-600 font-bold text-xs">
+          <SplitSquareVertical className="w-4 h-4 text-blue-600" />
+          <span className="hidden sm:inline font-black tracking-tight">ADJUSTABLE DUAL AUDIT VIEW:</span>
+          <span className="text-slate-800 font-mono text-[11px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+            {Math.round(splitPercent)}% Trades · {Math.round(100 - splitPercent)}% Skip Logs
+          </span>
+          <span className="hidden md:inline text-[10px] text-slate-400 font-sans">
+            (Drag divider bar horizontally to resize)
+          </span>
+        </div>
+
+        {/* Quick Split Ratio Presets */}
+        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-black">
+          <button
+            onClick={() => setPreset(25)}
+            title="Expand Skip Logs (25% Trades / 75% Skips)"
+            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+              Math.round(splitPercent) === 25 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            25 / 75
+          </button>
+          <button
+            onClick={() => setPreset(50)}
+            title="Equal 50/50 Split"
+            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+              Math.round(splitPercent) === 50 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            50 / 50
+          </button>
+          <button
+            onClick={() => setPreset(75)}
+            title="Expand Trade History (75% Trades / 25% Skips)"
+            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+              Math.round(splitPercent) === 75 ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            75 / 25
+          </button>
+        </div>
+      </div>
+
+      {/* Resizable Container */}
+      <div
+        ref={containerRef}
+        className={`relative flex flex-col lg:flex-row items-stretch w-full ${
+          isDragging ? 'select-none cursor-col-resize' : ''
+        }`}
+      >
+        {/* Left Pane: Trade History */}
+        <div
+          className="w-full min-w-0"
+          style={{
+            width: isLargeScreen ? `calc(${splitPercent}% - 8px)` : '100%'
+          }}
+        >
+          <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={instanceId} />
+        </div>
+
+        {/* Adjustable Divider (visible on large screens) */}
+        <div
+          onMouseDown={handleMouseDown}
+          onTouchStart={handleTouchStart}
+          title="Drag left/right to resize views"
+          className={`hidden lg:flex flex-col items-center justify-center w-4 mx-0.5 cursor-col-resize group shrink-0 relative z-10 select-none ${
+            isDragging ? 'bg-blue-100 rounded-full' : 'hover:bg-slate-100 rounded-full'
+          }`}
+        >
+          <div
+            className={`w-1.5 h-full min-h-[420px] rounded-full transition-all flex items-center justify-center ${
+              isDragging ? 'bg-blue-600 shadow-lg shadow-blue-500/40 w-2' : 'bg-slate-200 group-hover:bg-blue-500'
+            }`}
+          >
+            <div
+              className={`p-1 rounded-md bg-white border shadow-xs transition-transform ${
+                isDragging ? 'border-blue-600 scale-125' : 'border-slate-300 group-hover:border-blue-500 group-hover:scale-110'
+              }`}
+            >
+              <GripVertical
+                className={`w-3.5 h-3.5 ${
+                  isDragging ? 'text-blue-600' : 'text-slate-400 group-hover:text-blue-600'
+                }`}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Right Pane: Skip Logs History */}
+        <div
+          className="w-full min-w-0 mt-4 lg:mt-0"
+          style={{
+            width: isLargeScreen ? `calc(${100 - splitPercent}% - 8px)` : '100%'
+          }}
+        >
+          <SkipLogsSection refreshTrigger={refreshTrigger} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InnerBTC5M() {
   const [selectedInstance] = useState<'instance_1'>('instance_1');
   const { statusData, statusLoading, refetchStatus, wsConnected } = useBTC5MStatus(selectedInstance);
@@ -939,14 +1130,18 @@ function InnerBTC5M() {
       {/* TOP CONTROL BAR: PLAN BADGE, ACCOUNT MODE SWITCHER, RESET & LOGOUT */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5 shadow-sm">
         {/* Left: Mode & Pro Plan Badges */}
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
           <span className="bg-blue-500/15 text-blue-400 text-xs font-black px-3 py-1 rounded-full border border-blue-500/30 flex items-center gap-1.5 shadow-xs">
             <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
             PRO PLAN
           </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 font-mono">
-            <ShieldAlert className="w-3 h-3 text-amber-400" />
-            <span>PAPER TRADING · $500 SEED</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span>DEMO MODE · $500 SEED</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">
+            <Clock className="w-3 h-3 text-amber-400" />
+            <span>RUNNING 5-MIN WINDOW · SINGLE 5M SLOT</span>
           </span>
         </div>
 
@@ -1082,6 +1277,18 @@ function InnerBTC5M() {
                 }`}>
                   {statusData?.account_mode === 'real_money' ? '● REAL MONEY' : '🧪 DEMO ($500)'}
                 </span>
+                {/* Demo Quick Reset Button */}
+                {(statusData?.account_mode || 'demo') === 'demo' && (
+                  <button
+                    onClick={handleResetHistory}
+                    disabled={isResetting}
+                    title="Reset virtual equity to $500.00 and clear demo records"
+                    className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border border-rose-500/40 bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <RotateCcw className={`w-2.5 h-2.5 ${isResetting ? 'animate-spin' : ''}`} />
+                    <span>RESET ($500)</span>
+                  </button>
+                )}
                 <button
                   onClick={() => handleToggleTrading(!isTradingActive)}
                   disabled={isTogglingTrading}
@@ -1611,11 +1818,8 @@ function InnerBTC5M() {
 
       </div>
 
-      {/* 4. SIDE-BY-SIDE: CATEGORIZED TRADE HISTORY & SKIPPED TRADES AUDIT LOG */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-        <TradeHistorySection refreshTrigger={refreshTrigger} instanceId={selectedInstance} />
-        <SkipLogsSection refreshTrigger={refreshTrigger} />
-      </div>
+      {/* 4. ADJUSTABLE RESIZABLE SPLIT: CATEGORIZED TRADE HISTORY & SKIPPED TRADES AUDIT LOG */}
+      <ResizableHistoryLogsSplit refreshTrigger={refreshTrigger} instanceId={selectedInstance} />
     </div>
   );
 }
