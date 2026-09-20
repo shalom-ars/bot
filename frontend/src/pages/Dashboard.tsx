@@ -3,6 +3,7 @@ import { Activity, TrendingUp, AlertTriangle, ArrowUpRight, ArrowDownRight, File
 import { Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { PaperTradingControl } from '../components/PaperTradingControl';
+import SelfLearningLogsWidget from '../components/SelfLearningLogsWidget';
 
 export default function Dashboard() {
   const { data: portfolio, loading: portLoading, error: portError } = useApi<any>('/users/portfolio', null);
@@ -130,6 +131,9 @@ export default function Dashboard() {
                  )}
               </div>
             </div>
+          </div>
+          <div className="mt-6">
+            <SelfLearningLogsWidget />
           </div>
         </>
       )}
