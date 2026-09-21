@@ -38,14 +38,14 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "soft_stop_confirmation_seconds": "3.0",
     "thesis_failure_threshold": "60.0",
     "hard_stop_delta": "0.01",
-    "min_entry_price": "0.40",         # Prevent 95-cent inverted-risk traps
-    "max_entry_price": "0.65",         # Optimal binary trading window
+    "min_entry_price": "0.40",         # Prevent inverted-risk traps
+    "max_entry_price": "0.72",         # Raised from 0.65: allow entries in trending markets
     "min_p2b_diff": "1.5",             # Clear Oracle strike clearance ($1.50 min)
     "min_entry_probability": "0.52",   # High-probability floor (52%+ edge)
     "dynamic_sl_delta": "0.15",        # Dynamic stop loss capped at $0.15 / share
     "rsi_period": "14",
-    "rsi_overbought": "75.0",          # Filter overbought tops
-    "rsi_oversold": "25.0",            # Filter oversold bottoms
+    "rsi_overbought": "82.0",          # Raised from 75: allow strong trending markets
+    "rsi_oversold": "18.0",            # Lowered from 25: allow strong downtrend entries
     "macd_fast": "12",
     "macd_slow": "26",
     "macd_signal": "9",
@@ -57,10 +57,10 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "enable_instant_harvest": "false",
     "instant_profit_harvest_dollar": "0.0",
     "micro_loss_tolerance": "0.85",    # Early cut at $0.85 to prevent slippage beyond $1.00
-    "mtf_confirmation_enabled": "true", # Enforce live spot momentum alignment
+    "mtf_confirmation_enabled": "false", # Disabled: spot momentum data not always available
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.02", # Require order book depth confirmation
-    "cooldown_seconds": "180.0",       # 3-minute cooldown after any exit
+    "cooldown_seconds": "60.0",        # 60s cooldown (was 180s - too long, missed many setups)
     "unanimous_consensus_required": "false",
 }
 
@@ -183,30 +183,32 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     loosened_sync = {}
     
     if instance_id == "instance_2":
-        loosened_sync["slot_mode"] = "double_slot_2.5m"
+        loosened_sync["slot_mode"] = "single_5m"
         loosened_sync["risk_reward_ratio"] = "1.2:1"
         loosened_sync["stop_loss_ratio"] = "0.83"
         loosened_sync["tp_dollar"] = "1.20"
         loosened_sync["sl_dollar"] = "1.00"
         loosened_sync["hard_cap_dollar"] = "1.00"
-        loosened_sync["micro_loss_tolerance"] = "1.00"
+        loosened_sync["micro_loss_tolerance"] = "0.85"
         loosened_sync["dynamic_sl_delta"] = "0.12"
         loosened_sync["breakeven_trigger_dollar"] = "0.40"
         loosened_sync["min_entry_price"] = "0.40"
-        loosened_sync["max_entry_price"] = "0.65"
+        loosened_sync["max_entry_price"] = "0.72"
         loosened_sync["min_entry_score"] = "65.0"
         loosened_sync["min_direction_lead"] = "5.0"
         loosened_sync["min_entry_probability"] = "0.52"
         loosened_sync["min_liquidity"] = "30.0"
-        loosened_sync["min_p2b_diff"] = "1.0"
+        loosened_sync["min_p2b_diff"] = "1.5"
         loosened_sync["min_order_book_imbalance"] = "0.02"
-        loosened_sync["rsi_overbought"] = "75.0"
-        loosened_sync["rsi_oversold"] = "25.0"
+        loosened_sync["rsi_overbought"] = "82.0"
+        loosened_sync["rsi_oversold"] = "18.0"
         loosened_sync["min_net_edge"] = "0.00"
         loosened_sync["min_rr"] = "0.0"
         loosened_sync["max_spread"] = "0.02"
         loosened_sync["enable_instant_harvest"] = "false"
         loosened_sync["instant_profit_harvest_dollar"] = "0.0"
+        loosened_sync["mtf_confirmation_enabled"] = "false"
+        loosened_sync["cooldown_seconds"] = "60.0"
     else:
         loosened_sync["slot_mode"] = "single_5m"
         loosened_sync["risk_reward_ratio"] = "1.5:1"
@@ -214,24 +216,26 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["tp_dollar"] = "1.50"
         loosened_sync["sl_dollar"] = "1.00"
         loosened_sync["hard_cap_dollar"] = "1.00"
-        loosened_sync["micro_loss_tolerance"] = "1.00"
+        loosened_sync["micro_loss_tolerance"] = "0.85"
         loosened_sync["dynamic_sl_delta"] = "0.15"
         loosened_sync["breakeven_trigger_dollar"] = "0.50"
         loosened_sync["min_entry_price"] = "0.40"
-        loosened_sync["max_entry_price"] = "0.65"
+        loosened_sync["max_entry_price"] = "0.72"
         loosened_sync["min_entry_score"] = "65.0"
         loosened_sync["min_direction_lead"] = "5.0"
         loosened_sync["min_entry_probability"] = "0.52"
         loosened_sync["min_liquidity"] = "30.0"
-        loosened_sync["min_p2b_diff"] = "1.0"
+        loosened_sync["min_p2b_diff"] = "1.5"
         loosened_sync["min_order_book_imbalance"] = "0.02"
-        loosened_sync["rsi_overbought"] = "75.0"
-        loosened_sync["rsi_oversold"] = "25.0"
+        loosened_sync["rsi_overbought"] = "82.0"
+        loosened_sync["rsi_oversold"] = "18.0"
         loosened_sync["min_net_edge"] = "0.00"
         loosened_sync["min_rr"] = "0.0"
         loosened_sync["max_spread"] = "0.02"
         loosened_sync["enable_instant_harvest"] = "false"
         loosened_sync["instant_profit_harvest_dollar"] = "0.0"
+        loosened_sync["mtf_confirmation_enabled"] = "false"
+        loosened_sync["cooldown_seconds"] = "60.0"
         
     for k, v in defaults.items():
         db_key = f"{prefix}{k}"

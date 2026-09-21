@@ -695,20 +695,29 @@ class BTC5MStrategy:
             skip_flags.append("SKIP - Missing NO outcome token ID on Polymarket")
             
         min_p = float(self.settings.get("min_entry_price", 0.40))
-        max_p = float(self.settings.get("max_entry_price", 0.65))
+        # Smart price cap: when BTC is strongly trending (>$3 above/below P2B),
+        # allow entry price up to 0.80 (strong trend momentum justifies higher price).
+        # Normal moves: cap at max_entry_price (default 0.72).
+        base_max_p = float(self.settings.get("max_entry_price", 0.72))
+        max_p = 0.82 if strong_directional else base_max_p
         if entry_price < min_p or entry_price > max_p:
             skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
 
-        # RSI Overbought / Oversold protection (14-period, Overbought @ 70, Oversold @ 30)
+        # RSI Overbought / Oversold protection
+        # NOTE: In a trending 5M binary market, RSI can stay elevated (75-85) while price
+        # continues in trend direction. We use a wider threshold (82/18) to avoid blocking
+        # valid trend trades. Only block extreme exhaustion signals.
         rsi_val = float(features.get("rsi_14", 50.0))
-        rsi_ob = float(self.settings.get("rsi_overbought", 70.0))
-        rsi_os = float(self.settings.get("rsi_oversold", 30.0))
+        rsi_ob = float(self.settings.get("rsi_overbought", 82.0))
+        rsi_os = float(self.settings.get("rsi_oversold", 18.0))
         gate_results["rsi"]["value"] = f"{rsi_val:.1f}"
-        if predicted_side == "YES" and rsi_val > rsi_ob:
+        # Allow RSI 75-82 for strong directional moves (BTC clearly above P2B)
+        strong_directional = abs(strike_delta) >= 3.0
+        if predicted_side == "YES" and rsi_val > rsi_ob and not strong_directional:
             gate_results["rsi"]["pass"] = False
             gate_results["rsi"]["value"] = f"{rsi_val:.1f} (Overbought > {rsi_ob:.0f})"
             skip_flags.append(f"SKIP - RSI {rsi_val:.1f} > {rsi_ob:.0f} (Overbought: high reversal risk for UP entry)")
-        elif predicted_side == "NO" and rsi_val < rsi_os:
+        elif predicted_side == "NO" and rsi_val < rsi_os and not strong_directional:
             gate_results["rsi"]["pass"] = False
             gate_results["rsi"]["value"] = f"{rsi_val:.1f} (Oversold < {rsi_os:.0f})"
             skip_flags.append(f"SKIP - RSI {rsi_val:.1f} < {rsi_os:.0f} (Oversold: high bounce risk for DOWN entry)")
@@ -729,15 +738,17 @@ class BTC5MStrategy:
             gate_results["macd"]["pass"] = True
 
         # Bollinger Bands Volatility & Boundary Protection
+        # Allow price beyond upper band (>1.05) if BTC is strongly trending above P2B
+        # This prevents blocking entries in strong momentum moves
         bb_pct = float(features.get("bb_pct_b", 0.5))
         bb_bw = float(features.get("bb_bandwidth", 0.0))
         gate_results["bollinger"]["value"] = f"%B {bb_pct:.2f} | BW {bb_bw:.3f}"
-        if predicted_side == "YES" and bb_pct > 1.05:
+        if predicted_side == "YES" and bb_pct > 1.20 and not strong_directional:
             gate_results["bollinger"]["pass"] = False
-            skip_flags.append(f"SKIP - Price pierced upper Bollinger Band (%B {bb_pct:.2f} > 1.05): high reversal risk")
-        elif predicted_side == "NO" and bb_pct < -0.05:
+            skip_flags.append(f"SKIP - Price far above upper Bollinger Band (%B {bb_pct:.2f} > 1.20): extreme reversal risk")
+        elif predicted_side == "NO" and bb_pct < -0.20 and not strong_directional:
             gate_results["bollinger"]["pass"] = False
-            skip_flags.append(f"SKIP - Price pierced lower Bollinger Band (%B {bb_pct:.2f} < -0.05): high bounce risk")
+            skip_flags.append(f"SKIP - Price far below lower Bollinger Band (%B {bb_pct:.2f} < -0.20): extreme bounce risk")
         else:
             gate_results["bollinger"]["pass"] = True
 
