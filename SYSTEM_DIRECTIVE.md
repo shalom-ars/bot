@@ -18,21 +18,26 @@ Your paramount objective is **Extreme Precision over Volume**: Every market scan
 
 ---
 
-### 🔍 2. HIGH-ACCURACY DIRECTIONAL ENTRY GATES
-Before executing any trade on either YES (BUY) or NO (SELL), the engine must pass all five precision gates:
+### 🔍 2. HIGH-ACCURACY DIRECTIONAL ENTRY GATES & NOISE FILTERING
+Before executing any trade on either YES (BUY) or NO (SELL), the engine must pass all strict precision gates:
 
-1. **Decisive Direction Lead Gate (`min_direction_lead >= 4.0`):**
-   - Reject any 50/50 toss-up. If `|YES_Score - NO_Score| < 4.0`, classify the market as `NONE` and SKIP. Only execute when one direction demonstrates clear, dominant statistical leadership.
-2. **Minimum Score & Probability Floor:**
-   - `min_entry_score >= 60.0`: Requires positive confirmation across momentum, RSI, and order flow.
-   - `min_entry_probability >= 50.0%`: Mathematical model must calculate a directional win probability above baseline.
-3. **Positive Mathematical Expectation (`min_net_edge >= 0.00%`):**
-   - Never enter negative-EV trades. Net edge (`Fair_Probability - Entry_Price - Spread - Fees - Slippage`) must be `>= 0.00%`.
-4. **Liquidity & Spread Protection:**
-   - `max_spread <= 0.02` (Max 2.0 cents): Rejects wide spread traps.
-   - Turbine.fi Liquidity Gating: Order book depth at entry must be at least **2x requested size** on the target side (Ask depth for BUY, Bid depth for SELL).
-5. **Oracle Clearance:**
-   - Chainlink BTC/USD spot price must clear the strike price (`Price-to-Beat`) with active momentum in the predicted direction.
+1. **Decisive Direction Lead Gate (`min_direction_lead >= 5.0`):**
+   - Reject any 50/50 toss-up. If `|YES_Score - NO_Score| < 5.0`, classify the market as `NONE` and SKIP. Only execute when one direction demonstrates clear, dominant statistical leadership.
+2. **Elevated Score & High-Probability Floor:**
+   - `min_entry_score >= 65.0`: Discard weak/noisy signals; require Grade A confluence across momentum, RSI, and order flow.
+   - `min_entry_probability >= 52.0%`: Mathematical model must calculate a definitive win probability edge.
+3. **Comprehensive Technical Indicator Alignment:**
+   - **RSI (14) Boundary Protection:** Overbought ceiling at `75.0` (prevents buying tops) and Oversold floor at `25.0` (prevents selling bottoms).
+   - **MACD Trend Confluence:** MACD histogram must align with trade direction (`macd_hist >= -0.05` for UP, `<= +0.05` for DOWN). Severe adverse momentum is immediately rejected.
+   - **Bollinger Bands (%B):** Price must not pierce beyond outer bands (`%B <= 1.05` for UP, `%B >= -0.05` for DOWN) to prevent buying blow-off exhaustion.
+4. **Deep Market Depth & Order Book Imbalance (OBI):**
+   - `min_liquidity >= 30.0`: Deep order book liquidity required.
+   - `min_order_book_imbalance >= 0.02`: Order book bid/ask depth imbalance must confirm directional pressure.
+   - Turbine.fi Liquidity Gating: Order book depth at entry must be at least **3x requested size** on the target side (Ask depth for BUY, Bid depth for SELL).
+5. **Oracle Clearance & Strike Margin:**
+   - Spot BTC must clear `Price-to-Beat` by at least `$1.00` (`min_p2b_diff >= 1.0`) with active momentum in the predicted direction.
+6. **Strict 1:1 Risk-Reward Enforcement:**
+   - Every single trade enforces symmetrical `$1.00 TP` and `$1.00 SL` (`tp_dollar = 1.00`, `sl_dollar = 1.00`). No trade executes without 1:1 parity.
 
 ---
 
