@@ -527,10 +527,19 @@ class BTC5MEngine:
                 except Exception:
                     continue
 
-            # Fallback to Coinbase spot price matching global live BTC
+            # Fallback to Binance spot (faster than Coinbase)
             if btc_price is None:
                 try:
-                    with httpx.Client(timeout=1.5, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                    with httpx.Client(timeout=2.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                        resp = client.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+                        if resp.status_code == 200:
+                            btc_price = float(resp.json()["price"])
+                except Exception:
+                    pass
+            # Fallback to Coinbase spot price
+            if btc_price is None:
+                try:
+                    with httpx.Client(timeout=2.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
                         resp = client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot")
                         if resp.status_code == 200:
                             btc_price = float(resp.json()["data"]["amount"])
@@ -600,7 +609,8 @@ class BTC5MEngine:
             self._market_states = {}
 
         now_mono = time.monotonic()
-        if hasattr(self, '_cached_rpc_btc') and (now_mono - getattr(self, '_cached_rpc_time', 0.0)) < 1.2:
+        # Extended cache: 8 seconds (was 1.2s) — prevents hammering APIs every 2s cycle
+        if hasattr(self, '_cached_rpc_btc') and (now_mono - getattr(self, '_cached_rpc_time', 0.0)) < 8.0:
             btc_price = self._cached_rpc_btc
 
         RPC_URLS = [
@@ -627,7 +637,7 @@ class BTC5MEngine:
                             "latest"
                         ]
                     },
-                    timeout=2.0
+                    timeout=2.5
                 )
                 if resp.status_code == 200:
                     payload = resp.json()
@@ -654,12 +664,23 @@ class BTC5MEngine:
                         except Exception:
                             continue
 
-                    # Fallback to Coinbase spot if all RPC nodes failed
+                    # Fallback 1: Binance (fastest and most reliable)
                     if btc_price is None:
                         try:
-                            resp = await client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=1.5)
+                            resp = await client.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=2.0)
+                            if resp.status_code == 200:
+                                btc_price = float(resp.json()["price"])
+                                logger.debug("[BTC5M Engine] BTC price from Binance fallback: %.2f", btc_price)
+                        except Exception:
+                            pass
+
+                    # Fallback 2: Coinbase
+                    if btc_price is None:
+                        try:
+                            resp = await client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=2.0)
                             if resp.status_code == 200:
                                 btc_price = float(resp.json()["data"]["amount"])
+                                logger.debug("[BTC5M Engine] BTC price from Coinbase fallback: %.2f", btc_price)
                         except Exception:
                             pass
             except Exception as exc:
@@ -672,6 +693,19 @@ class BTC5MEngine:
         # Fallback to sync method if needed
         if btc_price is None:
             btc_price, _ = self._get_btc5m_reference_data(market)
+
+        # CRITICAL: Use stale cache (up to 30s old) rather than returning None
+        # A slightly stale BTC price is better than no price at all for entry decisions
+        if btc_price is None and hasattr(self, '_cached_rpc_btc') and self._cached_rpc_btc is not None:
+            stale_age = now_mono - getattr(self, '_cached_rpc_time', 0.0)
+            if stale_age < 30.0:
+                btc_price = self._cached_rpc_btc
+                logger.warning(f"[BTC5M Engine] Using stale BTC price ({stale_age:.0f}s old): {btc_price:.2f}")
+        
+        # Also check latest_btc_price in market_states as absolute last resort
+        if btc_price is None and self._market_states.get("latest_btc_price"):
+            btc_price = self._market_states["latest_btc_price"]
+            logger.warning(f"[BTC5M Engine] Using market_states latest_btc_price as last resort: {btc_price:.2f}")
 
         if btc_price is not None:
             self._market_states["latest_btc_price"] = btc_price
