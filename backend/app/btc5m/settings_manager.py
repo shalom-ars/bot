@@ -14,7 +14,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "trading_active": "true",
     "account_mode": "demo",
     "slot_mode": "single_5m",
-    "risk_reward_ratio": "1:10",        # $1.00 TP / $10.00 SL Reversal Room
+    "risk_reward_ratio": "1.5:1",       # 1.5:1 Positive Expectancy ($1.50 TP / $1.00 SL)
     "min_entry_score": "65.0",         # Filter out weak signals, require Grade A conviction
     "min_direction_lead": "5.0",       # Decisive score lead to prevent 50/50 tossups
     "min_net_edge": "0.00",            # Positive mathematical expectation
@@ -25,23 +25,23 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "max_time_remaining": "300.0",
     "take_profit_delta": "0.05",
     "max_take_profit": "0.95",
-    "stop_loss_ratio": "10.00",        # 1:10 Stop loss to take profit ratio
+    "stop_loss_ratio": "0.67",         # Risk $1.00 to make $1.50
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
-    "tp_dollar": "1.00",               # $1.00 Profit Target
-    "sl_dollar": "10.00",              # $10.00 Stop Loss Limit (Market Reversal Breathing Room)
-    "hard_cap_dollar": "10.00",        # $10.00 Hard Loss Cap
+    "tp_dollar": "1.50",               # $1.50 Profit Target (Positive Asymmetry)
+    "sl_dollar": "1.00",               # $1.00 Stop Loss Limit (Strict Risk Cap)
+    "hard_cap_dollar": "1.00",        # $1.00 Hard Loss Cap
     "side_bias": "ANY",
     "only_short": "false",
     "soft_stop_confirmation_seconds": "3.0",
     "thesis_failure_threshold": "60.0",
     "hard_stop_delta": "0.01",
-    "min_entry_price": "0.01",
-    "max_entry_price": "0.99",
+    "min_entry_price": "0.40",         # Prevent 95-cent inverted-risk traps
+    "max_entry_price": "0.65",         # Optimal binary trading window
     "min_p2b_diff": "1.0",             # Clear Oracle strike clearance ($1.00 min)
     "min_entry_probability": "0.52",   # High-probability floor (52%+ edge)
-    "dynamic_sl_delta": "0.90",        # Full $10.00 distance room
+    "dynamic_sl_delta": "0.15",        # Dynamic stop loss capped at $0.15 / share
     "rsi_period": "14",
     "rsi_overbought": "75.0",          # Filter overbought tops
     "rsi_oversold": "25.0",            # Filter oversold bottoms
@@ -55,7 +55,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "breakeven_trigger_dollar": "0.50",
     "enable_instant_harvest": "false",
     "instant_profit_harvest_dollar": "0.0",
-    "micro_loss_tolerance": "10.00",   # $10.00 Loss Tolerance
+    "micro_loss_tolerance": "1.00",    # $1.00 Loss Tolerance
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.02", # Require order book depth confirmation
@@ -66,7 +66,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
 DEFAULT_SETTINGS_INSTANCE_2 = DEFAULT_SETTINGS.copy()
 DEFAULT_SETTINGS_INSTANCE_2.update({
     "slot_mode": "double_slot_2.5m",
-    "risk_reward_ratio": "1:10",        # $1.00 TP / $10.00 SL Reversal Room
+    "risk_reward_ratio": "1.2:1",       # 1.2:1 Scalp Target ($1.20 TP / $1.00 SL)
     "min_entry_score": "65.0",         # Filter out weak signals, require Grade A conviction
     "min_direction_lead": "5.0",       # Decisive score gap to ensure direction accuracy
     "min_entry_probability": "0.52",   # 52%+ probability fires immediate entry
@@ -76,19 +76,21 @@ DEFAULT_SETTINGS_INSTANCE_2.update({
     "min_rr": "0.0",                   # Let strategy execute without friction cost rejection
     "min_order_book_imbalance": "0.02", # Order book depth confirmation
     "min_p2b_diff": "1.0",             # Clear Oracle strike clearance ($1.00 min)
+    "min_entry_price": "0.40",         # Prevent 95-cent inverted-risk traps
+    "max_entry_price": "0.65",         # Optimal binary trading window
     "rsi_overbought": "75.0",          # Filter overbought tops
     "rsi_oversold": "25.0",            # Filter oversold bottoms
-    "micro_loss_tolerance": "10.00",   # $10.00 Loss Tolerance
-    "breakeven_trigger_dollar": "0.50",
+    "micro_loss_tolerance": "1.00",    # $1.00 Loss Tolerance
+    "breakeven_trigger_dollar": "0.40",
     "cooldown_seconds": "10.0",        # Quick recovery for double slot
     "hard_stop_delta": "0.01",
-    "stop_loss_ratio": "10.00",        # 1:10 Stop loss to take profit ratio
-    "tp_dollar": "1.00",               # $1.00 Win Target
-    "sl_dollar": "10.00",              # $10.00 Loss Limit (Market Reversal Breathing Room)
-    "hard_cap_dollar": "10.00",        # $10.00 Hard Loss Cap
+    "stop_loss_ratio": "0.83",         # Risk $1.00 to make $1.20
+    "tp_dollar": "1.20",               # $1.20 Win Target
+    "sl_dollar": "1.00",               # $1.00 Loss Limit
+    "hard_cap_dollar": "1.00",        # $1.00 Hard Loss Cap
     "enable_instant_harvest": "false",
     "instant_profit_harvest_dollar": "0.0",
-    "dynamic_sl_delta": "0.90",        # Full $10.00 distance room
+    "dynamic_sl_delta": "0.12",        # Tight dynamic stop loss
     "rsi_period": "14",
     "macd_fast": "12",
     "macd_slow": "26"
@@ -178,14 +180,16 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
     
     if instance_id == "instance_2":
         loosened_sync["slot_mode"] = "double_slot_2.5m"
-        loosened_sync["risk_reward_ratio"] = "1:10"
-        loosened_sync["stop_loss_ratio"] = "10.00"
-        loosened_sync["tp_dollar"] = "1.00"
-        loosened_sync["sl_dollar"] = "10.00"
-        loosened_sync["hard_cap_dollar"] = "10.00"
-        loosened_sync["micro_loss_tolerance"] = "10.00"
-        loosened_sync["dynamic_sl_delta"] = "0.90"
-        loosened_sync["breakeven_trigger_dollar"] = "0.50"
+        loosened_sync["risk_reward_ratio"] = "1.2:1"
+        loosened_sync["stop_loss_ratio"] = "0.83"
+        loosened_sync["tp_dollar"] = "1.20"
+        loosened_sync["sl_dollar"] = "1.00"
+        loosened_sync["hard_cap_dollar"] = "1.00"
+        loosened_sync["micro_loss_tolerance"] = "1.00"
+        loosened_sync["dynamic_sl_delta"] = "0.12"
+        loosened_sync["breakeven_trigger_dollar"] = "0.40"
+        loosened_sync["min_entry_price"] = "0.40"
+        loosened_sync["max_entry_price"] = "0.65"
         loosened_sync["min_entry_score"] = "65.0"
         loosened_sync["min_direction_lead"] = "5.0"
         loosened_sync["min_entry_probability"] = "0.52"
@@ -201,14 +205,16 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["instant_profit_harvest_dollar"] = "0.0"
     else:
         loosened_sync["slot_mode"] = "single_5m"
-        loosened_sync["risk_reward_ratio"] = "1:10"
-        loosened_sync["stop_loss_ratio"] = "10.00"
-        loosened_sync["tp_dollar"] = "1.00"
-        loosened_sync["sl_dollar"] = "10.00"
-        loosened_sync["hard_cap_dollar"] = "10.00"
-        loosened_sync["micro_loss_tolerance"] = "10.00"
-        loosened_sync["dynamic_sl_delta"] = "0.90"
+        loosened_sync["risk_reward_ratio"] = "1.5:1"
+        loosened_sync["stop_loss_ratio"] = "0.67"
+        loosened_sync["tp_dollar"] = "1.50"
+        loosened_sync["sl_dollar"] = "1.00"
+        loosened_sync["hard_cap_dollar"] = "1.00"
+        loosened_sync["micro_loss_tolerance"] = "1.00"
+        loosened_sync["dynamic_sl_delta"] = "0.15"
         loosened_sync["breakeven_trigger_dollar"] = "0.50"
+        loosened_sync["min_entry_price"] = "0.40"
+        loosened_sync["max_entry_price"] = "0.65"
         loosened_sync["min_entry_score"] = "65.0"
         loosened_sync["min_direction_lead"] = "5.0"
         loosened_sync["min_entry_probability"] = "0.52"

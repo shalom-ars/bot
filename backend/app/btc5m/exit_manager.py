@@ -328,25 +328,33 @@ class BTC5MExitManager:
                 reason = f"MICRO LOSS CUT: Loss -${abs(unrealized):.2f} hit tolerance -${micro_loss_tolerance:.2f}"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-            # SCALP RULE 2: Trailing Profit Locking
+            # SCALP RULE 2: Breakeven & Trailing Profit Locking
+            be_trigger = float(settings.get("breakeven_trigger_dollar", 0.40))
+            if peak_unrealized >= be_trigger and unrealized <= 0.10 and exec_p > float(trade.entry_price):
+                reason = f"BREAKEVEN LOCKED: Capital protected +${unrealized:.2f} (Reversed from Peak +${peak_unrealized:.2f})"
+                return "TP", exec_p, reason, 0.0, {}, "BREAKEVEN_STOP"
+
             # CRITICAL: Trailing Stop MUST NEVER lock in a negative loss!
-            # It only locks if the trade climbed near the target (>= +$0.75) and secures positive gain (>= +$0.25)
-            if peak_unrealized >= 0.75 and unrealized >= 0.25:
+            # It only locks if the trade climbed near the target (>= +$0.70) and secures positive gain (>= +$0.25)
+            if peak_unrealized >= 0.70 and unrealized >= 0.25:
                 trailing_drop_allowance = 0.02
                 trailing_sl_price = peak_p - (trailing_drop_allowance / max(0.1, float(trade.quantity)))
                 if exec_p <= trailing_sl_price and exec_p > float(trade.entry_price) and unrealized > 0:
                     reason = f"PROFIT LOCKED: Captured profit +${unrealized:.2f} (Reversed from Peak ${peak_p:.4f})"
                     return "TP", exec_p, reason, 0.0, {}, "TRAILING_STOP"
 
-            # SCALP RULE 3: Adaptive Time Stop
-            # For wide-reversal strategies ($10 SL), give full room (up to 280s / end of candle).
-            max_hold_seconds = 280.0 if sl_limit >= 5.0 else 145.0
+            # SCALP RULE 3: Adaptive Time Stop & Pre-Expiry Binary Trap Prevention
+            max_hold_seconds = 240.0 if sl_limit >= 5.0 else 180.0
             if trade.entry_time is not None:
                 trade_entry_dt = trade.entry_time
                 if trade_entry_dt.tzinfo is None:
                     trade_entry_dt = trade_entry_dt.replace(tzinfo=timezone.utc)
                 elapsed_seconds = (now - trade_entry_dt).total_seconds()
-                if elapsed_seconds > max_hold_seconds or t_rem < 15.0:
+                # Pre-expiry exit: if negative and less than 45s left in candle, exit to avoid binary $0.00 collapse
+                if t_rem <= 45.0 and unrealized < -0.20:
+                    reason = f"PRE-EXPIRY CUT: Avoided binary zero collapse ({t_rem:.0f}s left in candle, loss limited to -${abs(unrealized):.2f})"
+                    return "HARD_EXIT", exec_p, reason, 100.0, {}, "PRE_EXPIRY_STOP"
+                if elapsed_seconds > max_hold_seconds or t_rem < 20.0:
                     reason = f"TIME STOP: Window expiry ({elapsed_seconds:.0f}s elapsed, {t_rem:.0f}s left in candle)"
                     return "HARD_EXIT", exec_p, reason, 100.0, {}, "TIME_STOP_TRIGGERED"
 
