@@ -21,8 +21,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "min_rr": "0.0",                   # Let strategy execute without friction cost rejection
     "max_spread": "0.02",              # Max 2.0 cents spread
     "min_liquidity": "30.0",           # Deep order book depth requirement
-    "min_time_remaining": "0.0",
-    "max_time_remaining": "300.0",
+    "min_time_remaining": "45.0",      # Pre-expiry exit floor (avoid binary decay)
+    "max_time_remaining": "275.0",     # 25s candle open stabilization (avoid opening whipsaw)
     "take_profit_delta": "0.05",
     "max_take_profit": "0.95",
     "stop_loss_ratio": "0.67",         # Risk $1.00 to make $1.50
@@ -39,7 +39,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "hard_stop_delta": "0.01",
     "min_entry_price": "0.40",         # Prevent 95-cent inverted-risk traps
     "max_entry_price": "0.65",         # Optimal binary trading window
-    "min_p2b_diff": "1.0",             # Clear Oracle strike clearance ($1.00 min)
+    "min_p2b_diff": "1.5",             # Clear Oracle strike clearance ($1.50 min)
     "min_entry_probability": "0.52",   # High-probability floor (52%+ edge)
     "dynamic_sl_delta": "0.15",        # Dynamic stop loss capped at $0.15 / share
     "rsi_period": "14",
@@ -56,7 +56,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "enable_instant_harvest": "false",
     "instant_profit_harvest_dollar": "0.0",
     "micro_loss_tolerance": "1.00",    # $1.00 Loss Tolerance
-    "mtf_confirmation_enabled": "false",
+    "mtf_confirmation_enabled": "true", # Enforce live spot momentum alignment
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.02", # Require order book depth confirmation
     "cooldown_seconds": "10.0",
@@ -75,7 +75,7 @@ DEFAULT_SETTINGS_INSTANCE_2.update({
     "min_net_edge": "0.00",            # Positive mathematical expectation
     "min_rr": "0.0",                   # Let strategy execute without friction cost rejection
     "min_order_book_imbalance": "0.02", # Order book depth confirmation
-    "min_p2b_diff": "1.0",             # Clear Oracle strike clearance ($1.00 min)
+    "min_p2b_diff": "1.5",             # Clear Oracle strike clearance ($1.50 min)
     "min_entry_price": "0.40",         # Prevent 95-cent inverted-risk traps
     "max_entry_price": "0.65",         # Optimal binary trading window
     "rsi_overbought": "75.0",          # Filter overbought tops

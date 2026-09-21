@@ -550,8 +550,31 @@ class BTC5MEngine:
                 if now_utc >= start_utc and now_utc < end_utc:
                     cache_key = f"p2b_{market.market_id}"
                     if cache_key not in self._market_states:
-                        self._market_states[cache_key] = btc_price
-                        logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
+                        start_ts = int(start_utc.timestamp())
+                        start_ts = start_ts - (start_ts % 300)
+                        exact_open = None
+                        try:
+                            with httpx.Client(timeout=1.5, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                                b_url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&startTime={start_ts * 1000}&limit=1"
+                                b_resp = client.get(b_url)
+                                if b_resp.status_code == 200:
+                                    b_data = b_resp.json()
+                                    if b_data and len(b_data) > 0:
+                                        exact_open = float(b_data[0][1])
+                                if exact_open is None:
+                                    cb_url = "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300"
+                                    cb_resp = client.get(cb_url)
+                                    if cb_resp.status_code == 200:
+                                        cb_candles = cb_resp.json()
+                                        for c in cb_candles:
+                                            if abs(c[0] - start_ts) <= 30:
+                                                exact_open = float(c[3])
+                                                break
+                        except Exception:
+                            pass
+                        chosen_p2b = exact_open if (exact_open is not None and exact_open > 0) else btc_price
+                        self._market_states[cache_key] = chosen_p2b
+                        logger.info(f"[BTC5M Engine] Captured authoritative P2B {chosen_p2b} (source={'Binance/Coinbase' if exact_open else 'live_spot'}) for market {market.market_id} at start {start_utc}")
                     price_to_beat = self._market_states[cache_key]
 
             if price_to_beat is None and (market.time_remaining_sec and 0 < market.time_remaining_sec <= 300):
@@ -660,8 +683,31 @@ class BTC5MEngine:
                 if now_utc >= start_utc and now_utc < end_utc:
                     cache_key = f"p2b_{market.market_id}"
                     if cache_key not in self._market_states:
-                        self._market_states[cache_key] = btc_price
-                        logger.info(f"[BTC5M Engine] Captured authoritative P2B {btc_price} for market {market.market_id} at {now_utc}")
+                        start_ts = int(start_utc.timestamp())
+                        start_ts = start_ts - (start_ts % 300)
+                        exact_open = None
+                        try:
+                            async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}, timeout=1.5) as client:
+                                b_url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&startTime={start_ts * 1000}&limit=1"
+                                b_resp = await client.get(b_url)
+                                if b_resp.status_code == 200:
+                                    b_data = b_resp.json()
+                                    if b_data and len(b_data) > 0:
+                                        exact_open = float(b_data[0][1])
+                                if exact_open is None:
+                                    cb_url = "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300"
+                                    cb_resp = await client.get(cb_url)
+                                    if cb_resp.status_code == 200:
+                                        cb_candles = cb_resp.json()
+                                        for c in cb_candles:
+                                            if abs(c[0] - start_ts) <= 30:
+                                                exact_open = float(c[3])
+                                                break
+                        except Exception:
+                            pass
+                        chosen_p2b = exact_open if (exact_open is not None and exact_open > 0) else btc_price
+                        self._market_states[cache_key] = chosen_p2b
+                        logger.info(f"[BTC5M Engine] Captured authoritative P2B {chosen_p2b} (source={'Binance/Coinbase' if exact_open else 'live_spot'}) for market {market.market_id} at start {start_utc}")
                     price_to_beat = self._market_states[cache_key]
 
             if price_to_beat is None and (market.time_remaining_sec and 0 < market.time_remaining_sec <= 300):

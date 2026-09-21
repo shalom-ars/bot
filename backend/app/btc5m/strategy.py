@@ -26,6 +26,7 @@ Entry requires multi-factor confirmation:
 """
 import logging
 import math
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -297,16 +298,16 @@ class BTC5MStrategy:
 
         if not is_bot_2:
             # ── BOT 1: MACRO TREND & STRIKE LEAD SPECIALIST (5M CANDLE) ──
-            # Focuses on overarching directional movement, Oracle strike clearance, and technical confirmation
+            # Dominant focus: Strike clearance (35), Trend Momentum (30), Technicals (15), Orderbook (10), Execution (10)
             if is_yes:
-                score_p2b = min(30.0, max(0.0, 15.0 + (z * 7.5)))
+                score_p2b = min(35.0, max(0.0, 17.5 + (z * 8.5)))
                 score_mom = min(30.0, max(0.0, 15.0 + (mom_composite * 0.9)))
-                score_tech = min(20.0, max(0.0, 10.0 + (tech_shift * 10.0)))
+                score_tech = min(15.0, max(0.0, 7.5 + (tech_shift * 7.5)))
                 score_ob = min(10.0, max(0.0, 5.0 + (ob_composite * 10.0)))
             else:
-                score_p2b = min(30.0, max(0.0, 15.0 - (z * 7.5)))
+                score_p2b = min(35.0, max(0.0, 17.5 - (z * 8.5)))
                 score_mom = min(30.0, max(0.0, 15.0 - (mom_composite * 0.9)))
-                score_tech = min(20.0, max(0.0, 10.0 - (tech_shift * 10.0)))
+                score_tech = min(15.0, max(0.0, 7.5 - (tech_shift * 7.5)))
                 score_ob = min(10.0, max(0.0, 5.0 - (ob_composite * 10.0)))
 
             score_exec = min(10.0, max(0.0, 10.0 - (vol * 50.0) - (spread * 100.0) + (mom_persist * 2.0)))
@@ -318,25 +319,25 @@ class BTC5MStrategy:
             total = score_p2b + score_mom + score_tech + score_ob + score_exec
         else:
             # ── BOT 2: ORDER FLOW SCALP & RAPID VELOCITY SPECIALIST (2.5M SLOTS) ──
-            # Focuses on instant order book depth imbalance, fast price bursts, and quick pullbacks
+            # Rebalanced: BTC vs Strike remains primary (35) to prevent counter-trend traps, combined with Rapid Velocity (30) and Order Flow (15)
             if is_yes:
-                score_ob = min(35.0, max(0.0, 17.5 + (ob_composite * 35.0)))
-                score_mom = min(35.0, max(0.0, 17.5 + (mom_composite * 1.2)))
-                score_tech = min(15.0, max(0.0, 7.5 + (tech_shift * 7.5)))
-                score_p2b = min(5.0, max(0.0, 2.5 + (z * 1.5)))
+                score_p2b = min(35.0, max(0.0, 17.5 + (z * 8.5)))
+                score_mom = min(30.0, max(0.0, 15.0 + (mom_composite * 1.0)))
+                score_ob = min(15.0, max(0.0, 7.5 + (ob_composite * 15.0)))
+                score_tech = min(10.0, max(0.0, 5.0 + (tech_shift * 5.0)))
             else:
-                score_ob = min(35.0, max(0.0, 17.5 - (ob_composite * 35.0)))
-                score_mom = min(35.0, max(0.0, 17.5 - (mom_composite * 1.2)))
-                score_tech = min(15.0, max(0.0, 7.5 - (tech_shift * 7.5)))
-                score_p2b = min(5.0, max(0.0, 2.5 - (z * 1.5)))
+                score_p2b = min(35.0, max(0.0, 17.5 - (z * 8.5)))
+                score_mom = min(30.0, max(0.0, 15.0 - (mom_composite * 1.0)))
+                score_ob = min(15.0, max(0.0, 7.5 - (ob_composite * 15.0)))
+                score_tech = min(10.0, max(0.0, 5.0 - (tech_shift * 5.0)))
 
             score_exec = min(10.0, max(0.0, 10.0 - (vol * 40.0) - (spread * 80.0) + (mom_persist * 2.0)))
+            breakdown["BTC vs Strike Lead"] = round(score_p2b, 1)
+            breakdown["Rapid Velocity Momentum"] = round(score_mom, 1)
             breakdown["Order Flow Depth Imbalance"] = round(score_ob, 1)
-            breakdown["Rapid Velocity"] = round(score_mom, 1)
             breakdown["Micro RSI & BB"] = round(score_tech, 1)
-            breakdown["Strike Lead"] = round(score_p2b, 1)
             breakdown["Execution Quality"] = round(score_exec, 1)
-            total = score_ob + score_mom + score_tech + score_p2b + score_exec
+            total = score_p2b + score_mom + score_ob + score_tech + score_exec
         
         # Net Edge and R:R are added externally based on actual math
         return total, breakdown
@@ -561,15 +562,28 @@ class BTC5MStrategy:
         no_breakdown["Risk/R:R"] = round(no_rr_pts, 1)
         no_breakdown["Time"] = round(no_time_pts, 1)
         
-        import json
-        # 3. Determine Prediction with Decisive Lead (Prevents 50/50 Coin-Flips)
-        min_lead = float(self.settings.get("min_direction_lead", 4.0))
-        if abs(yes_score - no_score) < min_lead:
-            predicted_side = "NONE"
-        elif yes_score > no_score:
-            predicted_side = "YES"
+        # 3. Determine Prediction with Decisive Lead and Strict Strike Alignment
+        min_lead = float(self.settings.get("min_direction_lead", 5.0))
+        strike_delta = (btc_price - price_to_beat) if (btc_price and price_to_beat) else 0.0
+        min_strike_buffer = float(self.settings.get("min_p2b_diff", 1.5))
+
+        # Strict Directional Strike Rule:
+        # A 5-minute candle outcome is fundamentally decided by BTC vs Strike (Price-to-Beat).
+        # When BTC is above strike, only YES can be predicted (NO is strictly prohibited).
+        # When BTC is below strike, only NO can be predicted (YES is strictly prohibited).
+        # When within strike buffer, market is in dead-heat chop zone (NONE).
+        if strike_delta > min_strike_buffer:
+            if yes_score >= min_score and (yes_score - no_score) >= min_lead:
+                predicted_side = "YES"
+            else:
+                predicted_side = "NONE"
+        elif strike_delta < -min_strike_buffer:
+            if no_score >= min_score and (no_score - yes_score) >= min_lead:
+                predicted_side = "NO"
+            else:
+                predicted_side = "NONE"
         else:
-            predicted_side = "NO"
+            predicted_side = "NONE"
 
         # 4. Entry Checks
         gate_results = {
@@ -676,7 +690,7 @@ class BTC5MStrategy:
             skip_flags.append("SKIP - Missing NO outcome token ID on Polymarket")
             
         min_p = float(self.settings.get("min_entry_price", 0.40))
-        max_p = float(self.settings.get("max_entry_price", 0.62))
+        max_p = float(self.settings.get("max_entry_price", 0.65))
         if entry_price < min_p or entry_price > max_p:
             skip_flags.append(f"SKIP - Entry price ${entry_price:.2f} outside optimal R:R window ({min_p:.2f} - {max_p:.2f})")
 
@@ -722,7 +736,7 @@ class BTC5MStrategy:
         else:
             gate_results["bollinger"]["pass"] = True
 
-        # Jesse Multi-Timeframe (MTF) Trend Alignment (1m vs 5m)
+        # Multi-Timeframe (MTF) Trend & Spot Momentum Alignment
         if self.settings.get("mtf_confirmation_enabled", True):
             spot_mom_1m = features.get("btc_momentum_1m")
             clob_mom_1m = features.get("short_momentum_1m", 0.0)
@@ -730,10 +744,10 @@ class BTC5MStrategy:
             m5_macd = float(features.get("macd_hist", 0.0))
 
             if predicted_side == "YES":
-                if m1_dir < -0.0002 or m5_macd < -0.05:
+                if (spot_mom_1m is not None and spot_mom_1m < -0.0003) or m1_dir < -0.0002 or m5_macd < -0.05:
                     skip_flags.append(f"SKIP - Multi-timeframe trend divergence (1m mom: {m1_dir:+.4f}, 5m MACD: {m5_macd:+.4f}) - not aligned for UP")
             elif predicted_side == "NO":
-                if m1_dir > 0.0002 or m5_macd > 0.05:
+                if (spot_mom_1m is not None and spot_mom_1m > 0.0003) or m1_dir > 0.0002 or m5_macd > 0.05:
                     skip_flags.append(f"SKIP - Multi-timeframe trend divergence (1m mom: {m1_dir:+.4f}, 5m MACD: {m5_macd:+.4f}) - not aligned for DOWN")
             
         best_side = predicted_side
