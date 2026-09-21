@@ -15,12 +15,12 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "account_mode": "demo",
     "slot_mode": "single_5m",
     "risk_reward_ratio": "1:1",         # Strict 1:1 Risk-to-Reward Ratio
-    "min_entry_score": "60.0",         # Fast responsive entry when movement occurs
-    "min_direction_lead": "4.0",       # Decisive score gap to ensure direction accuracy
+    "min_entry_score": "65.0",         # Filter out weak signals, require Grade A conviction
+    "min_direction_lead": "5.0",       # Decisive score lead to prevent 50/50 tossups
     "min_net_edge": "0.00",            # Positive mathematical expectation
     "min_rr": "0.0",                   # Let 1:1 strategy execute without friction cost rejection
     "max_spread": "0.02",              # Max 2.0 cents spread
-    "min_liquidity": "20.0",           # High execution responsiveness
+    "min_liquidity": "30.0",           # Deep order book depth requirement
     "min_time_remaining": "0.0",
     "max_time_remaining": "300.0",
     "take_profit_delta": "0.05",
@@ -29,8 +29,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "risk_per_trade": "0.02",
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
-    "tp_dollar": "1.00",               # $1.00 Profit Target (1:1 R:R)
-    "sl_dollar": "1.00",               # $1.00 Stop Loss Limit (1:1 R:R)
+    "tp_dollar": "1.00",               # $1.00 Profit Target (Strict 1:1 R:R)
+    "sl_dollar": "1.00",               # $1.00 Stop Loss Limit (Strict 1:1 R:R)
     "hard_cap_dollar": "1.00",        # $1.00 Hard Loss Cap
     "side_bias": "ANY",
     "only_short": "false",
@@ -39,12 +39,12 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "hard_stop_delta": "0.01",
     "min_entry_price": "0.01",
     "max_entry_price": "0.99",
-    "min_p2b_diff": "0.0",
-    "min_entry_probability": "0.50",   # 50%+ probability fires immediate entry
+    "min_p2b_diff": "1.0",             # Clear Oracle strike clearance ($1.00 min)
+    "min_entry_probability": "0.52",   # High-probability floor (52%+ edge)
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
-    "rsi_overbought": "75.0",
-    "rsi_oversold": "25.0",
+    "rsi_overbought": "75.0",          # Filter overbought tops
+    "rsi_oversold": "25.0",            # Filter oversold bottoms
     "macd_fast": "12",
     "macd_slow": "26",
     "macd_signal": "9",
@@ -53,36 +53,40 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "atr_period": "14",
     "atr_trailing_multiplier": "3.0",
     "breakeven_trigger_dollar": "0.50",
-    "enable_instant_harvest": "false",  # Stopped to focus on strict 1:1 strategy ($1.00 TP / $1.00 SL)
+    "enable_instant_harvest": "false",  # Pure 1:1 strategy ($1.00 TP / $1.00 SL)
     "instant_profit_harvest_dollar": "0.0",
     "micro_loss_tolerance": "1.00",    # 1:1 Stop Loss Tolerance
     "mtf_confirmation_enabled": "false",
     "consecutive_loss_dampener_enabled": "false",
-    "min_order_book_imbalance": "0.0",
+    "min_order_book_imbalance": "0.02", # Require order book depth confirmation
     "cooldown_seconds": "10.0",
     "unanimous_consensus_required": "false",
-    "rsi_overbought": "100.0",
-    "rsi_oversold": "0.0",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2 = DEFAULT_SETTINGS.copy()
 DEFAULT_SETTINGS_INSTANCE_2.update({
     "slot_mode": "double_slot_2.5m",
     "risk_reward_ratio": "1:1",         # Strict 1:1 Risk-to-Reward Ratio
-    "min_entry_score": "60.0",         # Fast responsive entry when movement occurs
-    "min_direction_lead": "4.0",       # Decisive score gap to ensure direction accuracy
-    "min_entry_probability": "0.50",   # 50%+ probability fires immediate entry
-    "min_liquidity": "20.0",           # High execution responsiveness
+    "min_entry_score": "65.0",         # Filter out weak signals, require Grade A conviction
+    "min_direction_lead": "5.0",       # Decisive score gap to ensure direction accuracy
+    "min_entry_probability": "0.52",   # 52%+ probability fires immediate entry
+    "min_liquidity": "30.0",           # Deep order book depth requirement
     "max_spread": "0.02",              # Max 2.0 cents spread
     "min_net_edge": "0.00",            # Positive mathematical expectation
     "min_rr": "0.0",                   # Let 1:1 strategy execute without friction cost rejection
+    "min_order_book_imbalance": "0.02", # Order book depth confirmation
+    "min_p2b_diff": "1.0",             # Clear Oracle strike clearance ($1.00 min)
+    "rsi_overbought": "75.0",          # Filter overbought tops
+    "rsi_oversold": "25.0",            # Filter oversold bottoms
     "micro_loss_tolerance": "1.00",    # 1:1 Stop Loss Tolerance
     "breakeven_trigger_dollar": "0.50",
     "cooldown_seconds": "10.0",        # Quick recovery for double slot
     "hard_stop_delta": "0.01",
-    "tp_dollar": "1.00",               # $1.00 Win Target (1:1 R:R)
-    "sl_dollar": "1.00",               # $1.00 Loss Limit (1:1 R:R)
+    "tp_dollar": "1.00",               # $1.00 Win Target (Strict 1:1 R:R)
+    "sl_dollar": "1.00",               # $1.00 Loss Limit (Strict 1:1 R:R)
     "hard_cap_dollar": "1.00",        # $1.00 Hard Loss Cap
+    "enable_instant_harvest": "false",  # Pure 1:1 strategy ($1.00 TP / $1.00 SL)
+    "instant_profit_harvest_dollar": "0.0",
     "dynamic_sl_delta": "0.20",
     "rsi_period": "14",
     "macd_fast": "12",
@@ -181,9 +185,14 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["micro_loss_tolerance"] = "1.00"
         loosened_sync["dynamic_sl_delta"] = "0.20"
         loosened_sync["breakeven_trigger_dollar"] = "0.50"
-        loosened_sync["min_entry_score"] = "60.0"
-        loosened_sync["min_direction_lead"] = "4.0"
-        loosened_sync["min_entry_probability"] = "0.50"
+        loosened_sync["min_entry_score"] = "65.0"
+        loosened_sync["min_direction_lead"] = "5.0"
+        loosened_sync["min_entry_probability"] = "0.52"
+        loosened_sync["min_liquidity"] = "30.0"
+        loosened_sync["min_p2b_diff"] = "1.0"
+        loosened_sync["min_order_book_imbalance"] = "0.02"
+        loosened_sync["rsi_overbought"] = "75.0"
+        loosened_sync["rsi_oversold"] = "25.0"
         loosened_sync["min_net_edge"] = "0.00"
         loosened_sync["min_rr"] = "0.0"
         loosened_sync["max_spread"] = "0.02"
@@ -199,9 +208,14 @@ def ensure_btc5m_settings(db: Session, instance_id: str = "instance_1") -> None:
         loosened_sync["micro_loss_tolerance"] = "1.00"
         loosened_sync["dynamic_sl_delta"] = "0.20"
         loosened_sync["breakeven_trigger_dollar"] = "0.50"
-        loosened_sync["min_entry_score"] = "60.0"
-        loosened_sync["min_direction_lead"] = "4.0"
-        loosened_sync["min_entry_probability"] = "0.50"
+        loosened_sync["min_entry_score"] = "65.0"
+        loosened_sync["min_direction_lead"] = "5.0"
+        loosened_sync["min_entry_probability"] = "0.52"
+        loosened_sync["min_liquidity"] = "30.0"
+        loosened_sync["min_p2b_diff"] = "1.0"
+        loosened_sync["min_order_book_imbalance"] = "0.02"
+        loosened_sync["rsi_overbought"] = "75.0"
+        loosened_sync["rsi_oversold"] = "25.0"
         loosened_sync["min_net_edge"] = "0.00"
         loosened_sync["min_rr"] = "0.0"
         loosened_sync["max_spread"] = "0.02"

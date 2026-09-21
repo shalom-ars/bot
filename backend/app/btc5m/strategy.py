@@ -288,48 +288,55 @@ class BTC5MStrategy:
         vol = features.get("rolling_volatility", 0.0)
         spread = features.get("spread", 1.0)
 
+        bb_pct = float(features.get("bb_pct_b", 0.5))
+        bb_shift = (bb_pct - 0.5) * 2.0  # -1.0 to +1.0
+        depth_imb = float(features.get("depth_imbalance", imb))
+        ob_composite = (imb * 0.60) + (depth_imb * 0.40)
+        tech_shift = (rsi_shift * 0.65) + (bb_shift * 0.35)
+        mom_persist = float(features.get("momentum_persistence", 0.0))
+
         if not is_bot_2:
             # ── BOT 1: MACRO TREND & STRIKE LEAD SPECIALIST (5M CANDLE) ──
-            # Focuses on overarching directional movement and Oracle strike clearance
+            # Focuses on overarching directional movement, Oracle strike clearance, and technical confirmation
             if is_yes:
                 score_p2b = min(30.0, max(0.0, 15.0 + (z * 7.5)))
                 score_mom = min(30.0, max(0.0, 15.0 + (mom_composite * 0.9)))
-                score_rsi = min(20.0, max(0.0, 10.0 + (rsi_shift * 10.0)))
-                score_ob = min(10.0, max(0.0, 5.0 + (imb * 10.0)))
+                score_tech = min(20.0, max(0.0, 10.0 + (tech_shift * 10.0)))
+                score_ob = min(10.0, max(0.0, 5.0 + (ob_composite * 10.0)))
             else:
                 score_p2b = min(30.0, max(0.0, 15.0 - (z * 7.5)))
                 score_mom = min(30.0, max(0.0, 15.0 - (mom_composite * 0.9)))
-                score_rsi = min(20.0, max(0.0, 10.0 - (rsi_shift * 10.0)))
-                score_ob = min(10.0, max(0.0, 5.0 - (imb * 10.0)))
+                score_tech = min(20.0, max(0.0, 10.0 - (tech_shift * 10.0)))
+                score_ob = min(10.0, max(0.0, 5.0 - (ob_composite * 10.0)))
 
-            score_exec = min(10.0, max(0.0, 10.0 - (vol * 50.0) - (spread * 100.0)))
+            score_exec = min(10.0, max(0.0, 10.0 - (vol * 50.0) - (spread * 100.0) + (mom_persist * 2.0)))
             breakdown["BTC vs Strike (Macro)"] = round(score_p2b, 1)
             breakdown["Trend Momentum"] = round(score_mom, 1)
-            breakdown["RSI Confirmation"] = round(score_rsi, 1)
-            breakdown["Order Book"] = round(score_ob, 1)
-            breakdown["Execution Quality"] = round(score_exec, 1)
-            total = score_p2b + score_mom + score_rsi + score_ob + score_exec
+            breakdown["RSI & BB Confirmation"] = round(score_tech, 1)
+            breakdown["Order Book Depth"] = round(score_ob, 1)
+            breakdown["Execution & History"] = round(score_exec, 1)
+            total = score_p2b + score_mom + score_tech + score_ob + score_exec
         else:
             # ── BOT 2: ORDER FLOW SCALP & RAPID VELOCITY SPECIALIST (2.5M SLOTS) ──
             # Focuses on instant order book depth imbalance, fast price bursts, and quick pullbacks
             if is_yes:
-                score_ob = min(35.0, max(0.0, 17.5 + (imb * 35.0)))
+                score_ob = min(35.0, max(0.0, 17.5 + (ob_composite * 35.0)))
                 score_mom = min(35.0, max(0.0, 17.5 + (mom_composite * 1.2)))
-                score_rsi = min(15.0, max(0.0, 7.5 + (rsi_shift * 7.5)))
+                score_tech = min(15.0, max(0.0, 7.5 + (tech_shift * 7.5)))
                 score_p2b = min(5.0, max(0.0, 2.5 + (z * 1.5)))
             else:
-                score_ob = min(35.0, max(0.0, 17.5 - (imb * 35.0)))
+                score_ob = min(35.0, max(0.0, 17.5 - (ob_composite * 35.0)))
                 score_mom = min(35.0, max(0.0, 17.5 - (mom_composite * 1.2)))
-                score_rsi = min(15.0, max(0.0, 7.5 - (rsi_shift * 7.5)))
+                score_tech = min(15.0, max(0.0, 7.5 - (tech_shift * 7.5)))
                 score_p2b = min(5.0, max(0.0, 2.5 - (z * 1.5)))
 
-            score_exec = min(10.0, max(0.0, 10.0 - (vol * 40.0) - (spread * 80.0)))
-            breakdown["Order Flow Imbalance"] = round(score_ob, 1)
+            score_exec = min(10.0, max(0.0, 10.0 - (vol * 40.0) - (spread * 80.0) + (mom_persist * 2.0)))
+            breakdown["Order Flow Depth Imbalance"] = round(score_ob, 1)
             breakdown["Rapid Velocity"] = round(score_mom, 1)
-            breakdown["Micro RSI"] = round(score_rsi, 1)
+            breakdown["Micro RSI & BB"] = round(score_tech, 1)
             breakdown["Strike Lead"] = round(score_p2b, 1)
             breakdown["Execution Quality"] = round(score_exec, 1)
-            total = score_ob + score_mom + score_rsi + score_p2b + score_exec
+            total = score_ob + score_mom + score_tech + score_p2b + score_exec
         
         # Net Edge and R:R are added externally based on actual math
         return total, breakdown
@@ -693,10 +700,10 @@ class BTC5MStrategy:
         macd_val = float(features.get("macd_hist", 0.0))
         macd_dir = "Bullish" if macd_val > 0.0001 else ("Bearish" if macd_val < -0.0001 else "Neutral")
         gate_results["macd"]["value"] = f"{macd_val:+.4f} ({macd_dir})"
-        if predicted_side == "YES" and macd_val < -0.15:
+        if predicted_side == "YES" and macd_val < -0.05:
             gate_results["macd"]["pass"] = False
             skip_flags.append(f"SKIP - Severe Bearish MACD divergence ({macd_val:+.4f}) for UP entry")
-        elif predicted_side == "NO" and macd_val > 0.15:
+        elif predicted_side == "NO" and macd_val > 0.05:
             gate_results["macd"]["pass"] = False
             skip_flags.append(f"SKIP - Severe Bullish MACD divergence ({macd_val:+.4f}) for DOWN entry")
         else:
@@ -706,12 +713,12 @@ class BTC5MStrategy:
         bb_pct = float(features.get("bb_pct_b", 0.5))
         bb_bw = float(features.get("bb_bandwidth", 0.0))
         gate_results["bollinger"]["value"] = f"%B {bb_pct:.2f} | BW {bb_bw:.3f}"
-        if predicted_side == "YES" and bb_pct > 1.10:
+        if predicted_side == "YES" and bb_pct > 1.05:
             gate_results["bollinger"]["pass"] = False
-            skip_flags.append(f"SKIP - Price pierced upper Bollinger Band (%B {bb_pct:.2f} > 1.10): high reversal risk")
-        elif predicted_side == "NO" and bb_pct < -0.10:
+            skip_flags.append(f"SKIP - Price pierced upper Bollinger Band (%B {bb_pct:.2f} > 1.05): high reversal risk")
+        elif predicted_side == "NO" and bb_pct < -0.05:
             gate_results["bollinger"]["pass"] = False
-            skip_flags.append(f"SKIP - Price pierced lower Bollinger Band (%B {bb_pct:.2f} < -0.10): high bounce risk")
+            skip_flags.append(f"SKIP - Price pierced lower Bollinger Band (%B {bb_pct:.2f} < -0.05): high bounce risk")
         else:
             gate_results["bollinger"]["pass"] = True
 
