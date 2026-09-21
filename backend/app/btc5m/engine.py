@@ -782,6 +782,23 @@ class BTC5MEngine:
             btc_price, price_to_beat = await self._get_btc5m_reference_data_async(market)
             latency_tracker.record("chainlink_ms", (time.perf_counter() - t0_ref) * 1000)
 
+            # FAILSAFE: If btc_price is still None after all attempts, use last known good price
+            if btc_price is None and self._market_states.get("latest_btc_price"):
+                btc_price = self._market_states["latest_btc_price"]
+                logger.warning(f"[BTC5M Engine] Using cached latest_btc_price as failsafe: {btc_price:.2f}")
+
+            # FAILSAFE: If price_to_beat is None, try any cached p2b_ entry for this market
+            if price_to_beat is None and btc_price is not None:
+                cache_key = f"p2b_{market.market_id}"
+                if self._market_states.get(cache_key):
+                    price_to_beat = self._market_states[cache_key]
+                else:
+                    # Use current BTC as P2B fallback (last resort — only if within valid time window)
+                    if market.time_remaining_sec and 0 < market.time_remaining_sec <= 300:
+                        self._market_states[cache_key] = btc_price
+                        price_to_beat = btc_price
+                        logger.warning(f"[BTC5M Engine] Using live BTC as emergency P2B: {btc_price:.2f}")
+
             # Record spot BTC ticks and compute true 1m spot BTC momentum
             if btc_price is not None and btc_price > 0:
                 now_ts = time.time()
