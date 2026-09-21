@@ -262,14 +262,15 @@ class BTC5MExitManager:
             reason = "HARD SAFETY STOP: RiskManager circuit breaker active (trading paused)"
             return "HARD_EXIT", current_executable_price or trade.stop_loss_price, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
-        # C. Explicit Hard Safety Stop Loss (Configurable per instance, supports up to $10.00+)
-        sl_limit = float(settings.get("sl_dollar", 0.90))
+        # C. Explicit Hard Safety Stop Loss
+        sl_limit = float(settings.get("sl_dollar", 1.00))
         hard_cap_setting = float(settings.get("hard_cap_dollar", sl_limit))
-        max_loss_cap = max(sl_limit, hard_cap_setting)
+        max_loss_cap = min(sl_limit, hard_cap_setting)
+        early_cut = max_loss_cap * 0.85
         if exec_p is not None and trade.entry_price is not None and trade.quantity is not None:
             unrealized = (exec_p - float(trade.entry_price)) * float(trade.quantity)
-            if unrealized <= -max_loss_cap:
-                reason = f"HARD SAFETY STOP breached: Maximum loss cap -${abs(unrealized):.2f} <= -${max_loss_cap:.2f}"
+            if unrealized <= -early_cut:
+                reason = f"HARD SAFETY STOP breached: Loss -${abs(unrealized):.2f} hit early cut threshold -${early_cut:.2f} (Cap: -${max_loss_cap:.2f})"
                 return "HARD_EXIT", exec_p, reason, 100.0, {}, "HARD_STOP_TRIGGERED"
 
             planned_r = float(trade.planned_risk) if trade.planned_risk else (float(trade.position_size) if trade.position_size else sl_limit)

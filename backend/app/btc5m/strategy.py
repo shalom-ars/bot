@@ -404,7 +404,12 @@ class BTC5MStrategy:
             except Exception:
                 pass
 
-        position_size = planned_risk
+        # Risk-governed position sizing: Cap position size to $5.00 for $1.00 SL mode.
+        # This reduces share quantity to ~8-10 shares (instead of 17-19 shares),
+        # mathematically guaranteeing that a 10-cent stop loss equals exactly ~$0.90-$1.00,
+        # and eliminating orderbook vacuum drops from generating -$3.00+ losses.
+        max_pos = float(self.settings.get("max_position_size", 5.00))
+        position_size = min(max_pos, planned_risk)
         quantity = position_size / (entry_price + 1e-9)
 
         is_fixed = (self.mode == "fixed_dollar" or self.settings.get("mode") == "fixed_dollar")
@@ -781,9 +786,16 @@ class BTC5MStrategy:
             if last_closed and last_closed.exit_time:
                 exit_dt = last_closed.exit_time.replace(tzinfo=timezone.utc) if last_closed.exit_time.tzinfo is None else last_closed.exit_time
                 elapsed_since_exit = (now - exit_dt).total_seconds()
-                if elapsed_since_exit < cooldown_seconds:
-                    rem_cd = int(cooldown_seconds - elapsed_since_exit)
-                    skip_flags.append(f"SKIP - Freqtrade Cooldown active ({rem_cd}s remaining after trade #{last_closed.id} exit)")
+                # If last closed trade was a LOSS, enforce minimum 180s (3-minute) cooldown to prevent revenge trading
+                is_loss = (last_closed.pnl is not None and last_closed.pnl < 0)
+                effective_cd = max(180.0, cooldown_seconds) if is_loss else cooldown_seconds
+                if elapsed_since_exit < effective_cd:
+                    rem_cd = int(effective_cd - elapsed_since_exit)
+                    skip_flags.append(f"SKIP - Cooldown active ({rem_cd}s remaining after trade #{last_closed.id} exit)")
+
+            # Disallow re-entering the SAME 5M candle if any prior trade on this candle resulted in a loss!
+            if any(t.pnl is not None and t.pnl < 0 for t in existing_market_trades):
+                skip_flags.append("SKIP - Prior trade in this 5M candle was a loss (Preventing whipsaw revenge trading)")
         finally:
             db.close()
 

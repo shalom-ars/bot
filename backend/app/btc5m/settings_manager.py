@@ -26,7 +26,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "take_profit_delta": "0.05",
     "max_take_profit": "0.95",
     "stop_loss_ratio": "0.67",         # Risk $1.00 to make $1.50
-    "risk_per_trade": "0.02",
+    "risk_per_trade": "0.01",          # 1% Risk ($5.00 Position Size to guarantee $1.00 loss limit)
+    "max_position_size": "5.00",       # Strict $5.00 position size cap
     "max_consecutive_losses": "5",
     "mode": "fixed_dollar",
     "tp_dollar": "1.50",               # $1.50 Profit Target (Positive Asymmetry)
@@ -55,17 +56,17 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "breakeven_trigger_dollar": "0.50",
     "enable_instant_harvest": "false",
     "instant_profit_harvest_dollar": "0.0",
-    "micro_loss_tolerance": "1.00",    # $1.00 Loss Tolerance
+    "micro_loss_tolerance": "0.85",    # Early cut at $0.85 to prevent slippage beyond $1.00
     "mtf_confirmation_enabled": "true", # Enforce live spot momentum alignment
     "consecutive_loss_dampener_enabled": "false",
     "min_order_book_imbalance": "0.02", # Require order book depth confirmation
-    "cooldown_seconds": "10.0",
+    "cooldown_seconds": "180.0",       # 3-minute cooldown after any exit
     "unanimous_consensus_required": "false",
 }
 
 DEFAULT_SETTINGS_INSTANCE_2 = DEFAULT_SETTINGS.copy()
 DEFAULT_SETTINGS_INSTANCE_2.update({
-    "slot_mode": "double_slot_2.5m",
+    "slot_mode": "single_5m",           # Enforce 1 trade per 5M candle (prevents revenge trading)
     "risk_reward_ratio": "1.2:1",       # 1.2:1 Scalp Target ($1.20 TP / $1.00 SL)
     "min_entry_score": "65.0",         # Filter out weak signals, require Grade A conviction
     "min_direction_lead": "5.0",       # Decisive score gap to ensure direction accuracy
@@ -80,14 +81,16 @@ DEFAULT_SETTINGS_INSTANCE_2.update({
     "max_entry_price": "0.65",         # Optimal binary trading window
     "rsi_overbought": "75.0",          # Filter overbought tops
     "rsi_oversold": "25.0",            # Filter oversold bottoms
-    "micro_loss_tolerance": "1.00",    # $1.00 Loss Tolerance
+    "micro_loss_tolerance": "0.85",    # Early cut at $0.85 to prevent slippage beyond $1.00
     "breakeven_trigger_dollar": "0.40",
-    "cooldown_seconds": "10.0",        # Quick recovery for double slot
+    "cooldown_seconds": "180.0",       # 3-minute cooldown after any exit
     "hard_stop_delta": "0.01",
     "stop_loss_ratio": "0.83",         # Risk $1.00 to make $1.20
     "tp_dollar": "1.20",               # $1.20 Win Target
     "sl_dollar": "1.00",               # $1.00 Loss Limit
     "hard_cap_dollar": "1.00",        # $1.00 Hard Loss Cap
+    "max_position_size": "5.00",       # Strict $5.00 position size cap
+    "risk_per_trade": "0.01",          # 1% Risk ($5.00 Position Size)
     "enable_instant_harvest": "false",
     "instant_profit_harvest_dollar": "0.0",
     "dynamic_sl_delta": "0.12",        # Tight dynamic stop loss
@@ -118,6 +121,7 @@ TYPED_FIELDS = {
     "tp_dollar": float,
     "sl_dollar": float,
     "hard_cap_dollar": float,
+    "max_position_size": float,
     "side_bias": str,
     "only_short": bool,
     "soft_stop_confirmation_seconds": float,
