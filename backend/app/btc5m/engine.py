@@ -182,6 +182,49 @@ class BTC5MEngine:
         asyncio.create_task(self._main_loop())
         asyncio.create_task(self._broadcast_loop())
         asyncio.create_task(self._fast_exit_monitor_loop())
+        asyncio.create_task(self._btc_price_poller_loop())
+
+    async def _btc_price_poller_loop(self):
+        """Dedicated BTC price fetcher using urllib (built-in, always reliable).
+        Runs every 4 seconds and stores price in _market_states["latest_btc_price"].
+        This guarantees the engine always has a fresh BTC price even if async httpx fails.
+        """
+        logger.info(f"[BTC5M Engine {self.instance_id}] BTC price poller started.")
+        URLS = [
+            ("binance", "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"),
+            ("coinbase", "https://api.coinbase.com/v2/prices/BTC-USD/spot"),
+        ]
+        while self.running:
+            try:
+                price = None
+                def _fetch_price():
+                    import urllib.request as _ur, json as _json
+                    for name, url in URLS:
+                        try:
+                            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                            with _ur.urlopen(req, timeout=3) as resp:
+                                data = _json.loads(resp.read())
+                                if name == "binance":
+                                    return float(data["price"])
+                                elif name == "coinbase":
+                                    return float(data["data"]["amount"])
+                        except Exception:
+                            continue
+                    return None
+
+                price = await asyncio.to_thread(_fetch_price)
+                if price and price > 0:
+                    if not hasattr(self, '_market_states'):
+                        self._market_states = {}
+                    self._market_states["latest_btc_price"] = price
+                    # Sync to rpc cache so fast-path uses 8s window
+                    self._cached_rpc_btc = price
+                    self._cached_rpc_time = time.monotonic()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[BTC5M Engine {self.instance_id}] BTC price poller error: {e}")
+            await asyncio.sleep(4.0)
 
     def stop(self):
         self.running = False
