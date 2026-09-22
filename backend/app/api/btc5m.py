@@ -34,6 +34,51 @@ def safe_restart():
     return {"status": "success", "message": "Server restarting in 0.5s... PM2 will restart."}
 
 
+@router.get("/debug_btc")
+def debug_btc():
+    """Debug: shows engines market_states and tests BTC fetch methods."""
+    result = {}
+    try:
+        from app.btc5m.engine import ENGINES
+        for iid, eng in ENGINES.items():
+            ms = getattr(eng, '_market_states', {})
+            cached = getattr(eng, '_cached_rpc_btc', None)
+            result[iid] = {
+                "latest_btc_price": ms.get("latest_btc_price"),
+                "_cached_rpc_btc": cached,
+                "p2b_keys": [k for k in ms if k.startswith("p2b_")],
+            }
+    except Exception as e:
+        result["engines_error"] = str(e)
+    
+    # Test: sync httpx Binance
+    try:
+        import httpx, time as _t
+        t0 = _t.time()
+        with httpx.Client(timeout=3.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+            r = client.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+            if r.status_code == 200:
+                result["sync_httpx_binance"] = float(r.json()["price"])
+                result["sync_httpx_latency_ms"] = round((_t.time()-t0)*1000)
+    except Exception as e:
+        result["sync_httpx_binance_error"] = str(e)
+    
+    # Test: urllib Binance
+    try:
+        import urllib.request, json as _json, time as _t
+        t0 = _t.time()
+        req = urllib.request.Request("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+                                     headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = _json.loads(resp.read())
+            result["urllib_binance"] = float(data["price"])
+            result["urllib_latency_ms"] = round((_t.time()-t0)*1000)
+    except Exception as e:
+        result["urllib_binance_error"] = str(e)
+    
+    return result
+
+
 @router.get("/hard_reset")
 def hard_reset_database(db: Session = Depends(get_db)):
     """
