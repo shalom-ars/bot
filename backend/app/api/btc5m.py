@@ -63,8 +63,16 @@ _cached_btc_time = 0.0
 
 def _get_live_btc_price():
     global _cached_btc_price, _cached_btc_time
-    if hasattr(btc5m_engine, '_market_states') and btc5m_engine._market_states.get("latest_btc_price"):
-        return btc5m_engine._market_states["latest_btc_price"]
+
+    # Lazy import to avoid circular dependency at module load time
+    try:
+        from app.btc5m.engine import ENGINES
+        # Check if any engine already has a cached BTC price
+        for eng_obj in ENGINES.values():
+            if hasattr(eng_obj, '_market_states') and eng_obj._market_states.get("latest_btc_price"):
+                return eng_obj._market_states["latest_btc_price"]
+    except Exception:
+        pass
 
     now = time.time()
     if _cached_btc_price is not None and (now - _cached_btc_time) < 0.9:
@@ -93,7 +101,7 @@ def _get_live_btc_price():
         except Exception:
             continue
 
-    # Try Binance if Chainlink fails
+    # Binance fallback
     if price is None:
         try:
             with httpx.Client(timeout=1.5, headers={"User-Agent": "Mozilla/5.0"}) as client:
@@ -106,11 +114,12 @@ def _get_live_btc_price():
     if price is not None:
         _cached_btc_price = price
         _cached_btc_time = now
-        # KEY FIX: Also write to engine's market_states so engine can reuse this price
-        # This bridges the gap between API's working Chainlink call and engine's async fetch
+        # KEY FIX: Write to ALL engine instances' market_states so they can reuse this price
         try:
-            if hasattr(btc5m_engine, '_market_states'):
-                btc5m_engine._market_states["latest_btc_price"] = price
+            from app.btc5m.engine import ENGINES
+            for eng_obj in ENGINES.values():
+                if hasattr(eng_obj, '_market_states'):
+                    eng_obj._market_states["latest_btc_price"] = price
         except Exception:
             pass
         return price
