@@ -19,6 +19,21 @@ from app.config import settings
 
 router = APIRouter()
 
+@router.get("/safe_restart")
+def safe_restart():
+    """
+    SAFE RESTART: Restarts the server process WITHOUT wiping any data.
+    PM2 will restart the process automatically. Used to deploy new code.
+    """
+    import threading
+    def _restart():
+        import time as _t
+        _t.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=_restart, daemon=True).start()
+    return {"status": "success", "message": "Server restarting in 0.5s... PM2 will restart."}
+
+
 @router.get("/hard_reset")
 def hard_reset_database(db: Session = Depends(get_db)):
     """
