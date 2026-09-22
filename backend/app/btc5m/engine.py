@@ -613,6 +613,16 @@ class BTC5MEngine:
         if hasattr(self, '_cached_rpc_btc') and (now_mono - getattr(self, '_cached_rpc_time', 0.0)) < 8.0:
             btc_price = self._cached_rpc_btc
 
+        # Also check market_states["latest_btc_price"] — populated by status API or previous cycle
+        # This serves as another fast-path to avoid unnecessary HTTP calls
+        if btc_price is None and self._market_states.get("latest_btc_price"):
+            cached_p = self._market_states["latest_btc_price"]
+            if cached_p and cached_p > 0:
+                btc_price = cached_p
+                # Sync into _cached_rpc_btc so the 8s window applies
+                self._cached_rpc_btc = btc_price
+                self._cached_rpc_time = now_mono
+
         RPC_URLS = [
             "https://polygon.drpc.org",
             "https://polygon-bor-rpc.publicnode.com",
