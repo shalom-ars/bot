@@ -198,7 +198,8 @@ class BTC5MEngine:
             try:
                 price = None
                 def _fetch_price():
-                    import urllib.request as _ur, json as _json
+                    import urllib.request as _ur, json as _json, httpx as _httpx
+                    # Try urllib first
                     for name, url in URLS:
                         try:
                             req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -208,6 +209,19 @@ class BTC5MEngine:
                                     return float(data["price"])
                                 elif name == "coinbase":
                                     return float(data["data"]["amount"])
+                        except Exception:
+                            continue
+                    # Fallback: sync httpx (same as status API — known to work on VPS)
+                    for name, url in URLS:
+                        try:
+                            with _httpx.Client(timeout=3.0, headers={"User-Agent": "Mozilla/5.0"}) as hc:
+                                resp = hc.get(url)
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    if name == "binance":
+                                        return float(data["price"])
+                                    elif name == "coinbase":
+                                        return float(data["data"]["amount"])
                         except Exception:
                             continue
                     return None
@@ -750,9 +764,12 @@ class BTC5MEngine:
             self._cached_rpc_btc = btc_price
             self._cached_rpc_time = now_mono
 
-        # Fallback to sync method if needed
+        # Fallback to sync method in thread (CRITICAL: must NOT block event loop)
         if btc_price is None:
-            btc_price, _ = self._get_btc5m_reference_data(market)
+            try:
+                btc_price, _ = await asyncio.to_thread(self._get_btc5m_reference_data, market)
+            except Exception:
+                pass
 
         # CRITICAL: Use stale cache (up to 30s old) rather than returning None
         # A slightly stale BTC price is better than no price at all for entry decisions
