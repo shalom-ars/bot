@@ -828,6 +828,13 @@ class BTC5MEngine:
                     logger.info(f"[BTC5M Engine] Fallback captured P2B {btc_price} for active market {market.market_id}")
                 price_to_beat = self._market_states[cache_key]
 
+            # ABSOLUTE LAST RESORT in ASYNC: if p2b still None, use btc_price
+            if price_to_beat is None and btc_price is not None:
+                cache_key = f"p2b_{market.market_id}"
+                self._market_states[cache_key] = btc_price
+                price_to_beat = btc_price
+                logger.warning(f"[BTC5M Engine] ASYNC FORCED P2B={btc_price:.2f}")
+
         return btc_price, price_to_beat
 
     async def _process_market(self, market: BTC5MMarketInfo):
