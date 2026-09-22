@@ -514,7 +514,7 @@ class BTC5MStrategy:
                 take_profit_price=0.0,
                 model_version="multi_factor_btc5m_100pt",
                 strategy="BTC_5M",
-                reason="SKIP - Missing authoritative Price-to-Beat / BTC reference data",
+                reason=f"SKIP - Missing P2B: btc={btc_price}, p2b={price_to_beat}",
                 skip_flags=["SKIP - Missing authoritative Price-to-Beat / BTC reference data"],
                 yes_score=0.0,
                 no_score=0.0,
