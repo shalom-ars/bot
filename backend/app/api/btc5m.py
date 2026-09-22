@@ -93,9 +93,26 @@ def _get_live_btc_price():
         except Exception:
             continue
 
+    # Try Binance if Chainlink fails
+    if price is None:
+        try:
+            with httpx.Client(timeout=1.5, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                resp = client.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+                if resp.status_code == 200:
+                    price = float(resp.json()["price"])
+        except Exception:
+            pass
+
     if price is not None:
         _cached_btc_price = price
         _cached_btc_time = now
+        # KEY FIX: Also write to engine's market_states so engine can reuse this price
+        # This bridges the gap between API's working Chainlink call and engine's async fetch
+        try:
+            if hasattr(btc5m_engine, '_market_states'):
+                btc5m_engine._market_states["latest_btc_price"] = price
+        except Exception:
+            pass
         return price
     return _cached_btc_price
 
