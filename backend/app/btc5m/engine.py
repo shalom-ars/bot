@@ -629,12 +629,19 @@ class BTC5MEngine:
                         logger.info(f"[BTC5M Engine] Captured authoritative P2B {chosen_p2b} (source={'Binance/Coinbase' if exact_open else 'live_spot'}) for market {market.market_id} at start {start_utc}")
                     price_to_beat = self._market_states[cache_key]
 
-            if price_to_beat is None and (market.time_remaining_sec and 0 < market.time_remaining_sec <= 300):
+            if price_to_beat is None and (market.time_remaining_sec and 0 < market.time_remaining_sec <= 310):
                 cache_key = f"p2b_{market.market_id}"
                 if cache_key not in self._market_states:
                     self._market_states[cache_key] = btc_price
                     logger.info(f"[BTC5M Engine] Fallback captured P2B {btc_price} for active market {market.market_id}")
                 price_to_beat = self._market_states[cache_key]
+
+            # ABSOLUTE LAST RESORT: if price_to_beat still None, use btc_price directly
+            if price_to_beat is None and btc_price is not None:
+                cache_key = f"p2b_{market.market_id}"
+                self._market_states[cache_key] = btc_price
+                price_to_beat = btc_price
+                logger.warning(f"[BTC5M Engine] FORCED P2B={btc_price:.2f} BTC (last resort)")
 
         return btc_price, price_to_beat
 
