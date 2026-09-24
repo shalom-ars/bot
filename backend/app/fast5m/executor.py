@@ -215,6 +215,90 @@ class FastExecutor:
             db.close()
         return defaults
 
+    def emergency_stop(self) -> Dict[str, Any]:
+        """
+        Emergency Panic Button:
+        Immediately disables auto-trading, force-closes all open active positions,
+        and locks the executor.
+        """
+        self.update_settings({"auto_trading_enabled": "false"})
+        closed_count = 0
+
+        db: Session = SessionLocal()
+        try:
+            for trade_id, trade in list(self.active_trades.items()):
+                db_trade = db.query(Fast5MTrade).filter(Fast5MTrade.id == trade_id).first()
+                if db_trade:
+                    current_pnl = trade.get("current_pnl", 0.0)
+                    cost = trade.get("cost", 10.0)
+                    db_trade.status = "CLOSED"
+                    db_trade.resolution = "EMERGENCY_STOP"
+                    db_trade.pnl = round(current_pnl, 2)
+                    db_trade.pnl_percent = round((current_pnl / cost) * 100.0, 2) if cost > 0 else 0.0
+                    db_trade.closed_at = datetime.now(timezone.utc)
+                    closed_count += 1
+            db.commit()
+        except Exception as e:
+            logger.error(f"[Fast5M Executor] Error during emergency stop: {e}")
+            db.rollback()
+        finally:
+            db.close()
+            self.active_trades.clear()
+
+        logger.warning(f"[Fast5M Executor] 🚨 EMERGENCY STOP ACTIVATED. Auto-trading killed, {closed_count} positions closed.")
+        return {
+            "status": "success",
+            "message": f"Emergency Stop activated. Engine stopped and {closed_count} active position(s) closed.",
+            "auto_trading_enabled": False,
+            "closed_count": closed_count
+        }
+
+    def emergency_start(self) -> Dict[str, Any]:
+        """
+        Re-arms the engine and enables auto-trading.
+        """
+        self.update_settings({"auto_trading_enabled": "true"})
+        logger.info("[Fast5M Executor] 🟢 EMERGENCY START ACTIVATED. Engine re-armed and scanning active.")
+        return {
+            "status": "success",
+            "message": "Engine started. Auto-execution armed and actively scanning.",
+            "auto_trading_enabled": True
+        }
+
+    def reset_demo_account(self) -> Dict[str, Any]:
+        """
+        Wipes demo paper trading history and resets virtual balance to $300.00.
+        """
+        self.active_trades.clear()
+        self._traded_epochs.clear()
+        self.update_settings({"total_balance_usd": "300.0"})
+
+        db: Session = SessionLocal()
+        deleted_count = 0
+        try:
+            deleted_count = db.query(Fast5MTrade).delete()
+            db.commit()
+            logger.info(f"[Fast5M Executor] 🔄 DEMO ACCOUNT RESET: {deleted_count} paper trades wiped. Base balance set to $300.00.")
+        except Exception as e:
+            logger.error(f"[Fast5M Executor] Error resetting demo account: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+        return {
+            "status": "success",
+            "message": "Demo account successfully reset to $300.00 base.",
+            "deleted_trades_count": deleted_count,
+            "balance": 300.0,
+            "total_trades": 0,
+            "total_pnl": 0.0,
+            "total_profit": 0.0,
+            "total_loss": 0.0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0.0
+        }
+
     def _rehydrate_active_trade(self):
         db: Session = SessionLocal()
         try:

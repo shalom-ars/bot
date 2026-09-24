@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { 
   Zap, Shield, RefreshCw, 
-  Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
+  Crown, Play, Sliders, ArrowUpRight, ArrowDownRight, 
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
   BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
@@ -170,6 +170,8 @@ export default function Fast5MBoard() {
   const [walletMsg, setWalletMsg] = useState<string>('');
   const [walletError, setWalletError] = useState<string>('');
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
+  const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
+  const [resettingDemo, setResettingDemo] = useState<boolean>(false);
 
   const prevPrices = useRef<Record<string, number>>({});
   const flashStates = useRef<Record<string, 'up' | 'down' | null>>({});
@@ -278,15 +280,54 @@ export default function Fast5MBoard() {
     };
   }, [selectedTimeframe]);
 
-  const handleToggleAuto = async () => {
+  const handleEmergencyStop = async () => {
     setToggling(true);
     try {
-      await axios.post('/api/fast5m/toggle');
-      await fetchBoard();
+      const res = await axios.post('/api/fast5m/emergency-stop');
+      if (res.data) {
+        setSaveSuccessMsg('🚨 EMERGENCY STOP ENGAGED: Auto-trading killed and active positions closed.');
+        setTimeout(() => setSaveSuccessMsg(''), 5000);
+        await fetchBoard();
+        await fetchTrades();
+      }
     } catch (e) {
-      console.error('Toggle error', e);
+      console.error('Emergency stop error', e);
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleEmergencyStart = async () => {
+    setToggling(true);
+    try {
+      const res = await axios.post('/api/fast5m/emergency-start');
+      if (res.data) {
+        setSaveSuccessMsg('🟢 ENGINE RESUMED: Auto-execution armed and actively scanning.');
+        setTimeout(() => setSaveSuccessMsg(''), 5000);
+        await fetchBoard();
+      }
+    } catch (e) {
+      console.error('Emergency start error', e);
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleResetDemoAccount = async () => {
+    setResettingDemo(true);
+    try {
+      const res = await axios.post('/api/fast5m/reset-demo');
+      if (res.data) {
+        setResetModalOpen(false);
+        setSaveSuccessMsg('Demo account successfully reset to $300.00 base!');
+        setTimeout(() => setSaveSuccessMsg(''), 5000);
+        await fetchBoard();
+        await fetchTrades();
+      }
+    } catch (e) {
+      console.error('Reset demo error', e);
+    } finally {
+      setResettingDemo(false);
     }
   };
 
@@ -682,26 +723,30 @@ export default function Fast5MBoard() {
               </div>
             </div>
 
-            {/* Auto Trading Toggle */}
-            <button
-              onClick={handleToggleAuto}
-              disabled={toggling}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
-                board?.auto_trading_active
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
-                  : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
-              }`}
-            >
-              {board?.auto_trading_active ? (
-                <>
-                  <Pause className="w-3.5 h-3.5" /> AUTO-EXECUTION ACTIVE
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5" /> ENGINE PAUSED
-                </>
-              )}
-            </button>
+            {/* EMERGENCY STOP / START PANIC BUTTON */}
+            {board?.auto_trading_active ? (
+              <button
+                type="button"
+                onClick={handleEmergencyStop}
+                disabled={toggling}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/30 cursor-pointer transition-all active:scale-95 animate-pulse"
+                title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
+              >
+                <AlertTriangle className="w-4 h-4 text-white" />
+                <span>EMERGENCY STOP</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleEmergencyStart}
+                disabled={toggling}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/30 cursor-pointer transition-all active:scale-95"
+                title="Start / Resume Engine: Re-arm automated execution"
+              >
+                <Play className="w-4 h-4 text-white" />
+                <span>START / RESUME ENGINE</span>
+              </button>
+            )}
 
             {/* View Switcher Tabs */}
             <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold gap-0.5 flex-wrap">
@@ -827,6 +872,37 @@ export default function Fast5MBoard() {
           </div>
         </div>
       </div>
+
+      {/* Emergency Stop Active Alert Banner */}
+      {board && !board.auto_trading_active && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-rose-900 shadow-sm animate-fade-in">
+          <div className="flex items-center gap-3">
+            <span className="p-2.5 rounded-xl bg-rose-600 text-white shrink-0 animate-bounce">
+              <AlertTriangle className="w-5 h-5" />
+            </span>
+            <div>
+              <div className="text-sm font-black tracking-tight text-rose-950 flex items-center gap-2 flex-wrap">
+                <span>EMERGENCY STOPPED / KILL SWITCH ENGAGED</span>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-rose-200 text-rose-900 border border-rose-300">
+                  Engine Paused
+                </span>
+              </div>
+              <div className="text-xs text-rose-700 mt-0.5">
+                All automated trading is halted and active positions are locked. Click &quot;Resume Engine Now&quot; to re-arm execution.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleEmergencyStart}
+            disabled={toggling}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shrink-0 shadow-md shadow-emerald-600/20 cursor-pointer transition-all flex items-center justify-center gap-1.5"
+          >
+            <Play className="w-4 h-4" />
+            <span>Resume Engine Now</span>
+          </button>
+        </div>
+      )}
 
       {/* 2. FIVE KEY METRICS CARDS: TOTAL BALANCE, NET PNL, TOTAL PROFIT, TOTAL LOSS, WIN RATE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
@@ -998,6 +1074,18 @@ export default function Fast5MBoard() {
               >
                 <RotateCcw className={`w-3.5 h-3.5 ${restoringDefaults ? 'animate-spin' : ''}`} />
                 <span>{restoringDefaults ? 'Restoring...' : 'Restore Defaults'}</span>
+              </button>
+
+              {/* Reset Demo Account Button */}
+              <button
+                type="button"
+                onClick={() => setResetModalOpen(true)}
+                disabled={resettingDemo || savingSettings}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                title="Reset Demo Account: wipe paper trades and reset virtual balance to $300.00 base"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${resettingDemo ? 'animate-spin' : ''}`} />
+                <span>{resettingDemo ? 'Resetting...' : 'Reset Demo ($300)'}</span>
               </button>
 
               {/* Save as Default Button */}
@@ -3092,6 +3180,47 @@ export default function Fast5MBoard() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* 8. RESET DEMO ACCOUNT CONFIRMATION MODAL */}
+      {resetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-5 sm:p-6 space-y-4 relative overflow-hidden">
+            <div className="flex items-center gap-3">
+              <span className="p-2.5 rounded-2xl bg-rose-100 text-rose-700 shrink-0">
+                <RotateCcw className="w-6 h-6" />
+              </span>
+              <div>
+                <h3 className="text-base font-black text-slate-900">Reset Demo Account to $300.00?</h3>
+                <p className="text-xs text-slate-500">Virtual Paper Trading Balance & History Reset</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed bg-rose-50/60 p-3 rounded-xl border border-rose-200 text-rose-900">
+              ⚠️ This action will permanently wipe all paper trade records, reset your virtual realized P&L to $0.00, and restore your initial starting balance to exactly <strong>$300.00</strong>.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setResetModalOpen(false)}
+                disabled={resettingDemo}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleResetDemoAccount}
+                disabled={resettingDemo}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white rounded-xl text-xs font-black shadow-md shadow-rose-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${resettingDemo ? 'animate-spin' : ''}`} />
+                <span>{resettingDemo ? 'Resetting Demo...' : 'Confirm Reset to $300.00'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

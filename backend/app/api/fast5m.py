@@ -406,6 +406,34 @@ def toggle_auto_trading():
     return {"status": "success", "auto_trading_enabled": new_val}
 
 
+@router.post("/emergency-stop")
+def emergency_stop_trading():
+    """
+    Emergency Panic Button:
+    Instantly kills auto-trading and force-closes any open active positions.
+    """
+    return fast_executor.emergency_stop()
+
+
+@router.post("/emergency-start")
+def emergency_start_trading():
+    """
+    Emergency Start / Resume:
+    Re-arms auto-execution and resumes market scanning.
+    """
+    return fast_executor.emergency_start()
+
+
+@router.post("/reset-demo")
+def reset_demo_trading():
+    """
+    Reset Demo Account:
+    Wipes paper trade history and resets virtual equity back to $300.00 base.
+    """
+    return fast_executor.reset_demo_account()
+
+
+
 @router.get("/system-health")
 def get_system_health():
     """Retrieve real-time Squad background workers status, API health, and network speed."""

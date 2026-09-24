@@ -140,3 +140,43 @@ def test_wallet_manager_connect_and_mode_switching():
     assert wallet_manager.account_mode == "demo"
 
 
+def test_emergency_stop_start_and_demo_reset():
+    from app.fast5m.executor import FastExecutor
+
+    executor = FastExecutor()
+    executor.settings["auto_trading_enabled"] = "true"
+
+    # Seed mock active trade
+    executor.active_trades[999] = {
+        "id": 999,
+        "asset": "BTC",
+        "outcome": "UP",
+        "cost": 10.0,
+        "current_pnl": 0.15,
+        "peak_pnl": 0.20
+    }
+    assert len(executor.get_active_trades()) == 1
+
+    # Test Emergency Stop
+    stop_res = executor.emergency_stop()
+    assert stop_res["status"] == "success"
+    assert stop_res["auto_trading_enabled"] is False
+    assert len(executor.get_active_trades()) == 0
+    assert executor.settings["auto_trading_enabled"] == "false"
+
+    # Test Emergency Start
+    start_res = executor.emergency_start()
+    assert start_res["status"] == "success"
+    assert start_res["auto_trading_enabled"] is True
+    assert executor.settings["auto_trading_enabled"] == "true"
+
+    # Test Reset Demo Account
+    reset_res = executor.reset_demo_account()
+    assert reset_res["status"] == "success"
+    assert reset_res["balance"] == 300.0
+    assert reset_res["total_trades"] == 0
+    assert reset_res["win_rate"] == 0.0
+    assert executor.settings["total_balance_usd"] == "300.0"
+
+
+
