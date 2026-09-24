@@ -509,3 +509,127 @@ async def test_telemetry_fields_written_on_close():
     assert isinstance(mock_db_trade.real_orderbook_bid, float)
     assert mock_db_trade.real_orderbook_bid == 0.52
     assert mock_db_trade.buffer_status == "EXPIRED (CLEARED)"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 10: Position dropping from 0.497 to 0.44 records real loss (~-$5.73), NOT -$0.50
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_position_drop_0497_to_044_records_real_mathematical_loss():
+    """
+    CRITICAL AUDIT TEST:
+    Trade entered at 0.497 with $50.00 margin.
+    Orderbook bid drops to 0.44.
+    Actual mathematical loss:
+      shares = 50.0 / 0.497 = 100.6036
+      exit value = 100.6036 * 0.44 = $44.2656
+      realized_pnl = round(44.2656 - 50.00, 2) = -$5.73
+      pnl_percent = round((-5.73 / 50.0) * 100.0, 2) = -11.46%
+    The engine MUST record -$5.73 (-11.46%), NOT an artificial flat -$0.50 (-1.0%).
+    """
+    executor = FastExecutor()
+    executor.settings["buffer_timer_sec"] = "0.0"
+    executor.settings["stop_loss_pct"] = "1.0"
+    executor.settings["stop_loss_dollar"] = "0.50"
+
+    cost = 50.0
+    entry_p = 0.497
+    shares = round(cost / entry_p, 4)  # 100.6036
+
+    trade = make_trade(
+        cost=cost, entry_price=entry_p, shares=shares, outcome="UP",
+        entry_ts=time.time() - 30.0,
+        peak_pnl=0.0
+    )
+
+    # Market bid drops to 0.44
+    market = make_market(up_bid=0.44, down_bid=0.56, time_rem=60.0)
+    oracle = make_oracle(live_price=89000.0)
+
+    with patch("app.fast5m.executor.fast_oracle.get_asset_state", return_value=oracle), \
+         patch("app.fast5m.executor.fast_markets.get_market", return_value=market), \
+         patch("app.fast5m.executor.SessionLocal") as mock_session:
+
+        mock_db = MagicMock()
+        mock_db_trade = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_db_trade
+        mock_session.return_value = mock_db
+
+        await executor._check_single_trade_exit(trade)
+
+    assert mock_db.commit.called, "Stop loss should trigger commit"
+    assert mock_db_trade.resolution == "HARD_STOP_LOSS"
+    assert mock_db_trade.exit_price == 0.44
+
+    expected_pnl = round((shares * 0.44) - cost, 2)  # -5.73
+    expected_pct = round((expected_pnl / cost) * 100.0, 2)  # -11.46%
+
+    # PROVE IT IS NOT THE ARTIFICIAL -$0.50 (-1%)
+    assert mock_db_trade.pnl != -0.50, \
+        f"CRITICAL FAILURE: PnL was clamped to artificial -$0.50 instead of real market loss! Got {mock_db_trade.pnl}"
+    assert mock_db_trade.pnl_percent != -1.0, \
+        f"CRITICAL FAILURE: PnL% was clamped to artificial -1.0% instead of real market loss! Got {mock_db_trade.pnl_percent}%"
+
+    # PROVE IT MATCHES REAL ORDERBOOK MATH EXACTLY
+    assert mock_db_trade.pnl == expected_pnl, \
+        f"Expected real orderbook PnL=${expected_pnl}, got ${mock_db_trade.pnl}"
+    assert mock_db_trade.pnl_percent == expected_pct, \
+        f"Expected real orderbook PnL%={expected_pct}%, got {mock_db_trade.pnl_percent}%"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 11: Trailing stop trigger uses real market bid and does not lock at zero
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_trailing_stop_uses_real_orderbook_bid_not_zero():
+    """
+    Trade reached peak profit of +$1.50 on $50.00 cost (entry 0.50, 100 shares).
+    Trailing stop floor = max(0.02, 1.50 - 0.25) = $1.25.
+    Bid drops from 0.515 (value $51.50) to 0.511 (value $51.10 -> PnL +$1.10).
+    +$1.10 <= trailing floor ($1.25) -> triggers AGGRESSIVE_TRAILING_LOCK.
+    Realized PnL must be +$1.10 at exit price 0.511, NOT an artificial flat $0.00.
+    """
+    executor = FastExecutor()
+    executor.settings["buffer_timer_sec"] = "0.0"
+    executor.settings["trailing_lock_enabled"] = "true"
+    executor.settings["trailing_stop_activation_pct"] = "1.0"
+    executor.settings["trailing_stop_distance_pct"] = "0.5"
+
+    cost = 50.0
+    entry_p = 0.50
+    shares = 100.0
+
+    trade = make_trade(
+        cost=cost, entry_price=entry_p, shares=shares, outcome="UP",
+        entry_ts=time.time() - 30.0,
+        peak_pnl=1.50  # Had peak profit +$1.50
+    )
+
+    # Market bid pulls back to 0.511
+    market = make_market(up_bid=0.511, down_bid=0.489, time_rem=60.0)
+    oracle = make_oracle(live_price=90100.0)
+
+    with patch("app.fast5m.executor.fast_oracle.get_asset_state", return_value=oracle), \
+         patch("app.fast5m.executor.fast_markets.get_market", return_value=market), \
+         patch("app.fast5m.executor.SessionLocal") as mock_session:
+
+        mock_db = MagicMock()
+        mock_db_trade = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_db_trade
+        mock_session.return_value = mock_db
+
+        await executor._check_single_trade_exit(trade)
+
+    assert mock_db.commit.called, "Trailing stop should trigger commit"
+    assert mock_db_trade.resolution == "AGGRESSIVE_TRAILING_LOCK"
+    assert mock_db_trade.exit_price == 0.511
+
+    expected_pnl = round((100.0 * 0.511) - 50.0, 2)  # +1.10
+    expected_pct = round((expected_pnl / 50.0) * 100.0, 2)  # +2.2%
+
+    assert mock_db_trade.pnl != 0.0, "Trailing lock must NOT close at flat $0.00"
+    assert mock_db_trade.pnl == expected_pnl, \
+        f"Expected realized PnL=+${expected_pnl}, got ${mock_db_trade.pnl}"
+    assert mock_db_trade.pnl_percent == expected_pct

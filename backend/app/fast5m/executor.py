@@ -470,7 +470,7 @@ class FastExecutor:
         if entry_price <= 0.01 or entry_price >= 0.99:
             return
 
-        shares = round(cost / entry_price, 2)
+        shares = round(cost / entry_price, 4)
         epoch_key = (top_asset.asset, market.epoch_bucket)
 
         from app.fast5m.wallet import wallet_manager
@@ -653,21 +653,22 @@ class FastExecutor:
         trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
         reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
 
-        if trailing_enabled and not is_in_buffer and trade_peak_pnl >= min_gain_for_trailing:
-            trade["trailing_armed"] = True
-            # Trailing stop floor: tight distance from peak gain, with minimum breakeven floor of +$0.02
-            trailing_floor = max(0.02, round(trade_peak_pnl - tight_giveback, 2))
-            trade["trailing_floor"] = trailing_floor
+        if trailing_enabled and not is_in_buffer:
+            if trade.get("trailing_armed") or trade_peak_pnl >= min_gain_for_trailing:
+                trade["trailing_armed"] = True
+                # Trailing stop floor: tight distance from peak gain, with minimum breakeven floor of +$0.02
+                trailing_floor = max(0.02, round(trade_peak_pnl - tight_giveback, 2))
+                trade["trailing_floor"] = trailing_floor
 
-            # Trailing trigger: pullback below floor while maintaining positive gain
-            if unrealized_pnl <= trailing_floor and unrealized_pnl > 0.0:
-                should_close = True
-                resolution = "AGGRESSIVE_TRAILING_LOCK"
-                exit_price = current_share_price
-                logger.info(
-                    f"[Fast5M Executor] 🔒 AGGRESSIVE TRAILING STOP HIT: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} "
-                    f"(Peak: +${trade_peak_pnl:.2f}, Floor: +${trailing_floor:.2f})"
-                )
+                # Trailing trigger: pullback below floor while maintaining positive gain (> $0.00)
+                if unrealized_pnl <= trailing_floor and unrealized_pnl > 0.0:
+                    should_close = True
+                    resolution = "AGGRESSIVE_TRAILING_LOCK"
+                    exit_price = current_share_price
+                    logger.info(
+                        f"[Fast5M Executor] 🔒 AGGRESSIVE TRAILING STOP HIT: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} "
+                        f"(Peak: +${trade_peak_pnl:.2f}, Floor: +${trailing_floor:.2f})"
+                    )
 
         # Technical Momentum Reversal Check while in profit (must respect grace period)
         if not should_close and not is_in_buffer and reversal_enabled and unrealized_pnl >= 0.02:
@@ -731,23 +732,40 @@ class FastExecutor:
                 resolution = "LOST"
 
         if should_close:
-            pnl_pct = (unrealized_pnl / cost) * 100.0 if cost > 0 else 0.0
+            actual_exit_bid = round(float(exit_price), 4)
+            shares_exact = round(cost / entry_price, 4) if (entry_price and entry_price > 0) else shares
+            
+            # ── 100% PURE CLOB / ORDERBOOK REALIZED PNL CALCULATION ──
+            # Exact formulas:
+            #   shares = cost / entry_price
+            #   realized_pnl = round((shares * actual_exit_bid) - cost, 2)
+            #   pnl_pct = round((realized_pnl / cost) * 100, 2)
+            if resolution == "WON":
+                actual_exit_bid = 1.00
+                realized_pnl = round((shares_exact * 1.00) - cost, 2)
+            elif resolution == "LOST":
+                actual_exit_bid = 0.00
+                realized_pnl = -round(cost, 2)
+            else:
+                realized_pnl = round((shares_exact * actual_exit_bid) - cost, 2)
+
+            pnl_pct = round((realized_pnl / cost) * 100.0, 2) if cost > 0 else 0.0
             
             # Calculate execution slippage against theoretical trigger target
             if resolution == "TAKE_PROFIT":
-                theoretical_price = round((cost + tp_target) / shares, 4)
+                theoretical_price = round((cost + tp_target) / shares_exact, 4)
             elif resolution == "HARD_STOP_LOSS":
-                theoretical_price = round((cost - sl_limit) / shares, 4)
+                theoretical_price = round((cost - sl_limit) / shares_exact, 4)
             elif resolution == "AGGRESSIVE_TRAILING_LOCK":
-                theoretical_price = round((cost + trade.get("trailing_floor", 0.02)) / shares, 4)
+                theoretical_price = round((cost + trade.get("trailing_floor", 0.02)) / shares_exact, 4)
             elif resolution == "WON":
                 theoretical_price = 1.00
             elif resolution == "LOST":
                 theoretical_price = 0.00
             else:
-                theoretical_price = current_share_price
+                theoretical_price = actual_exit_bid
 
-            exit_slippage = round(exit_price - theoretical_price, 4)
+            exit_slippage = round(actual_exit_bid - theoretical_price, 4)
             account_mode = trade.get("account_mode", "demo")
             execution_type = "LIVE_CLOB_ONCHAIN" if account_mode == "live" else "SIMULATED_ORDERBOOK"
 
@@ -764,9 +782,9 @@ class FastExecutor:
                 db_trade = db.query(Fast5MTrade).filter(Fast5MTrade.id == trade["id"]).first()
                 if db_trade:
                     db_trade.status = "CLOSED"
-                    db_trade.exit_price = round(exit_price, 4)
-                    db_trade.pnl = round(unrealized_pnl, 2)
-                    db_trade.pnl_percent = round(pnl_pct, 2)
+                    db_trade.exit_price = actual_exit_bid
+                    db_trade.pnl = realized_pnl
+                    db_trade.pnl_percent = pnl_pct
                     db_trade.resolution = resolution
                     db_trade.execution_type = execution_type
                     db_trade.tx_hash = tx_hash
@@ -778,8 +796,8 @@ class FastExecutor:
 
                 logger.info(
                     f"[Fast5M Executor] 🏁 POSITION CLOSED #{trade['id']} ({asset} {outcome}): "
-                    f"Resolution={resolution} | RealBid=${orderbook_bid_val:.4f} | ExitPrice=${exit_price:.4f} | "
-                    f"PnL=${unrealized_pnl:+.2f} ({pnl_pct:+.1f}%) | Slippage=${exit_slippage:+.4f} | Mode={execution_type}"
+                    f"Resolution={resolution} | RealBid=${orderbook_bid_val:.4f} | ExitPrice=${actual_exit_bid:.4f} | "
+                    f"PnL=${realized_pnl:+.2f} ({pnl_pct:+.1f}%) | Slippage=${exit_slippage:+.4f} | Mode={execution_type}"
                 )
             except Exception as e:
                 logger.error(f"[Fast5M Executor] Error closing trade: {e}")

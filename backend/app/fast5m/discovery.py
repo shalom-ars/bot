@@ -224,14 +224,16 @@ class FastMarketTracker:
                 raw_bid = float(bids[0]["price"]) if bids else 0.0
                 raw_ask = float(asks[0]["price"]) if asks else 0.0
 
-                # Use real CLOB quotes if both sides exist and spread is reasonable (<= 25%)
-                if bids and asks and (raw_ask - raw_bid) <= 0.25 and raw_bid > 0.05 and raw_ask < 0.95:
+                # Use genuine Polymarket CLOB orderbook quotes whenever available
+                if raw_bid > 0.001:
                     up_bid = raw_bid
+                else:
+                    up_bid = round(max(0.01, fair_mid - 0.02), 4)
+
+                if raw_ask > 0.001:
                     up_ask = raw_ask
                 else:
-                    # Synthetic fair market maker quotes based on oracle delta
-                    up_bid = round(max(0.02, fair_mid - 0.02), 3)
-                    up_ask = round(min(0.98, fair_mid + 0.02), 3)
+                    up_ask = round(min(0.99, fair_mid + 0.02), 4)
 
                 up_mid = round((up_bid + up_ask) / 2.0, 3)
                 

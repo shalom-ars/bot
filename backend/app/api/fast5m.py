@@ -80,8 +80,8 @@ def get_fast5m_board():
 
 @router.get("/trades")
 def get_fast5m_trades(
-    timeframe: str = Query("all", regex="^(today|week|month|all)$"),
-    account_mode: Optional[str] = Query("demo", regex="^(demo|live|all)$"),
+    timeframe: str = Query("all", pattern="^(today|week|month|all)$"),
+    account_mode: Optional[str] = Query("demo", pattern="^(demo|live|all)$"),
     limit: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
