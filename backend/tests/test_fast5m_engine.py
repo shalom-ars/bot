@@ -82,3 +82,32 @@ def test_executor_save_and_restore_defaults():
     assert float(restored["take_profit_dollar"]) == 0.75
     assert float(restored["filter_delta_weight"]) == 45.0
     assert restored["filter_rsi_enabled"] == "false"
+
+
+def test_multi_pair_execution_and_aggressive_trailing():
+    executor = FastExecutor()
+    assert int(executor.settings["max_active_pools"]) == 3
+    assert float(executor.settings["multi_pair_min_score"]) == 90.0
+    assert float(executor.settings["trailing_stop_activation_pct"]) == 1.0
+    assert float(executor.settings["trailing_stop_distance_pct"]) == 0.5
+    assert float(executor.settings["max_portfolio_margin_pct"]) == 30.0
+
+    # Test active_trades dictionary and property
+    assert len(executor.get_active_trades()) == 0
+    assert executor.active_trade is None
+
+    # Simulate opening 2 concurrent trades
+    executor.active_trades[101] = {
+        "id": 101, "asset": "BTC", "outcome": "UP", "cost": 10.0,
+        "shares": 20.0, "entry_price": 0.50, "strike_price": 90000.0,
+        "confidence_score": 92.5
+    }
+    executor.active_trades[102] = {
+        "id": 102, "asset": "ETH", "outcome": "DOWN", "cost": 10.0,
+        "shares": 20.0, "entry_price": 0.50, "strike_price": 3100.0,
+        "confidence_score": 91.0
+    }
+
+    assert len(executor.get_active_trades()) == 2
+    assert executor.active_trade["id"] == 102 # Latest trade
+

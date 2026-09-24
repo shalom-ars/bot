@@ -2,8 +2,9 @@
 Fast 5M Fast Prediction API Router.
 Exposes REST endpoints for the 7-asset real-time prediction engine and UI board.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
@@ -20,12 +21,16 @@ class SettingsUpdate(BaseModel):
     confidence_threshold: Optional[float] = None
     position_size_usd: Optional[float] = None
     max_active_pools: Optional[int] = None
+    multi_pair_min_score: Optional[float] = None
     strategy_direction: Optional[str] = None
     take_profit_dollar: Optional[float] = None
     stop_loss_dollar: Optional[float] = None
     min_profit_to_lock: Optional[float] = None
     reversal_giveback_dollar: Optional[float] = None
     trailing_lock_enabled: Optional[bool] = None
+    trailing_stop_activation_pct: Optional[float] = None
+    trailing_stop_distance_pct: Optional[float] = None
+    max_portfolio_margin_pct: Optional[float] = None
     reversal_lock_enabled: Optional[bool] = None
     min_time_remaining: Optional[float] = None
     max_time_remaining: Optional[float] = None
@@ -61,14 +66,36 @@ def get_fast5m_board():
 
 
 @router.get("/trades")
-def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
-    """Retrieve historical trades and comprehensive PnL stats."""
-    trades = (
-        db.query(Fast5MTrade)
-        .order_by(Fast5MTrade.id.desc())
-        .limit(limit)
-        .all()
-    )
+def get_fast5m_trades(
+    timeframe: str = Query("all", regex="^(today|week|month|all)$"),
+    limit: Optional[int] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve historical trades and comprehensive PnL metrics with lifetime database persistence
+    and dynamic timeframe filtering (today, week, month, all-time).
+    """
+    now = datetime.now(timezone.utc)
+    base_query = db.query(Fast5MTrade)
+
+    if timeframe == "today":
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        filtered_query = base_query.filter(Fast5MTrade.created_at >= today_start)
+    elif timeframe == "week":
+        week_start = now - timedelta(days=7)
+        filtered_query = base_query.filter(Fast5MTrade.created_at >= week_start)
+    elif timeframe == "month":
+        month_start = now - timedelta(days=30)
+        filtered_query = base_query.filter(Fast5MTrade.created_at >= month_start)
+    else: # "all"
+        filtered_query = base_query
+
+    ordered_query = filtered_query.order_by(Fast5MTrade.id.desc())
+    if limit is not None and limit > 0:
+        trades = ordered_query.limit(limit).all()
+    else:
+        trades = ordered_query.all()
+
     result = []
     total_profit = 0.0
     total_loss = 0.0
@@ -122,10 +149,22 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
 
     win_rate = (wins / closed_trades * 100.0) if closed_trades > 0 else 0.0
 
+    # Also compute all-time lifetime stats across all closed records in database
+    all_closed_records = db.query(Fast5MTrade).filter(Fast5MTrade.status == "CLOSED").all()
+    all_wins = sum(1 for t in all_closed_records if (t.pnl or 0) > 0)
+    all_losses = sum(1 for t in all_closed_records if (t.pnl or 0) < 0)
+    all_profit = sum(t.pnl for t in all_closed_records if (t.pnl or 0) > 0)
+    all_loss = sum(abs(t.pnl) for t in all_closed_records if (t.pnl or 0) < 0)
+    all_pnl = all_profit - all_loss
+    all_closed_count = len(all_closed_records)
+    all_win_rate = (all_wins / all_closed_count * 100.0) if all_closed_count > 0 else 0.0
+
     initial_balance = float(fast_executor.settings.get("total_balance_usd", 300.0))
-    current_balance = round(initial_balance + total_pnl, 2)
+    current_balance = round(initial_balance + all_pnl, 2)
+    active_open_trades = len(fast_executor.get_active_trades())
 
     return {
+        "timeframe": timeframe,
         "stats": {
             "initial_balance": initial_balance,
             "current_balance": current_balance,
@@ -136,7 +175,16 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
             "wins": wins,
             "losses": losses,
             "total_trades": closed_trades,
-            "open_trades": len([t for t in trades if t.status == "OPEN"]),
+            "open_trades": active_open_trades,
+        },
+        "lifetime_stats": {
+            "total_trades": all_closed_count,
+            "total_profit": round(all_profit, 2),
+            "total_loss": round(all_loss, 2),
+            "total_pnl": round(all_pnl, 2),
+            "win_rate": round(all_win_rate, 1),
+            "wins": all_wins,
+            "losses": all_losses,
         },
         "trades": result
     }
@@ -165,6 +213,8 @@ def update_fast5m_settings(payload: SettingsUpdate):
         updates["position_size_usd"] = str(payload.position_size_usd)
     if payload.max_active_pools is not None:
         updates["max_active_pools"] = str(payload.max_active_pools)
+    if payload.multi_pair_min_score is not None:
+        updates["multi_pair_min_score"] = str(payload.multi_pair_min_score)
     if payload.strategy_direction is not None:
         updates["strategy_direction"] = str(payload.strategy_direction).upper()
     if payload.take_profit_dollar is not None:
@@ -177,6 +227,12 @@ def update_fast5m_settings(payload: SettingsUpdate):
         updates["reversal_giveback_dollar"] = str(payload.reversal_giveback_dollar)
     if payload.trailing_lock_enabled is not None:
         updates["trailing_lock_enabled"] = "true" if payload.trailing_lock_enabled else "false"
+    if payload.trailing_stop_activation_pct is not None:
+        updates["trailing_stop_activation_pct"] = str(payload.trailing_stop_activation_pct)
+    if payload.trailing_stop_distance_pct is not None:
+        updates["trailing_stop_distance_pct"] = str(payload.trailing_stop_distance_pct)
+    if payload.max_portfolio_margin_pct is not None:
+        updates["max_portfolio_margin_pct"] = str(payload.max_portfolio_margin_pct)
     if payload.reversal_lock_enabled is not None:
         updates["reversal_lock_enabled"] = "true" if payload.reversal_lock_enabled else "false"
     if payload.min_time_remaining is not None:
@@ -261,6 +317,8 @@ def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
             updates["confidence_threshold"] = str(payload.confidence_threshold)
         if payload.max_active_pools is not None:
             updates["max_active_pools"] = str(payload.max_active_pools)
+        if payload.multi_pair_min_score is not None:
+            updates["multi_pair_min_score"] = str(payload.multi_pair_min_score)
         if payload.strategy_direction is not None:
             updates["strategy_direction"] = str(payload.strategy_direction).upper()
         if payload.min_profit_to_lock is not None:
@@ -269,6 +327,12 @@ def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
             updates["reversal_giveback_dollar"] = str(payload.reversal_giveback_dollar)
         if payload.trailing_lock_enabled is not None:
             updates["trailing_lock_enabled"] = "true" if payload.trailing_lock_enabled else "false"
+        if payload.trailing_stop_activation_pct is not None:
+            updates["trailing_stop_activation_pct"] = str(payload.trailing_stop_activation_pct)
+        if payload.trailing_stop_distance_pct is not None:
+            updates["trailing_stop_distance_pct"] = str(payload.trailing_stop_distance_pct)
+        if payload.max_portfolio_margin_pct is not None:
+            updates["max_portfolio_margin_pct"] = str(payload.max_portfolio_margin_pct)
         if payload.filter_delta_enabled is not None:
             updates["filter_delta_enabled"] = "true" if payload.filter_delta_enabled else "false"
         if payload.filter_delta_weight is not None:

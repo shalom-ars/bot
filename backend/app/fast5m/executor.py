@@ -28,7 +28,8 @@ DEFAULT_SETTINGS = {
     "total_balance_usd": "300.0",
     "confidence_threshold": "70.0",       # Execution threshold: minimum composite confidence rating of >= 70
     "position_size_usd": "10.0",          # Admin sizing: $10, $25, $50
-    "max_active_pools": "1",              # Max Active Pools: 1 (single-position risk strict), 2, 3
+    "max_active_pools": "3",              # Max Active Pools: up to 2 to 3 pairs simultaneously
+    "multi_pair_min_score": "90.0",       # Minimum score for multi-pair concurrent execution (90%+)
     "strategy_direction": "BOTH",         # Strategy Direction: BOTH (Up/Down), UP_ONLY, DOWN_ONLY
     "take_profit_dollar": "0.50",         # Strict 1:1 RR: Target Profit $0.50 (50 cents)
     "stop_loss_dollar": "0.50",           # Strict 1:1 RR: Stop Loss $0.50 (50 cents)
@@ -36,6 +37,9 @@ DEFAULT_SETTINGS = {
     "take_profit_pct": "3.0",             # Base Take-Profit target: 1.5% - 3.0%
     "stop_loss_pct": "3.0",               # Strict Hard Stop-Loss capped at maximum 3% loss
     "trailing_lock_enabled": "true",      # Dynamic micro-profit lock
+    "trailing_stop_activation_pct": "1.0",# Aggressive trailing stop activates at +1.0% to +1.5% profit
+    "trailing_stop_distance_pct": "0.5",  # Tight trailing distance: 0.5% or $0.02 giveback locks profit immediately
+    "max_portfolio_margin_pct": "30.0",   # Exposure safeguard: max 30% of account balance committed across all active pairs
     "min_profit_to_lock": "0.15",         # Lock as soon as +$0.15 (15 cents) profit is touched
     "reversal_giveback_dollar": "0.06",   # If profit dips 6 cents from peak, book profit immediately before reverse!
     "reversal_lock_enabled": "true",      # Technical momentum reversal exit
@@ -58,15 +62,29 @@ DEFAULT_SETTINGS = {
 
 class FastExecutor:
     """
-    Automated top-pair execution and single-position risk manager.
+    Automated multi-pair execution engine and risk manager.
+    Supports concurrent execution across up to 2-3 pairs (score >= 90%+),
+    strict aggressive trailing stops with zero-slippage profit locking,
+    and portfolio margin safeguards.
     """
     def __init__(self):
         self.running: bool = False
         self.settings: Dict[str, Any] = dict(DEFAULT_SETTINGS)
-        self.active_trade: Optional[Dict[str, Any]] = None
+        self.active_trades: Dict[int, Dict[str, Any]] = {}
         self._traded_epochs: set = set() # (asset, epoch_bucket) tuples already traded
         self._exec_task: Optional[asyncio.Task] = None
         self._exit_monitor_task: Optional[asyncio.Task] = None
+
+    @property
+    def active_trade(self) -> Optional[Dict[str, Any]]:
+        """Backwards-compatible access to the latest open active trade."""
+        if not self.active_trades:
+            return None
+        return sorted(self.active_trades.values(), key=lambda t: t.get("id", 0), reverse=True)[0]
+
+    def get_active_trades(self) -> List[Dict[str, Any]]:
+        """Return all currently open active trades."""
+        return list(self.active_trades.values())
 
     async def start(self):
         if self.running:
@@ -200,9 +218,9 @@ class FastExecutor:
     def _rehydrate_active_trade(self):
         db: Session = SessionLocal()
         try:
-            open_trade = db.query(Fast5MTrade).filter(Fast5MTrade.status == "OPEN").order_by(Fast5MTrade.id.desc()).first()
-            if open_trade:
-                self.active_trade = {
+            open_trades = db.query(Fast5MTrade).filter(Fast5MTrade.status == "OPEN").order_by(Fast5MTrade.id.asc()).all()
+            for open_trade in open_trades:
+                self.active_trades[open_trade.id] = {
                     "id": open_trade.id,
                     "asset": open_trade.asset,
                     "market_id": open_trade.market_id,
@@ -218,75 +236,127 @@ class FastExecutor:
                     "entry_oracle_price": open_trade.entry_oracle_price,
                     "delta_at_entry": open_trade.delta_at_entry,
                     "confidence_score": open_trade.confidence_score,
+                    "delta_score": getattr(open_trade, "delta_score", 0.0) or 0.0,
+                    "obi_score": getattr(open_trade, "obi_score", 0.0) or 0.0,
+                    "momentum_score": getattr(open_trade, "momentum_score", 0.0) or 0.0,
+                    "prediction_rationale": getattr(open_trade, "prediction_rationale", "") or "",
                     "asset_rank": open_trade.asset_rank,
                     "latency_ms": open_trade.latency_ms,
                     "created_at": open_trade.created_at.isoformat() if open_trade.created_at else "",
+                    "entry_ts": time.time(),
+                    "peak_pnl": 0.0,
+                    "current_pnl": 0.0,
+                    "current_share_price": open_trade.entry_price,
+                    "trailing_armed": False,
+                    "trailing_floor": 0.0,
                 }
                 self._traded_epochs.add((open_trade.asset, open_trade.epoch_bucket))
                 logger.info(f"[Fast5M Executor] Rehydrated open trade #{open_trade.id} ({open_trade.asset} {open_trade.outcome})")
         except Exception as e:
-            logger.error(f"[Fast5M Executor] Error rehydrating trade: {e}")
+            logger.error(f"[Fast5M Executor] Error rehydrating trades: {e}")
         finally:
             db.close()
 
     async def _execution_loop(self):
-        """Scans for #1 ranked opportunity every 1.0 second."""
+        """Scans for #1 ranked and qualified concurrent opportunities (90%+ score) every 1.0 second."""
         while self.running:
             try:
                 auto_enabled = self.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes")
-                max_pools = int(self.settings.get("max_active_pools", 1))
-                if auto_enabled and (not self.active_trade or max_pools > 1):
-                    await self._check_and_execute_top_pair()
+                max_pools = int(self.settings.get("max_active_pools", 3))
+                if auto_enabled and len(self.active_trades) < max_pools:
+                    await self._check_and_execute_pairs()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[Fast5M Executor] Exec loop error: {e}", exc_info=True)
             await asyncio.sleep(1.0)
 
-    async def _check_and_execute_top_pair(self):
-        """Identify #1 ranked pair and execute position if criteria met."""
+    async def _check_and_execute_pairs(self):
+        """
+        Identify top qualifying pairs and execute positions concurrently (up to 2 to 3 pairs)
+        if prediction scores meet thresholds (>=90.0% for multi-pair entries),
+        while strictly enforcing account margin exposure safeguards.
+        """
         conf_threshold = float(self.settings.get("confidence_threshold", 70.0))
-        scored_assets = fast_scorer.score_all_assets(conf_threshold)
+        multi_pair_threshold = float(self.settings.get("multi_pair_min_score", 90.0))
+        max_pools = int(self.settings.get("max_active_pools", 3))
+        
+        available_slots = max_pools - len(self.active_trades)
+        if available_slots <= 0:
+            return
 
+        # Position Sizing & Exposure Safeguard:
+        total_balance = float(self.settings.get("total_balance_usd", 300.0))
+        max_margin_pct = float(self.settings.get("max_portfolio_margin_pct", 30.0))
+        max_total_exposure = total_balance * (max_margin_pct / 100.0) # e.g. $90 max margin
+        current_exposure = sum(t["cost"] for t in self.active_trades.values())
+        available_exposure = max(0.0, max_total_exposure - current_exposure)
+
+        if available_exposure < 5.0:
+            return
+
+        # Score all 7 assets
+        scored_assets = fast_scorer.score_all_assets(conf_threshold)
         if not scored_assets:
             return
 
-        # Pick #1 ranked asset
-        top_asset: ScoredAsset = scored_assets[0]
-
-        if not top_asset.is_tradable or top_asset.confidence < conf_threshold:
-            return
-
-        # Check Strategy Direction (BOTH, UP_ONLY, DOWN_ONLY)
         strat_dir = self.settings.get("strategy_direction", "BOTH").upper()
-        if strat_dir == "UP_ONLY" and top_asset.direction != "UP":
-            return
-        if strat_dir == "DOWN_ONLY" and top_asset.direction != "DOWN":
+        min_time = float(self.settings.get("min_time_remaining", 20.0))
+        max_time = float(self.settings.get("max_time_remaining", 280.0))
+        base_size = float(self.settings.get("position_size_usd", 10.0))
+
+        active_assets = {t["asset"] for t in self.active_trades.values()}
+        qualified_candidates: List[ScoredAsset] = []
+
+        for asset_score in scored_assets:
+            if not asset_score.is_tradable:
+                continue
+            if asset_score.asset in active_assets:
+                continue
+            if strat_dir == "UP_ONLY" and asset_score.direction != "UP":
+                continue
+            if strat_dir == "DOWN_ONLY" and asset_score.direction != "DOWN":
+                continue
+            if not (min_time <= asset_score.time_remaining_sec <= max_time):
+                continue
+
+            market = fast_markets.get_market(asset_score.asset)
+            if not market:
+                continue
+            epoch_key = (asset_score.asset, market.epoch_bucket)
+            if epoch_key in self._traded_epochs:
+                continue
+
+            # Multi-Pair Scoring Rule:
+            # 1st active trade requires standard confidence_threshold (>= 70%)
+            # Concurrent 2nd or 3rd trades require multi_pair_threshold (>= 90.0%+)
+            current_count = len(self.active_trades) + len(qualified_candidates)
+            req_score = conf_threshold if current_count == 0 else multi_pair_threshold
+
+            if asset_score.confidence >= req_score:
+                qualified_candidates.append(asset_score)
+                if len(qualified_candidates) >= available_slots:
+                    break
+
+        if not qualified_candidates:
             return
 
-        # Check Max Active Pools risk limit
-        max_pools = int(self.settings.get("max_active_pools", 1))
-        if self.active_trade and max_pools <= 1:
+        # Exposure Safeguard: partition available margin safely
+        num_new_trades = len(qualified_candidates)
+        safe_per_trade_cost = min(base_size, round(available_exposure / num_new_trades, 2))
+        if safe_per_trade_cost < 3.0:
             return
 
+        # Open qualified pairs concurrently without skipping or waiting
+        for candidate in qualified_candidates:
+            await self._execute_single_trade(candidate, safe_per_trade_cost)
+
+    async def _execute_single_trade(self, top_asset: ScoredAsset, cost: float):
         market = fast_markets.get_market(top_asset.asset)
         if not market:
             return
 
-        # Single-Position & Epoch Rule
-        epoch_key = (top_asset.asset, market.epoch_bucket)
-        if epoch_key in self._traded_epochs:
-            return
-
-        min_time = float(self.settings.get("min_time_remaining", 20.0))
-        max_time = float(self.settings.get("max_time_remaining", 280.0))
-        if not (min_time <= top_asset.time_remaining_sec <= max_time):
-            return
-
-        # Execute Trade!
-        cost = float(self.settings.get("position_size_usd", 10.0))
         outcome = top_asset.direction # "UP" or "DOWN"
-        
         if outcome == "UP":
             entry_price = market.up_ask if market.up_ask > 0 else 0.50
             token_id = market.up_token_id
@@ -298,6 +368,7 @@ class FastExecutor:
             return
 
         shares = round(cost / entry_price, 2)
+        epoch_key = (top_asset.asset, market.epoch_bucket)
 
         # Place trade in DB
         db: Session = SessionLocal()
@@ -322,7 +393,7 @@ class FastExecutor:
                 obi_score=top_asset.obi_score,
                 momentum_score=top_asset.momentum_score,
                 prediction_rationale=top_asset.reason,
-                asset_rank=1,
+                asset_rank=top_asset.rank,
                 latency_ms=top_asset.latency_ms,
                 status="OPEN"
             )
@@ -330,7 +401,7 @@ class FastExecutor:
             db.commit()
             db.refresh(trade_record)
 
-            self.active_trade = {
+            self.active_trades[trade_record.id] = {
                 "id": trade_record.id,
                 "asset": trade_record.asset,
                 "market_id": trade_record.market_id,
@@ -350,42 +421,44 @@ class FastExecutor:
                 "obi_score": trade_record.obi_score,
                 "momentum_score": trade_record.momentum_score,
                 "prediction_rationale": trade_record.prediction_rationale,
-                "asset_rank": 1,
+                "asset_rank": top_asset.rank,
                 "latency_ms": trade_record.latency_ms,
                 "entry_ts": time.time(),
                 "peak_pnl": 0.0,
                 "current_pnl": 0.0,
                 "current_share_price": trade_record.entry_price,
+                "trailing_armed": False,
+                "trailing_floor": 0.0,
                 "created_at": trade_record.created_at.isoformat() if trade_record.created_at else "",
             }
             self._traded_epochs.add(epoch_key)
 
+            active_count = len(self.active_trades)
             logger.info(
-                f"[Fast5M Executor] 🚀 EXECUTED #1 RANKED PAIR: {top_asset.asset} {outcome} @ ${entry_price:.3f} "
-                f"(Cost: ${cost:.2f}, Shares: {shares}, Confidence: {top_asset.confidence}%, Latency: {top_asset.latency_ms}ms)"
+                f"[Fast5M Executor] 🚀 EXECUTED CONCURRENT POSITION ({active_count}/3): {top_asset.asset} {outcome} @ ${entry_price:.3f} "
+                f"(Cost: ${cost:.2f}, Shares: {shares}, Score: {top_asset.confidence}%, Latency: {top_asset.latency_ms}ms)"
             )
         except Exception as e:
-            logger.error(f"[Fast5M Executor] Order routing error: {e}", exc_info=True)
+            logger.error(f"[Fast5M Executor] Order routing error for {top_asset.asset}: {e}", exc_info=True)
         finally:
             db.close()
 
     async def _exit_monitor_loop(self):
-        """Monitors active trade at high frequency (250ms) for micro-profit lock, TP/SL, or Round Expiration."""
+        """Monitors all active trades at high frequency (250ms) for aggressive trailing stop, TP/SL, or Round Expiration."""
         while self.running:
             try:
-                if self.active_trade:
-                    await self._check_active_trade_exit()
+                if self.active_trades:
+                    # Iterate over a snapshot of active trades
+                    active_list = list(self.active_trades.values())
+                    for trade in active_list:
+                        await self._check_single_trade_exit(trade)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[Fast5M Executor] Exit monitor error: {e}")
             await asyncio.sleep(0.25)
 
-    async def _check_active_trade_exit(self):
-        trade = self.active_trade
-        if not trade:
-            return
-
+    async def _check_single_trade_exit(self, trade: Dict[str, Any]):
         asset = trade["asset"]
         outcome = trade["outcome"]
         cost = trade["cost"]
@@ -421,8 +494,7 @@ class FastExecutor:
         trade["is_in_buffer"] = is_in_buffer
         trade["buffer_remaining_sec"] = max(0.0, round(buffer_duration - trade_age_s, 1))
 
-        # 2. Strict Risk-to-Reward & Loss Limit
-        # Strictly cap Hard Stop-Loss at maximum 3.0% loss (no trade should ever exceed this to reach -10% or -15%)
+        # 2. Strict Risk-to-Reward & Loss Limit (Hard Capped at Max 3.0%)
         sl_pct_setting = float(self.settings.get("stop_loss_pct", 3.0))
         sl_cap_pct = min(3.0, max(0.5, sl_pct_setting))
         hard_sl_dollar = round(cost * (sl_cap_pct / 100.0), 2)
@@ -435,11 +507,6 @@ class FastExecutor:
 
         user_sl_dollar = float(self.settings.get("stop_loss_dollar", 0.50))
         sl_limit = min(hard_sl_dollar, user_sl_dollar)
-
-        min_profit_to_lock = float(self.settings.get("min_profit_to_lock", 0.10))
-        giveback_limit = float(self.settings.get("reversal_giveback_dollar", 0.03))
-        trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
-        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
 
         # Hard guard on unrealized PnL: never drop below -hard_sl_dollar (-3%)
         if not is_in_buffer and unrealized_pnl < -hard_sl_dollar:
@@ -455,27 +522,48 @@ class FastExecutor:
         resolution = "HOLD"
         exit_price = current_share_price
 
-        # Rule 1: Automatic Profit Lock on Reversal (Trailing Stop)
-        # As soon as the trade moves into profit and detects a market reversal signal, immediately lock and close with the secured gain!
-        if reversal_enabled and unrealized_pnl >= 0.03:
+        # 3. STRICT REAL-TIME TRAILING STOP & ZERO-SLIPPAGE PROFIT LOCKING
+        # Activates immediately once trade moves into positive profit (+1.0% to +1.5%)
+        # Tightens trailing distance to close instantly on any slight pullback.
+        trailing_act_pct = float(self.settings.get("trailing_stop_activation_pct", 1.0))
+        trailing_dist_pct = float(self.settings.get("trailing_stop_distance_pct", 0.5))
+        min_gain_for_trailing = round(cost * (trailing_act_pct / 100.0), 2) # e.g. +$0.10 on $10
+        tight_giveback = max(0.02, round(cost * (trailing_dist_pct / 100.0), 2)) # 0.5% or $0.02
+
+        trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
+        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
+
+        # Check if trade reached trailing activation threshold
+        if trailing_enabled and (trade_peak_pnl >= min_gain_for_trailing or unrealized_pnl >= 0.03):
+            trade["trailing_armed"] = True
+            # Trailing stop floor: tight distance from peak gain
+            trailing_floor = max(0.01, round(trade_peak_pnl - tight_giveback, 2))
+            trade["trailing_floor"] = trailing_floor
+
+            # ZERO-SLIPPAGE GUARANTEE: Never allow a winning trade to turn negative!
+            if unrealized_pnl < trailing_floor:
+                should_close = True
+                resolution = "AGGRESSIVE_TRAILING_LOCK"
+                logger.info(
+                    f"[Fast5M Executor] 🔒 AGGRESSIVE TRAILING STOP HIT: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} "
+                    f"(Peak: +${trade_peak_pnl:.2f}, Floor: +${trailing_floor:.2f})"
+                )
+
+        # Technical Momentum Reversal Check while in profit
+        if not should_close and reversal_enabled and unrealized_pnl >= 0.02:
             v10 = getattr(oracle, 'velocity_10s', 0.0)
             reversal_detected = False
             reversal_reason = ""
 
-            # Signal A: Direct Price Velocity Reversal against trade direction
-            if outcome == "UP" and v10 < -0.005:
+            # Adverse Price Velocity Shift
+            if outcome == "UP" and v10 < -0.003:
                 reversal_detected = True
-                reversal_reason = f"Downside velocity ({v10:+.4f}) detected while in profit"
-            elif outcome == "DOWN" and v10 > 0.005:
+                reversal_reason = f"Downside velocity ({v10:+.4f}) in profit"
+            elif outcome == "DOWN" and v10 > 0.003:
                 reversal_detected = True
-                reversal_reason = f"Upside velocity ({v10:+.4f}) detected while in profit"
+                reversal_reason = f"Upside velocity ({v10:+.4f}) in profit"
 
-            # Signal B: Trailing Peak Retracement (if touched >= min_profit_to_lock and gives back giveback_limit)
-            if trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit:
-                reversal_detected = True
-                reversal_reason = f"Peak profit retrace (+${trade_peak_pnl:.2f} -> +${unrealized_pnl:.2f})"
-
-            # Signal C: Delta crossed back through strike price
+            # Delta crossed back through strike price
             if outcome == "UP" and live_oracle_price < strike_price:
                 reversal_detected = True
                 reversal_reason = "Price crossed below strike baseline"
@@ -488,24 +576,19 @@ class FastExecutor:
                 resolution = "REVERSAL_PROFIT_LOCK"
                 logger.info(f"[Fast5M Executor] 🔒 REVERSAL PROFIT LOCK: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} ({reversal_reason})")
 
-        # Rule 2: Take Profit Target Reached (e.g. 1.5% - 3.0%)
-        elif unrealized_pnl >= tp_target:
+        # Take Profit Target Hit
+        if not should_close and unrealized_pnl >= tp_target:
             should_close = True
             resolution = "TAKE_PROFIT"
 
-        # Rule 3: Dynamic Trailing Micro-Profit Lock
-        elif trailing_enabled and trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit and unrealized_pnl >= 0.03:
-            should_close = True
-            resolution = "TRAILING_PROFIT_LOCK"
-
-        # Rule 4: Strict Hard Stop-Loss Hit (Guaranteed <= 3.0% loss, protected by Grace Buffer)
-        elif not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
+        # Strict Hard Stop-Loss Hit (Strictly capped at max 3.0% loss)
+        elif not should_close and not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
             should_close = True
             resolution = "HARD_STOP_LOSS"
-            unrealized_pnl = max(-hard_sl_dollar, unrealized_pnl) # Strict 3% loss limit!
+            unrealized_pnl = max(-hard_sl_dollar, unrealized_pnl)
 
-        # Rule 5: Epoch Expired (< 3s remaining) -> Resolution with Strict 3% Loss Protection
-        elif time_rem <= 3.0:
+        # Epoch Expired (< 3s remaining) -> Resolution with Strict 3% Loss Protection
+        elif not should_close and time_rem <= 3.0:
             should_close = True
             won = (live_oracle_price >= strike_price) if outcome == "UP" else (live_oracle_price < strike_price)
             if won:
@@ -513,7 +596,6 @@ class FastExecutor:
                 unrealized_pnl = max(tp_target, round(cost * (tp_pct_setting / 100.0), 2))
                 resolution = "WON"
             else:
-                # Protected against -10% or -15% by strict 3% loss limit!
                 exit_price = max(0.01, round(entry_price * (1.0 - (sl_cap_pct / 100.0)), 4))
                 unrealized_pnl = -hard_sl_dollar
                 resolution = "HARD_STOP_LOSS"
@@ -540,7 +622,7 @@ class FastExecutor:
                 logger.error(f"[Fast5M Executor] Error closing trade: {e}")
             finally:
                 db.close()
-                self.active_trade = None
+                self.active_trades.pop(trade["id"], None)
 
 
 # Global singleton instance

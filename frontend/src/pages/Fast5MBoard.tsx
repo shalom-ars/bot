@@ -5,7 +5,7 @@ import {
   Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
-  BookmarkCheck, RotateCcw, Scale, SlidersHorizontal
+  BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database
 } from 'lucide-react';
 
 interface AssetData {
@@ -76,6 +76,7 @@ interface BoardState {
   assets: AssetData[];
   top_ranked_pair: AssetData | null;
   active_trade: any | null;
+  active_trades?: any[];
   settings: Record<string, any>;
   auto_trading_active: boolean;
   system_health?: SystemHealth;
@@ -94,6 +95,8 @@ const ASSET_META: Record<string, { name: string; color: string; bg: string; bord
 export default function Fast5MBoard() {
   const [board, setBoard] = useState<BoardState | null>(null);
   const [trades, setTrades] = useState<any[]>([]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState<'today' | 'week' | 'month' | 'all'>('all');
+  const [lifetimeStats, setLifetimeStats] = useState<any>(null);
   const [stats, setStats] = useState<TradeStats>({
     total_pnl: 0,
     total_profit: 0,
@@ -106,7 +109,8 @@ export default function Fast5MBoard() {
   });
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(70);
   const [positionSize, setPositionSize] = useState<number>(10);
-  const [maxActivePools, setMaxActivePools] = useState<number>(1);
+  const [maxActivePools, setMaxActivePools] = useState<number>(3);
+  const [multiPairMinScore, setMultiPairMinScore] = useState<number>(90.0);
   const [strategyDirection, setStrategyDirection] = useState<'BOTH' | 'UP_ONLY' | 'DOWN_ONLY'>('BOTH');
   const [takeProfitDollar, setTakeProfitDollar] = useState<number>(0.30);
   const [stopLossDollar, setStopLossDollar] = useState<number>(0.30);
@@ -114,6 +118,9 @@ export default function Fast5MBoard() {
   const [stopLossPct, setStopLossPct] = useState<number>(3.0);
   const [bufferTimerSec, setBufferTimerSec] = useState<number>(4.0);
   const [trailingLockEnabled, setTrailingLockEnabled] = useState<boolean>(true);
+  const [trailingStopActivationPct, setTrailingStopActivationPct] = useState<number>(1.0);
+  const [trailingStopDistancePct, setTrailingStopDistancePct] = useState<number>(0.5);
+  const [maxPortfolioMarginPct, setMaxPortfolioMarginPct] = useState<number>(30.0);
   const [reversalLockEnabled, setReversalLockEnabled] = useState<boolean>(true);
   const [minProfitToLock, setMinProfitToLock] = useState<number>(0.10);
   const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.03);
@@ -167,6 +174,7 @@ export default function Fast5MBoard() {
           if (s.confidence_threshold) setConfidenceThreshold(parseFloat(s.confidence_threshold));
           if (s.position_size_usd) setPositionSize(parseFloat(s.position_size_usd));
           if (s.max_active_pools) setMaxActivePools(parseInt(s.max_active_pools));
+          if (s.multi_pair_min_score) setMultiPairMinScore(parseFloat(s.multi_pair_min_score));
           if (s.strategy_direction) setStrategyDirection(s.strategy_direction.toUpperCase());
           if (s.take_profit_dollar) setTakeProfitDollar(parseFloat(s.take_profit_dollar));
           if (s.stop_loss_dollar) setStopLossDollar(parseFloat(s.stop_loss_dollar));
@@ -176,6 +184,9 @@ export default function Fast5MBoard() {
           if (s.min_profit_to_lock) setMinProfitToLock(parseFloat(s.min_profit_to_lock));
           if (s.reversal_giveback_dollar) setReversalGivebackDollar(parseFloat(s.reversal_giveback_dollar));
           if (s.trailing_lock_enabled) setTrailingLockEnabled(s.trailing_lock_enabled === 'true');
+          if (s.trailing_stop_activation_pct) setTrailingStopActivationPct(parseFloat(s.trailing_stop_activation_pct));
+          if (s.trailing_stop_distance_pct) setTrailingStopDistancePct(parseFloat(s.trailing_stop_distance_pct));
+          if (s.max_portfolio_margin_pct) setMaxPortfolioMarginPct(parseFloat(s.max_portfolio_margin_pct));
           if (s.reversal_lock_enabled !== undefined) setReversalLockEnabled(s.reversal_lock_enabled === 'true');
 
           if (s.filter_delta_enabled !== undefined) setFilterDeltaEnabled(s.filter_delta_enabled !== 'false');
@@ -199,13 +210,15 @@ export default function Fast5MBoard() {
     }
   };
 
-  const fetchTrades = async () => {
+  const fetchTrades = async (tf?: string) => {
     try {
-      const res = await axios.get('/api/fast5m/trades?limit=50');
+      const activeTf = tf || selectedTimeframe;
+      const res = await axios.get(`/api/fast5m/trades?timeframe=${activeTf}`);
       if (res.data) {
         if (res.data.trades) {
           setTrades(res.data.trades);
           if (res.data.stats) setStats(res.data.stats);
+          if (res.data.lifetime_stats) setLifetimeStats(res.data.lifetime_stats);
         } else if (Array.isArray(res.data)) {
           setTrades(res.data);
         }
@@ -213,6 +226,11 @@ export default function Fast5MBoard() {
     } catch (e) {
       console.debug('Fast5M trades fetch error', e);
     }
+  };
+
+  const handleSelectTimeframe = (tf: 'today' | 'week' | 'month' | 'all') => {
+    setSelectedTimeframe(tf);
+    fetchTrades(tf);
   };
 
   useEffect(() => {
@@ -228,7 +246,7 @@ export default function Fast5MBoard() {
       clearInterval(interval);
       clearInterval(tradeInterval);
     };
-  }, []);
+  }, [selectedTimeframe]);
 
   const handleToggleAuto = async () => {
     setToggling(true);
@@ -260,6 +278,7 @@ export default function Fast5MBoard() {
       await axios.post('/api/fast5m/settings', {
         position_size_usd: positionSize,
         max_active_pools: maxActivePools,
+        multi_pair_min_score: multiPairMinScore,
         strategy_direction: strategyDirection,
         confidence_threshold: confidenceThreshold,
         buffer_timer_sec: bufferTimerSec,
@@ -268,6 +287,9 @@ export default function Fast5MBoard() {
         take_profit_dollar: takeProfitDollar,
         stop_loss_dollar: Math.min(Number((positionSize * 0.03).toFixed(2)), stopLossDollar),
         trailing_lock_enabled: trailingLockEnabled,
+        trailing_stop_activation_pct: trailingStopActivationPct,
+        trailing_stop_distance_pct: trailingStopDistancePct,
+        max_portfolio_margin_pct: maxPortfolioMarginPct,
         reversal_lock_enabled: reversalLockEnabled,
         min_profit_to_lock: minProfitToLock,
         reversal_giveback_dollar: reversalGivebackDollar,
@@ -301,6 +323,7 @@ export default function Fast5MBoard() {
       const res = await axios.post('/api/fast5m/settings/default', {
         position_size_usd: positionSize,
         max_active_pools: maxActivePools,
+        multi_pair_min_score: multiPairMinScore,
         strategy_direction: strategyDirection,
         confidence_threshold: confidenceThreshold,
         buffer_timer_sec: bufferTimerSec,
@@ -309,6 +332,9 @@ export default function Fast5MBoard() {
         take_profit_dollar: takeProfitDollar,
         stop_loss_dollar: Math.min(Number((positionSize * 0.03).toFixed(2)), stopLossDollar),
         trailing_lock_enabled: trailingLockEnabled,
+        trailing_stop_activation_pct: trailingStopActivationPct,
+        trailing_stop_distance_pct: trailingStopDistancePct,
+        max_portfolio_margin_pct: maxPortfolioMarginPct,
         reversal_lock_enabled: reversalLockEnabled,
         min_profit_to_lock: minProfitToLock,
         reversal_giveback_dollar: reversalGivebackDollar,
@@ -376,6 +402,11 @@ export default function Fast5MBoard() {
 
   const topPick = board?.top_ranked_pair;
   const inspectedAsset = board?.assets?.find(a => a.asset === selectedAssetForScore) || topPick || board?.assets?.[0];
+
+  const activeList: any[] = (board?.active_trades && board.active_trades.length > 0)
+    ? board.active_trades
+    : (board?.active_trade ? [board.active_trade] : []);
+  const activeExposure = activeList.reduce((acc: number, t: any) => acc + (t.cost || 0), 0);
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12 font-sans text-slate-800">
@@ -578,12 +609,14 @@ export default function Fast5MBoard() {
               ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
             </div>
             <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Base: $300.00 • Size: ${positionSize}
+              Base: $300.00 • Active Margin: ${activeExposure.toFixed(2)}
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Status:</span>
-            <span className="font-bold text-emerald-600">{board?.active_trade ? 'In Trade (1 Open)' : 'Scanning (Idle)'}</span>
+            <span className="text-slate-400">Positions:</span>
+            <span className={`font-bold ${activeList.length > 0 ? 'text-blue-600 animate-pulse' : 'text-slate-500'}`}>
+              {activeList.length > 0 ? `${activeList.length} Active / Max ${maxActivePools}` : 'Idle (0 Active)'}
+            </span>
           </div>
         </div>
 
@@ -602,7 +635,7 @@ export default function Fast5MBoard() {
               {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(2)}
             </div>
             <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Across {stats.total_trades} closed rounds
+              {selectedTimeframe.toUpperCase()} • {stats.total_trades} closed rounds
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
@@ -626,12 +659,12 @@ export default function Fast5MBoard() {
               +${stats.total_profit.toFixed(2)}
             </div>
             <div className="text-[11px] text-emerald-700 font-bold mt-0.5 flex items-center gap-1">
-              <span>{stats.wins} Winning Locks</span>
+              <span>{stats.wins} Winning Trades</span>
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">1:1 Target:</span>
-            <span className="font-bold text-emerald-600">+$0.50 Cents</span>
+            <span className="text-slate-400">Profit Target:</span>
+            <span className="font-bold text-emerald-600">+{takeProfitPct}% ({((positionSize * takeProfitPct) / 100).toFixed(2)}$)</span>
           </div>
         </div>
 
@@ -648,19 +681,19 @@ export default function Fast5MBoard() {
               -${stats.total_loss.toFixed(2)}
             </div>
             <div className="text-[11px] text-rose-700 font-bold mt-0.5 flex items-center gap-1">
-              <span>{stats.losses} Stopped Losses</span>
+              <span>{stats.losses} Stopped Trades</span>
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">1:1 Stop:</span>
-            <span className="font-bold text-rose-600">-$0.50 Cents</span>
+            <span className="text-slate-400">Hard Cap:</span>
+            <span className="font-bold text-rose-600">Max -3.0% Stop</span>
           </div>
         </div>
 
-        {/* Card 5: Win Rate & Efficiency */}
+        {/* Card 5: Total Trades Executed & Win Rate */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Win Rate</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Trades & Win Rate</span>
             <span className="p-1.5 rounded-xl bg-blue-50 text-blue-600">
               <Award className="w-4 h-4" />
             </span>
@@ -669,13 +702,13 @@ export default function Fast5MBoard() {
             <div className="text-2xl sm:text-3xl font-black font-mono text-blue-600 tracking-tight">
               {stats.win_rate.toFixed(1)}%
             </div>
-            <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-              {stats.wins} Won / {stats.total_trades} Done
+            <div className="text-[11px] text-slate-600 font-bold mt-0.5">
+              {stats.total_trades} Executed ({stats.wins}W / {stats.losses}L)
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Min Conf:</span>
-            <span className="font-bold text-slate-700">≥ {confidenceThreshold}%</span>
+            <span className="text-slate-400">Multi Threshold:</span>
+            <span className="font-bold text-slate-700">≥ {multiPairMinScore}%</span>
           </div>
         </div>
 
@@ -943,7 +976,7 @@ export default function Fast5MBoard() {
                   <div className="flex items-center justify-between">
                     <label className="text-xs text-slate-800 font-bold flex items-center gap-1.5 cursor-pointer">
                       <Lock className="w-3.5 h-3.5 text-blue-600" />
-                      <span>3. Automatic Profit Lock on Reversal</span>
+                      <span>3. Strict Real-Time Trailing Stop & Profit Lock</span>
                     </label>
                     <input
                       type="checkbox"
@@ -954,8 +987,41 @@ export default function Fast5MBoard() {
                   </div>
 
                   <p className="text-[10px] text-slate-500 leading-relaxed">
-                    As soon as trade enters profit (&gt;= +$0.03) and detects an adverse price velocity or baseline breakdown, immediately locks and closes the trade with the secured gain before reversal.
+                    Zero-slippage guarantee: activates immediately upon reaching +{trailingStopActivationPct}%, locking profits at market if price pulls back by {trailingStopDistancePct}%. A winning trade is never allowed to reverse into a loss.
                   </p>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded-xl border border-slate-200">
+                    <div>
+                      <span className="text-slate-500 text-[10px] block">Trailing Activation:</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          max="5.0"
+                          value={trailingStopActivationPct}
+                          onChange={(e) => setTrailingStopActivationPct(Math.max(0.2, Number(e.target.value)))}
+                          className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
+                        />
+                        <span className="text-slate-400 font-mono text-xs">%</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 text-[10px] block">Trailing Distance:</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          max="2.0"
+                          value={trailingStopDistancePct}
+                          onChange={(e) => setTrailingStopDistancePct(Math.max(0.1, Number(e.target.value)))}
+                          className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
+                        />
+                        <span className="text-slate-400 font-mono text-xs">%</span>
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded-xl border border-slate-200">
                     <div>
@@ -1305,7 +1371,7 @@ export default function Fast5MBoard() {
                 {/* Score Threshold */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs text-slate-600 font-semibold">Min Composite Score Threshold:</label>
+                    <label className="text-xs text-slate-600 font-semibold">Min Composite Score (Primary):</label>
                     <span className="font-mono font-bold text-sm text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
                       ≥ {confidenceThreshold}%
                     </span>
@@ -1323,6 +1389,56 @@ export default function Fast5MBoard() {
                     <span>50% (High Freq)</span>
                     <span>70% (Recommended)</span>
                     <span>90% (Strict)</span>
+                  </div>
+                </div>
+
+                {/* Multi-Pair Concurrent Execution Threshold (Score >= 90%) */}
+                <div className="bg-white p-3 rounded-xl border border-amber-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Multi-Pair Threshold (90%+):</span>
+                    </label>
+                    <span className="font-mono font-bold text-xs text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                      ≥ {multiPairMinScore.toFixed(1)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="85.0"
+                    max="98.0"
+                    step="0.5"
+                    value={multiPairMinScore}
+                    onChange={(e) => setMultiPairMinScore(Number(e.target.value))}
+                    className="w-full accent-amber-600 cursor-pointer"
+                  />
+                  <div className="text-[10px] text-slate-500 leading-snug">
+                    Executes up to {maxActivePools} trades simultaneously without skipping if confidence score reaches ≥ {multiPairMinScore.toFixed(0)}%.
+                  </div>
+                </div>
+
+                {/* Max Exposure Safeguard (% of Account Balance) */}
+                <div className="bg-white p-3 rounded-xl border border-emerald-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Exposure Safeguard:</span>
+                    </label>
+                    <span className="font-mono font-bold text-xs text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                      {maxPortfolioMarginPct.toFixed(0)}% (${(300 * (maxPortfolioMarginPct / 100)).toFixed(0)})
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="15"
+                    max="60"
+                    step="5"
+                    value={maxPortfolioMarginPct}
+                    onChange={(e) => setMaxPortfolioMarginPct(Number(e.target.value))}
+                    className="w-full accent-emerald-600 cursor-pointer"
+                  />
+                  <div className="text-[10px] text-slate-500 leading-snug">
+                    Safeguard partitions margin evenly across concurrent entries to ensure portfolio is never over-leveraged.
                   </div>
                 </div>
               </div>
@@ -1804,72 +1920,82 @@ export default function Fast5MBoard() {
             </div>
           )}
 
-          {/* Active Open Position Card (if any) */}
-          {board?.active_trade && (
-            <div className="bg-gradient-to-r from-blue-950 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-blue-500/40 relative overflow-hidden">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-blue-500/20 border border-blue-400/40 rounded-xl text-blue-300">
-                    <Activity className="w-5 h-5 animate-pulse text-emerald-400" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                        ACTIVE OPEN POSITION
-                      </span>
-                      <span className="text-xs text-blue-200 font-mono">
-                        #{board.active_trade.id} • {board.active_trade.asset}
-                      </span>
-                      {board.active_trade.is_in_buffer ? (
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/40 animate-pulse flex items-center gap-1">
-                          <Timer className="w-3 h-3" />
-                          <span>Buffer: {board.active_trade.buffer_remaining_sec ?? 4.0}s (Noise Immune)</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
-                          <Shield className="w-3 h-3" />
-                          <span>Strict 3% Hard SL Protected</span>
-                        </span>
-                      )}
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                        🔒 Reversal Profit Lock Armed
-                      </span>
-                    </div>
-                    <h3 className="text-xl font-black tracking-tight mt-0.5">
-                      {board.active_trade.asset} {board.active_trade.outcome} • {board.active_trade.shares} Shares @ ${board.active_trade.entry_price}
-                    </h3>
-                  </div>
-                </div>
+          {/* Active Open Positions Monitor (Supports 1 to 3 concurrent trades) */}
+          {activeList.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
+                  Active Concurrent Positions ({activeList.length} of Max {maxActivePools})
+                </span>
+                <span className="text-xs font-mono font-bold text-slate-500">
+                  Total Allocated Margin: ${activeExposure.toFixed(2)} / Exposure Cap ${(300 * (maxPortfolioMarginPct / 100)).toFixed(2)} ({maxPortfolioMarginPct}%)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {activeList.map((tr: any) => {
+                  const isPos = (tr.current_pnl ?? 0) >= 0;
+                  return (
+                    <div
+                      key={tr.id || tr.asset}
+                      className="bg-gradient-to-r from-blue-950 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 shadow-lg border border-blue-500/40 relative overflow-hidden flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                              #{tr.id} • {tr.asset}
+                            </span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              tr.outcome === 'UP' ? 'bg-emerald-400/20 text-emerald-300' : 'bg-rose-400/20 text-rose-300'
+                            }`}>
+                              {tr.outcome === 'UP' ? '▲ UP' : '▼ DOWN'}
+                            </span>
+                          </div>
+                          {tr.is_in_buffer ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/40 animate-pulse flex items-center gap-1">
+                              <Timer className="w-3 h-3" />
+                              <span>{tr.buffer_remaining_sec ?? 4.0}s Buffer</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                              <Shield className="w-3 h-3" />
+                              <span>3% SL Cap</span>
+                            </span>
+                          )}
+                        </div>
 
-                <div className="flex flex-wrap items-center gap-4 sm:gap-6">
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Live P&L</div>
-                    <div className={`text-base font-black font-mono ${
-                      (board.active_trade.current_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                    }`}>
-                      {(board.active_trade.current_pnl ?? 0) >= 0 ? '+' : ''}${Number(board.active_trade.current_pnl ?? 0).toFixed(2)}
-                    </div>
-                  </div>
+                        <div className="flex items-baseline justify-between mt-1">
+                          <div className="text-base font-black tracking-tight">
+                            {tr.shares} Shares @ ${tr.entry_price}
+                          </div>
+                          <div className={`text-lg font-black font-mono ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {isPos ? '+' : ''}${Number(tr.current_pnl ?? 0).toFixed(2)}
+                          </div>
+                        </div>
 
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Peak Profit</div>
-                    <div className="text-sm font-bold font-mono text-emerald-300">
-                      +${Number(board.active_trade.peak_pnl ?? 0).toFixed(2)}
-                    </div>
-                  </div>
+                        <div className="text-[11px] text-blue-200/80 font-mono mt-0.5">
+                          Score: {tr.confidence_score ?? tr.score ?? '90+'}% • Cost: ${tr.cost} USDC
+                        </div>
+                      </div>
 
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Margin Cost</div>
-                    <div className="text-sm font-bold font-mono">${board.active_trade.cost} USDC</div>
-                  </div>
-
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Targets (1:1 Base)</div>
-                    <div className="text-xs font-bold font-mono text-cyan-300">
-                      +${((board.active_trade.cost * takeProfitPct) / 100).toFixed(2)} ({takeProfitPct}%) / -${((board.active_trade.cost * Math.min(3.0, stopLossPct)) / 100).toFixed(2)} ({stopLossPct}%)
+                      <div className="pt-2.5 mt-2.5 border-t border-blue-900/60 grid grid-cols-2 gap-2 text-[10px] font-mono">
+                        <div>
+                          <span className="text-blue-300">Peak Gain:</span>
+                          <span className="font-bold text-emerald-300 ml-1">
+                            +${Number(tr.peak_pnl ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-blue-300">Trailing Stop:</span>
+                          <span className="font-bold text-cyan-300 ml-1">
+                            {tr.trailing_stop_floor != null ? `Floor +$${Number(tr.trailing_stop_floor).toFixed(2)}` : 'Armed (≥+1%)'}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2015,19 +2141,78 @@ export default function Fast5MBoard() {
       {/* 5. HISTORICAL TRADES TAB: TOTAL LOSS, PROFIT, AND EXACT PREDICTION SCORE */}
       {activeTab === 'trades' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
+          <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h2 className="text-base font-black text-slate-900">Fast 5M Execution & PnL History</h2>
-              <p className="text-xs text-slate-500 font-medium">
-                Detailed record showing what score set the prediction, entry price, and realized profit/loss
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base font-black text-slate-900">Fast 5M Execution & PnL History</h2>
+                <span className="flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  <Database className="w-3 h-3 text-indigo-600" /> Untruncated Lifetime DB Storage {lifetimeStats?.total_trades != null ? `(${lifetimeStats.total_trades} Lifetime Records)` : ''}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                Full permanent trade log with prediction scores, risk execution rationale, strike prices, and realized returns
               </p>
             </div>
-            <button
-              onClick={fetchTrades}
-              className="p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
+
+            {/* Timeframe Filter Buttons & Refresh */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                {[
+                  { id: 'today' as const, label: 'Today (Daily)' },
+                  { id: 'week' as const, label: 'This Week' },
+                  { id: 'month' as const, label: 'This Month' },
+                  { id: 'all' as const, label: 'All-Time (Lifetime)' },
+                ].map((tf) => (
+                  <button
+                    key={tf.id}
+                    type="button"
+                    onClick={() => handleSelectTimeframe(tf.id)}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      selectedTimeframe === tf.id
+                        ? 'bg-white text-blue-600 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={() => fetchTrades(selectedTimeframe)}
+                className="p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer border border-slate-200"
+                title="Refresh trade log"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Timeframe Performance Sub-Bar */}
+          <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="text-slate-500 font-sans font-bold">
+                Filtered: <span className="uppercase text-slate-800">{selectedTimeframe}</span>
+              </span>
+              <span>
+                Trades: <strong className="text-slate-800">{stats.total_trades}</strong>
+              </span>
+              <span>
+                Wins: <strong className="text-emerald-600">{stats.wins}</strong> (+${stats.total_profit.toFixed(2)})
+              </span>
+              <span>
+                Losses: <strong className="text-rose-600">{stats.losses}</strong> (-${stats.total_loss.toFixed(2)})
+              </span>
+              <span>
+                Win Rate: <strong className="text-blue-600">{stats.win_rate.toFixed(1)}%</strong>
+              </span>
+            </div>
+            <div>
+              Net PnL:{' '}
+              <strong className={stats.total_pnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(2)}
+              </strong>
+            </div>
           </div>
 
           <div className="overflow-x-auto">

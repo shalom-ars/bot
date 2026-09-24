@@ -105,6 +105,7 @@ class Fast5MEngine:
             "assets": assets_data,
             "top_ranked_pair": top_pick,
             "active_trade": fast_executor.active_trade,
+            "active_trades": fast_executor.get_active_trades(),
             "settings": fast_executor.settings,
             "auto_trading_active": fast_executor.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes"),
             "system_health": fast_squad.get_system_health(),
