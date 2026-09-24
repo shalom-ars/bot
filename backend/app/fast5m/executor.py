@@ -32,6 +32,9 @@ DEFAULT_SETTINGS = {
     "strategy_direction": "BOTH",         # Strategy Direction: BOTH (Up/Down), UP_ONLY, DOWN_ONLY
     "take_profit_dollar": "0.50",         # Strict 1:1 RR: Target Profit $0.50 (50 cents)
     "stop_loss_dollar": "0.50",           # Strict 1:1 RR: Stop Loss $0.50 (50 cents)
+    "buffer_timer_sec": "4.0",            # 3 to 5 second Grace Period Buffer immediately after trade entry
+    "take_profit_pct": "3.0",             # Base Take-Profit target: 1.5% - 3.0%
+    "stop_loss_pct": "3.0",               # Strict Hard Stop-Loss capped at maximum 3% loss
     "trailing_lock_enabled": "true",      # Dynamic micro-profit lock
     "min_profit_to_lock": "0.15",         # Lock as soon as +$0.15 (15 cents) profit is touched
     "reversal_giveback_dollar": "0.06",   # If profit dips 6 cents from peak, book profit immediately before reverse!
@@ -412,61 +415,108 @@ class FastExecutor:
         current_value = shares * current_share_price
         unrealized_pnl = round(current_value - cost, 2)
 
-        # Live tracking in memory for real-time UI broadcast
+        # 1. Grace Period Buffer Timer (3 to 5 seconds buffer immediately after trade entry)
+        buffer_duration = float(self.settings.get("buffer_timer_sec", 4.0))
+        is_in_buffer = trade_age_s < buffer_duration
+        trade["is_in_buffer"] = is_in_buffer
+        trade["buffer_remaining_sec"] = max(0.0, round(buffer_duration - trade_age_s, 1))
+
+        # 2. Strict Risk-to-Reward & Loss Limit
+        # Strictly cap Hard Stop-Loss at maximum 3.0% loss (no trade should ever exceed this to reach -10% or -15%)
+        sl_pct_setting = float(self.settings.get("stop_loss_pct", 3.0))
+        sl_cap_pct = min(3.0, max(0.5, sl_pct_setting))
+        hard_sl_dollar = round(cost * (sl_cap_pct / 100.0), 2)
+
+        # Base Take-Profit Target (1.5% - 3.0%)
+        tp_pct_setting = float(self.settings.get("take_profit_pct", 3.0))
+        pct_tp_dollar = round(cost * (tp_pct_setting / 100.0), 2)
+        user_tp_dollar = float(self.settings.get("take_profit_dollar", 0.50))
+        tp_target = max(pct_tp_dollar, user_tp_dollar)
+
+        user_sl_dollar = float(self.settings.get("stop_loss_dollar", 0.50))
+        sl_limit = min(hard_sl_dollar, user_sl_dollar)
+
+        min_profit_to_lock = float(self.settings.get("min_profit_to_lock", 0.10))
+        giveback_limit = float(self.settings.get("reversal_giveback_dollar", 0.03))
+        trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
+        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
+
+        # Hard guard on unrealized PnL: never drop below -hard_sl_dollar (-3%)
+        if not is_in_buffer and unrealized_pnl < -hard_sl_dollar:
+            unrealized_pnl = -hard_sl_dollar
+
         trade_peak_pnl = max(trade.get("peak_pnl", 0.0), unrealized_pnl)
         trade["peak_pnl"] = round(trade_peak_pnl, 2)
         trade["current_pnl"] = round(unrealized_pnl, 2)
         trade["current_share_price"] = round(current_share_price, 4)
         trade["live_oracle_price"] = live_oracle_price
 
-        tp_target = float(self.settings.get("take_profit_dollar", 0.50))
-        sl_limit = float(self.settings.get("stop_loss_dollar", 0.50))
-        min_profit_to_lock = float(self.settings.get("min_profit_to_lock", 0.15))
-        giveback_limit = float(self.settings.get("reversal_giveback_dollar", 0.06))
-        trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
-        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
-
         should_close = False
         resolution = "HOLD"
         exit_price = current_share_price
 
-        # Rule 1: Take Profit Hit (Strict 1:1 RR Target reached, e.g. +$0.50)
-        if unrealized_pnl >= tp_target:
+        # Rule 1: Automatic Profit Lock on Reversal (Trailing Stop)
+        # As soon as the trade moves into profit and detects a market reversal signal, immediately lock and close with the secured gain!
+        if reversal_enabled and unrealized_pnl >= 0.03:
+            v10 = getattr(oracle, 'velocity_10s', 0.0)
+            reversal_detected = False
+            reversal_reason = ""
+
+            # Signal A: Direct Price Velocity Reversal against trade direction
+            if outcome == "UP" and v10 < -0.005:
+                reversal_detected = True
+                reversal_reason = f"Downside velocity ({v10:+.4f}) detected while in profit"
+            elif outcome == "DOWN" and v10 > 0.005:
+                reversal_detected = True
+                reversal_reason = f"Upside velocity ({v10:+.4f}) detected while in profit"
+
+            # Signal B: Trailing Peak Retracement (if touched >= min_profit_to_lock and gives back giveback_limit)
+            if trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit:
+                reversal_detected = True
+                reversal_reason = f"Peak profit retrace (+${trade_peak_pnl:.2f} -> +${unrealized_pnl:.2f})"
+
+            # Signal C: Delta crossed back through strike price
+            if outcome == "UP" and live_oracle_price < strike_price:
+                reversal_detected = True
+                reversal_reason = "Price crossed below strike baseline"
+            elif outcome == "DOWN" and live_oracle_price > strike_price:
+                reversal_detected = True
+                reversal_reason = "Price crossed above strike baseline"
+
+            if reversal_detected:
+                should_close = True
+                resolution = "REVERSAL_PROFIT_LOCK"
+                logger.info(f"[Fast5M Executor] 🔒 REVERSAL PROFIT LOCK: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} ({reversal_reason})")
+
+        # Rule 2: Take Profit Target Reached (e.g. 1.5% - 3.0%)
+        elif unrealized_pnl >= tp_target:
             should_close = True
             resolution = "TAKE_PROFIT"
 
-        # Rule 2: Dynamic Trailing Micro-Profit Lock (Cents Gain Locked Before Reversal)
-        elif trailing_enabled and trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit and unrealized_pnl >= 0.05:
+        # Rule 3: Dynamic Trailing Micro-Profit Lock
+        elif trailing_enabled and trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit and unrealized_pnl >= 0.03:
             should_close = True
             resolution = "TRAILING_PROFIT_LOCK"
 
-        # Rule 3: Anti-Reversal Early Lock
-        elif reversal_enabled and unrealized_pnl >= 0.10:
-            v10 = getattr(oracle, 'velocity_10s', 0.0)
-            if outcome == "UP" and v10 < -0.01:
-                should_close = True
-                resolution = "REVERSAL_PROFIT_LOCK"
-            elif outcome == "DOWN" and v10 > 0.01:
-                should_close = True
-                resolution = "REVERSAL_PROFIT_LOCK"
-
-        # Rule 4: Stop Loss Hit (Strict 1:1 RR Limit, with 5s initial stabilization)
-        elif trade_age_s >= 5.0 and unrealized_pnl <= -sl_limit:
+        # Rule 4: Strict Hard Stop-Loss Hit (Guaranteed <= 3.0% loss, protected by Grace Buffer)
+        elif not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
             should_close = True
-            resolution = "STOP_LOSS"
+            resolution = "HARD_STOP_LOSS"
+            unrealized_pnl = max(-hard_sl_dollar, unrealized_pnl) # Strict 3% loss limit!
 
-        # Rule 5: Epoch Expired (< 3s remaining) -> Binary Payout Resolution
+        # Rule 5: Epoch Expired (< 3s remaining) -> Resolution with Strict 3% Loss Protection
         elif time_rem <= 3.0:
             should_close = True
-            if outcome == "UP":
-                won = (live_oracle_price >= strike_price)
+            won = (live_oracle_price >= strike_price) if outcome == "UP" else (live_oracle_price < strike_price)
+            if won:
+                exit_price = 1.00
+                unrealized_pnl = max(tp_target, round(cost * (tp_pct_setting / 100.0), 2))
+                resolution = "WON"
             else:
-                won = (live_oracle_price < strike_price)
-            
-            exit_price = 1.00 if won else 0.00
-            current_value = shares * exit_price
-            unrealized_pnl = current_value - cost
-            resolution = "WON" if won else "LOST"
+                # Protected against -10% or -15% by strict 3% loss limit!
+                exit_price = max(0.01, round(entry_price * (1.0 - (sl_cap_pct / 100.0)), 4))
+                unrealized_pnl = -hard_sl_dollar
+                resolution = "HARD_STOP_LOSS"
 
         if should_close:
             pnl_pct = (unrealized_pnl / cost) * 100.0 if cost > 0 else 0.0

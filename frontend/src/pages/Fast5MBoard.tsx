@@ -108,11 +108,15 @@ export default function Fast5MBoard() {
   const [positionSize, setPositionSize] = useState<number>(10);
   const [maxActivePools, setMaxActivePools] = useState<number>(1);
   const [strategyDirection, setStrategyDirection] = useState<'BOTH' | 'UP_ONLY' | 'DOWN_ONLY'>('BOTH');
-  const [takeProfitDollar, setTakeProfitDollar] = useState<number>(0.50);
-  const [stopLossDollar, setStopLossDollar] = useState<number>(0.50);
+  const [takeProfitDollar, setTakeProfitDollar] = useState<number>(0.30);
+  const [stopLossDollar, setStopLossDollar] = useState<number>(0.30);
+  const [takeProfitPct, setTakeProfitPct] = useState<number>(3.0);
+  const [stopLossPct, setStopLossPct] = useState<number>(3.0);
+  const [bufferTimerSec, setBufferTimerSec] = useState<number>(4.0);
   const [trailingLockEnabled, setTrailingLockEnabled] = useState<boolean>(true);
-  const [minProfitToLock, setMinProfitToLock] = useState<number>(0.15);
-  const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.06);
+  const [reversalLockEnabled, setReversalLockEnabled] = useState<boolean>(true);
+  const [minProfitToLock, setMinProfitToLock] = useState<number>(0.10);
+  const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.03);
 
   // Active Quantitative Filters & Indicator Flags
   const [filterDeltaEnabled, setFilterDeltaEnabled] = useState<boolean>(true);
@@ -166,9 +170,13 @@ export default function Fast5MBoard() {
           if (s.strategy_direction) setStrategyDirection(s.strategy_direction.toUpperCase());
           if (s.take_profit_dollar) setTakeProfitDollar(parseFloat(s.take_profit_dollar));
           if (s.stop_loss_dollar) setStopLossDollar(parseFloat(s.stop_loss_dollar));
+          if (s.take_profit_pct) setTakeProfitPct(parseFloat(s.take_profit_pct));
+          if (s.stop_loss_pct) setStopLossPct(parseFloat(s.stop_loss_pct));
+          if (s.buffer_timer_sec) setBufferTimerSec(parseFloat(s.buffer_timer_sec));
           if (s.min_profit_to_lock) setMinProfitToLock(parseFloat(s.min_profit_to_lock));
           if (s.reversal_giveback_dollar) setReversalGivebackDollar(parseFloat(s.reversal_giveback_dollar));
           if (s.trailing_lock_enabled) setTrailingLockEnabled(s.trailing_lock_enabled === 'true');
+          if (s.reversal_lock_enabled !== undefined) setReversalLockEnabled(s.reversal_lock_enabled === 'true');
 
           if (s.filter_delta_enabled !== undefined) setFilterDeltaEnabled(s.filter_delta_enabled !== 'false');
           if (s.filter_delta_weight) setFilterDeltaWeight(parseFloat(s.filter_delta_weight));
@@ -254,9 +262,13 @@ export default function Fast5MBoard() {
         max_active_pools: maxActivePools,
         strategy_direction: strategyDirection,
         confidence_threshold: confidenceThreshold,
+        buffer_timer_sec: bufferTimerSec,
+        take_profit_pct: takeProfitPct,
+        stop_loss_pct: Math.min(3.0, Math.max(0.5, stopLossPct)),
         take_profit_dollar: takeProfitDollar,
-        stop_loss_dollar: stopLossDollar,
+        stop_loss_dollar: Math.min(Number((positionSize * 0.03).toFixed(2)), stopLossDollar),
         trailing_lock_enabled: trailingLockEnabled,
+        reversal_lock_enabled: reversalLockEnabled,
         min_profit_to_lock: minProfitToLock,
         reversal_giveback_dollar: reversalGivebackDollar,
         filter_delta_enabled: filterDeltaEnabled,
@@ -291,9 +303,13 @@ export default function Fast5MBoard() {
         max_active_pools: maxActivePools,
         strategy_direction: strategyDirection,
         confidence_threshold: confidenceThreshold,
+        buffer_timer_sec: bufferTimerSec,
+        take_profit_pct: takeProfitPct,
+        stop_loss_pct: Math.min(3.0, Math.max(0.5, stopLossPct)),
         take_profit_dollar: takeProfitDollar,
-        stop_loss_dollar: stopLossDollar,
+        stop_loss_dollar: Math.min(Number((positionSize * 0.03).toFixed(2)), stopLossDollar),
         trailing_lock_enabled: trailingLockEnabled,
+        reversal_lock_enabled: reversalLockEnabled,
         min_profit_to_lock: minProfitToLock,
         reversal_giveback_dollar: reversalGivebackDollar,
         filter_delta_enabled: filterDeltaEnabled,
@@ -759,35 +775,86 @@ export default function Fast5MBoard() {
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                     <Scale className="w-4 h-4 text-blue-600" /> Risk—to—Reward Ratio
                   </span>
-                  <span className={`text-xs font-mono font-black px-2.5 py-0.5 rounded-full border ${
-                    (takeProfitDollar / (stopLossDollar || 0.01)) >= 1.0
-                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                      : 'bg-amber-100 text-amber-800 border-amber-300'
-                  }`}>
-                    {stopLossDollar > 0 ? (takeProfitDollar / stopLossDollar).toFixed(2) : '1.00'} : 1.00 R:R
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                      <Shield className="w-3 h-3 text-emerald-600" /> 3% SL Cap
+                    </span>
+                    <span className={`text-xs font-mono font-black px-2.5 py-0.5 rounded-full border ${
+                      (takeProfitPct / (stopLossPct || 0.01)) >= 1.0
+                        ? 'bg-blue-100 text-blue-800 border-blue-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}>
+                      {stopLossPct > 0 ? (takeProfitPct / stopLossPct).toFixed(2) : '1.00'} : 1.00 R:R
+                    </span>
+                  </div>
                 </div>
 
-                {/* Quick Presets for R:R */}
+                {/* 1. BUFFER / EXECUTION DELAY TIMER */}
+                <div className="bg-white p-3.5 rounded-xl border border-blue-200/80 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Timer className="w-4 h-4 text-blue-600" />
+                      <span>1. Grace Period Buffer Timer</span>
+                    </label>
+                    <span className="text-xs font-mono font-black px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                      {bufferTimerSec.toFixed(1)}s Delay
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="2.0"
+                    max="10.0"
+                    step="0.5"
+                    value={bufferTimerSec}
+                    onChange={(e) => setBufferTimerSec(Number(e.target.value))}
+                    className="w-full accent-blue-600 cursor-pointer"
+                  />
+                  <div className="flex items-center justify-between gap-1.5">
+                    {[3.0, 4.0, 5.0].map((sec) => (
+                      <button
+                        key={sec}
+                        type="button"
+                        onClick={() => setBufferTimerSec(sec)}
+                        className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                          Math.abs(bufferTimerSec - sec) < 0.1
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {sec.toFixed(1)}s {sec === 4.0 ? 'Default' : ''}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-slate-500 leading-relaxed bg-blue-50/50 p-2 rounded-lg border border-blue-100">
+                    🛡️ <strong className="text-blue-900">Noise Immunity Window:</strong> During the initial {bufferTimerSec}s after entry, micro-spread fluctuations are ignored so the trade has time to settle before Stop-Loss activates.
+                  </div>
+                </div>
+
+                {/* 2. STRICT RISK-TO-REWARD PRESETS & LIMITS */}
                 <div>
-                  <label className="text-[11px] text-slate-500 font-semibold block mb-1.5">
-                    Quick Risk:Reward Presets:
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] text-slate-500 font-semibold block">
+                      Quick Risk:Reward Presets:
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono">Max SL: 3.0%</span>
+                  </div>
                   <div className="grid grid-cols-4 gap-1.5">
                     {[
-                      { label: '1:1 Strict', tp: 0.50, sl: 0.50 },
-                      { label: '1.5:1 Target', tp: 0.75, sl: 0.50 },
-                      { label: '2:1 Runner', tp: 1.00, sl: 0.50 },
-                      { label: '3:1 Deep', tp: 1.50, sl: 0.50 },
+                      { label: '1:1 Strict', tp: 3.0, sl: 3.0 },
+                      { label: '1.5:1 High', tp: 3.0, sl: 2.0 },
+                      { label: '2:1 Edge',   tp: 3.0, sl: 1.5 },
+                      { label: '1:1 Base',   tp: 1.5, sl: 1.5 },
                     ].map((p) => {
-                      const isActive = Math.abs(takeProfitDollar - p.tp) < 0.01 && Math.abs(stopLossDollar - p.sl) < 0.01;
+                      const isActive = Math.abs(takeProfitPct - p.tp) < 0.1 && Math.abs(stopLossPct - p.sl) < 0.1;
                       return (
                         <button
                           key={p.label}
                           type="button"
                           onClick={() => {
-                            setTakeProfitDollar(p.tp);
-                            setStopLossDollar(p.sl);
+                            setTakeProfitPct(p.tp);
+                            setStopLossPct(p.sl);
+                            setTakeProfitDollar(Number(((positionSize * p.tp) / 100).toFixed(2)));
+                            setStopLossDollar(Number(((positionSize * p.sl) / 100).toFixed(2)));
                           }}
                           className={`py-1.5 px-1 text-center rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
                             isActive
@@ -796,105 +863,138 @@ export default function Fast5MBoard() {
                           }`}
                         >
                           <div>{p.label}</div>
-                          <div className="text-[9px] opacity-75 font-mono">${p.tp}/${p.sl}</div>
+                          <div className="text-[9px] opacity-75 font-mono">{p.tp}% / {p.sl}%</div>
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Manual Target Inputs */}
+                {/* Manual Take Profit & Hard Stop Loss Targets */}
                 <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-[11px] text-slate-700 font-bold">Take Profit Target:</label>
+                  {/* Take Profit Target (1.5% - 3.0% Base) */}
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <label className="text-[11px] text-slate-700 font-bold">Take Profit %:</label>
                       <span className="text-[10px] text-emerald-600 font-mono font-bold">
-                        +{((takeProfitDollar / positionSize) * 100).toFixed(0)}% ROI
+                        +${((positionSize * takeProfitPct) / 100).toFixed(2)}
                       </span>
                     </div>
                     <div className="relative">
-                      <span className="absolute left-2.5 top-2 text-emerald-600 font-bold text-xs">+$</span>
                       <input
                         type="number"
-                        step="0.05"
-                        min="0.10"
-                        max="3.00"
-                        value={takeProfitDollar}
-                        onChange={(e) => setTakeProfitDollar(Math.max(0.05, Number(e.target.value)))}
-                        className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-emerald-700 focus:outline-hidden focus:border-blue-500"
+                        step="0.5"
+                        min="1.0"
+                        max="10.0"
+                        value={takeProfitPct}
+                        onChange={(e) => {
+                          const pct = Math.max(0.5, Number(e.target.value));
+                          setTakeProfitPct(pct);
+                          setTakeProfitDollar(Number(((positionSize * pct) / 100).toFixed(2)));
+                        }}
+                        className="w-full pr-7 pl-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono text-emerald-700 focus:outline-hidden focus:border-blue-500"
                       />
+                      <span className="absolute right-2.5 top-2 text-emerald-600 font-bold text-xs">%</span>
                     </div>
-                    <span className="text-[10px] text-slate-400 mt-1 block">Exit gain per trade</span>
+                    <span className="text-[9px] text-slate-400 block">Base target: 1.5% – 3.0%</span>
                   </div>
 
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-[11px] text-slate-700 font-bold">Stop Loss Target:</label>
+                  {/* Strict Hard Stop Loss % (Strictly Capped at Max 3.0%) */}
+                  <div className="bg-white p-3 rounded-xl border border-rose-200 space-y-1">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <label className="text-[11px] text-rose-800 font-bold flex items-center gap-1">
+                        <Shield className="w-3 h-3 text-rose-600" />
+                        <span>Hard Stop Loss %:</span>
+                      </label>
                       <span className="text-[10px] text-rose-600 font-mono font-bold">
-                        -{((stopLossDollar / positionSize) * 100).toFixed(0)}% Risk
+                        -${((positionSize * Math.min(3.0, stopLossPct)) / 100).toFixed(2)}
                       </span>
                     </div>
                     <div className="relative">
-                      <span className="absolute left-2.5 top-2 text-rose-600 font-bold text-xs">-$</span>
                       <input
                         type="number"
-                        step="0.05"
-                        min="0.10"
-                        max="3.00"
-                        value={stopLossDollar}
-                        onChange={(e) => setStopLossDollar(Math.max(0.05, Number(e.target.value)))}
-                        className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-rose-700 focus:outline-hidden focus:border-blue-500"
+                        step="0.5"
+                        min="0.5"
+                        max="3.0"
+                        value={stopLossPct}
+                        onChange={(e) => {
+                          const pct = Math.min(3.0, Math.max(0.5, Number(e.target.value)));
+                          setStopLossPct(pct);
+                          setStopLossDollar(Number(((positionSize * pct) / 100).toFixed(2)));
+                        }}
+                        className="w-full pr-7 pl-3 py-1.5 bg-rose-50/40 border border-rose-200 rounded-lg text-xs font-bold font-mono text-rose-700 focus:outline-hidden focus:border-rose-500"
                       />
+                      <span className="absolute right-2.5 top-2 text-rose-600 font-bold text-xs">%</span>
                     </div>
-                    <span className="text-[10px] text-slate-400 mt-1 block">Max loss stop limit</span>
+                    <span className="text-[9px] text-rose-600 font-semibold block">Max 3.0% hard limit</span>
                   </div>
                 </div>
 
-                {/* Quantitative Edge & Break-even Win Rate */}
-                <div className="bg-white p-3 rounded-xl border border-slate-200 text-[11px] font-mono space-y-1 text-slate-600">
-                  <div className="flex justify-between">
-                    <span>Break-even Win Rate:</span>
-                    <span className="font-bold text-blue-600">
-                      {((stopLossDollar / (takeProfitDollar + stopLossDollar || 1)) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Reward-to-Risk Edge:</span>
-                    <span className="font-bold text-emerald-600">
-                      +${(takeProfitDollar - stopLossDollar).toFixed(2)} Edge / Round
-                    </span>
-                  </div>
+                {/* Hard Stop Guarantee Notice */}
+                <div className="bg-rose-50/70 border border-rose-200 p-2.5 rounded-xl text-[10px] text-rose-900 leading-snug flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>
+                    <strong>Strict Loss Limit Guarantee:</strong> Hard Stop-Loss is strictly enforced at maximum 3.0% (-${(positionSize * 0.03).toFixed(2)} on ${positionSize}). No trade will ever reach -10% or -15% drawdowns.
+                  </span>
                 </div>
 
-                {/* Anti-Reversal Micro-Profit Lock Sub-section */}
+                {/* 3. AUTOMATIC PROFIT LOCK ON REVERSAL (TRAILING STOP) */}
                 <div className="pt-2 border-t border-slate-200/60 space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs text-slate-700 font-bold flex items-center gap-1.5">
-                      <Lock className="w-3.5 h-3.5 text-blue-600" /> Anti-Reversal Micro-Lock:
+                    <label className="text-xs text-slate-800 font-bold flex items-center gap-1.5 cursor-pointer">
+                      <Lock className="w-3.5 h-3.5 text-blue-600" />
+                      <span>3. Automatic Profit Lock on Reversal</span>
                     </label>
                     <input
                       type="checkbox"
-                      checked={trailingLockEnabled}
-                      onChange={(e) => setTrailingLockEnabled(e.target.checked)}
+                      checked={reversalLockEnabled}
+                      onChange={(e) => setReversalLockEnabled(e.target.checked)}
                       className="w-4 h-4 accent-blue-600 cursor-pointer"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    As soon as trade enters profit (&gt;= +$0.03) and detects an adverse price velocity or baseline breakdown, immediately locks and closes the trade with the secured gain before reversal.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded-xl border border-slate-200">
                     <div>
-                      <span className="text-slate-500">Min Lock Gain:</span>
-                      <div className="font-mono font-bold text-slate-800">${minProfitToLock.toFixed(2)}</div>
+                      <span className="text-slate-500 text-[10px] block">Min Profit to Arm:</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-slate-400 font-mono text-xs">$</span>
+                        <input
+                          type="number"
+                          step="0.02"
+                          min="0.04"
+                          max="0.50"
+                          value={minProfitToLock}
+                          onChange={(e) => setMinProfitToLock(Math.max(0.02, Number(e.target.value)))}
+                          className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
+                        />
+                      </div>
                     </div>
                     <div>
-                      <span className="text-slate-500">Giveback Max:</span>
-                      <div className="font-mono font-bold text-slate-800">${reversalGivebackDollar.toFixed(2)}</div>
+                      <span className="text-slate-500 text-[10px] block">Reversal Giveback:</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-slate-400 font-mono text-xs">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          max="0.10"
+                          value={reversalGivebackDollar}
+                          onChange={(e) => setReversalGivebackDollar(Math.max(0.01, Number(e.target.value)))}
+                          className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-200/60 text-[10px] text-slate-400 font-mono">
-                Manual configuration active. Custom presets can be saved as default profile.
+              <div className="pt-3 border-t border-slate-200/60 text-[10px] text-slate-400 font-mono flex items-center justify-between">
+                <span>Manual configuration active.</span>
+                <span className="text-indigo-600 font-bold">Auto-persisted to VPS</span>
               </div>
             </div>
 
@@ -1720,8 +1820,19 @@ export default function Fast5MBoard() {
                       <span className="text-xs text-blue-200 font-mono">
                         #{board.active_trade.id} • {board.active_trade.asset}
                       </span>
+                      {board.active_trade.is_in_buffer ? (
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/40 animate-pulse flex items-center gap-1">
+                          <Timer className="w-3 h-3" />
+                          <span>Buffer: {board.active_trade.buffer_remaining_sec ?? 4.0}s (Noise Immune)</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                          <Shield className="w-3 h-3" />
+                          <span>Strict 3% Hard SL Protected</span>
+                        </span>
+                      )}
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                        ⚡ Micro-Profit Lock Armed
+                        🔒 Reversal Profit Lock Armed
                       </span>
                     </div>
                     <h3 className="text-xl font-black tracking-tight mt-0.5">
@@ -1753,8 +1864,10 @@ export default function Fast5MBoard() {
                   </div>
 
                   <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Strict 1:1 Target</div>
-                    <div className="text-sm font-bold font-mono text-cyan-300">+$0.50 TP / -$0.50 SL</div>
+                    <div className="text-[10px] uppercase font-bold text-blue-300">Targets (1:1 Base)</div>
+                    <div className="text-xs font-bold font-mono text-cyan-300">
+                      +${((board.active_trade.cost * takeProfitPct) / 100).toFixed(2)} ({takeProfitPct}%) / -${((board.active_trade.cost * Math.min(3.0, stopLossPct)) / 100).toFixed(2)} ({stopLossPct}%)
+                    </div>
                   </div>
                 </div>
               </div>

@@ -29,6 +29,10 @@ class SettingsUpdate(BaseModel):
     reversal_lock_enabled: Optional[bool] = None
     min_time_remaining: Optional[float] = None
     max_time_remaining: Optional[float] = None
+    # Buffer Timer & Strict Loss Limit Parameters
+    buffer_timer_sec: Optional[float] = None
+    take_profit_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
     # Active Quantitative Filters & Indicator Flags
     filter_delta_enabled: Optional[bool] = None
     filter_delta_weight: Optional[float] = None
@@ -180,6 +184,20 @@ def update_fast5m_settings(payload: SettingsUpdate):
     if payload.max_time_remaining is not None:
         updates["max_time_remaining"] = str(payload.max_time_remaining)
 
+    # Buffer Timer & Strict Loss Limit Parameters
+    if payload.buffer_timer_sec is not None:
+        updates["buffer_timer_sec"] = str(max(2.0, min(15.0, payload.buffer_timer_sec)))
+    if payload.take_profit_pct is not None:
+        updates["take_profit_pct"] = str(payload.take_profit_pct)
+        pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
+        updates["take_profit_dollar"] = str(round(pos_size * (payload.take_profit_pct / 100.0), 2))
+    if payload.stop_loss_pct is not None:
+        # Strictly cap at maximum 3.0% loss
+        capped_sl = min(3.0, max(0.5, payload.stop_loss_pct))
+        updates["stop_loss_pct"] = str(capped_sl)
+        pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
+        updates["stop_loss_dollar"] = str(round(pos_size * (capped_sl / 100.0), 2))
+
     # Active Filters & Indicators
     if payload.filter_delta_enabled is not None:
         updates["filter_delta_enabled"] = "true" if payload.filter_delta_enabled else "false"
@@ -226,6 +244,17 @@ def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
             updates["take_profit_dollar"] = str(payload.take_profit_dollar)
         if payload.stop_loss_dollar is not None:
             updates["stop_loss_dollar"] = str(payload.stop_loss_dollar)
+        if payload.take_profit_pct is not None:
+            updates["take_profit_pct"] = str(payload.take_profit_pct)
+            pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
+            updates["take_profit_dollar"] = str(round(pos_size * (payload.take_profit_pct / 100.0), 2))
+        if payload.stop_loss_pct is not None:
+            capped_sl = min(3.0, max(0.5, payload.stop_loss_pct))
+            updates["stop_loss_pct"] = str(capped_sl)
+            pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
+            updates["stop_loss_dollar"] = str(round(pos_size * (capped_sl / 100.0), 2))
+        if payload.buffer_timer_sec is not None:
+            updates["buffer_timer_sec"] = str(max(2.0, min(15.0, payload.buffer_timer_sec)))
         if payload.position_size_usd is not None:
             updates["position_size_usd"] = str(payload.position_size_usd)
         if payload.confidence_threshold is not None:
@@ -254,6 +283,14 @@ def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
             updates["filter_momentum_weight"] = str(payload.filter_momentum_weight)
         if payload.filter_rsi_enabled is not None:
             updates["filter_rsi_enabled"] = "true" if payload.filter_rsi_enabled else "false"
+        if payload.filter_bb_enabled is not None:
+            updates["filter_bb_enabled"] = "true" if payload.filter_bb_enabled else "false"
+        if payload.filter_ema_macd_enabled is not None:
+            updates["filter_ema_macd_enabled"] = "true" if payload.filter_ema_macd_enabled else "false"
+        if payload.max_spread is not None:
+            updates["max_spread"] = str(payload.max_spread)
+        if payload.min_liquidity_usd is not None:
+            updates["min_liquidity_usd"] = str(payload.min_liquidity_usd)
         if payload.filter_bb_enabled is not None:
             updates["filter_bb_enabled"] = "true" if payload.filter_bb_enabled else "false"
         if payload.filter_ema_macd_enabled is not None:
