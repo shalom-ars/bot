@@ -11,10 +11,11 @@ from app.api.websockets import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.admin import router as admin_router
-from app.db.session import engine, Base, ensure_btc5m_schema
+from app.db.session import engine, Base, ensure_btc5m_schema, ensure_fast5m_schema
 
 Base.metadata.create_all(bind=engine)
 ensure_btc5m_schema(engine)
+ensure_fast5m_schema(engine)
 
 from app.api.health import router as health_router
 from app.api.markets import router as markets_router

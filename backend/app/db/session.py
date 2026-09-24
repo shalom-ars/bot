@@ -132,3 +132,33 @@ def ensure_btc5m_schema(db_engine):
         except Exception:
             pass
 
+
+def ensure_fast5m_schema(db_engine):
+    """
+    Ensures that fast5m_trades and fast5m_settings tables exist
+    and have all scoring breakdown columns.
+    """
+    from sqlalchemy import text, inspect
+    from app.db.models import Fast5MTrade, Fast5MSetting
+
+    Fast5MTrade.__table__.create(db_engine, checkfirst=True)
+    Fast5MSetting.__table__.create(db_engine, checkfirst=True)
+
+    inspector = inspect(db_engine)
+    if "fast5m_trades" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("fast5m_trades")}
+        fast_cols = [
+            ("delta_score", "FLOAT DEFAULT 0.0"),
+            ("obi_score", "FLOAT DEFAULT 0.0"),
+            ("momentum_score", "FLOAT DEFAULT 0.0"),
+            ("prediction_rationale", "VARCHAR DEFAULT ''")
+        ]
+        with db_engine.connect() as conn:
+            for col_name, col_type in fast_cols:
+                if col_name not in existing_cols:
+                    try:
+                        conn.execute(text(f"ALTER TABLE fast5m_trades ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+

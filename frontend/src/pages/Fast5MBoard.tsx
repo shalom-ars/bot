@@ -3,7 +3,8 @@ import axios from 'axios';
 import { 
   Zap, Shield, RefreshCw, 
   Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
-  Timer, DollarSign, Activity, Lock
+  Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
+  CheckCircle2, XCircle, Award
 } from 'lucide-react';
 
 interface AssetData {
@@ -11,6 +12,9 @@ interface AssetData {
   direction: 'UP' | 'DOWN' | 'NEUTRAL';
   composite_score: number;
   confidence: number;
+  delta_score?: number;
+  obi_score?: number;
+  momentum_score?: number;
   rank: number;
   delta: number;
   delta_pct: number;
@@ -29,6 +33,17 @@ interface AssetData {
   target_token_id: string;
   is_tradable: boolean;
   rejection_reason: string;
+}
+
+interface TradeStats {
+  total_pnl: number;
+  total_profit: number;
+  total_loss: number;
+  win_rate: number;
+  wins: number;
+  losses: number;
+  total_trades: number;
+  open_trades: number;
 }
 
 interface BoardState {
@@ -56,10 +71,21 @@ const ASSET_META: Record<string, { name: string; color: string; bg: string; bord
 export default function Fast5MBoard() {
   const [board, setBoard] = useState<BoardState | null>(null);
   const [trades, setTrades] = useState<any[]>([]);
+  const [stats, setStats] = useState<TradeStats>({
+    total_pnl: 0,
+    total_profit: 0,
+    total_loss: 0,
+    win_rate: 0,
+    wins: 0,
+    losses: 0,
+    total_trades: 0,
+    open_trades: 0,
+  });
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(70);
   const [positionSize, setPositionSize] = useState<number>(10);
   const [toggling, setToggling] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'board' | 'trades'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'trades' | 'scoring'>('board');
+  const [selectedAssetForScore, setSelectedAssetForScore] = useState<string>('BTC');
 
   const prevPrices = useRef<Record<string, number>>({});
   const flashStates = useRef<Record<string, 'up' | 'down' | null>>({});
@@ -94,8 +120,15 @@ export default function Fast5MBoard() {
 
   const fetchTrades = async () => {
     try {
-      const res = await axios.get('/api/fast5m/trades?limit=30');
-      if (res.data) setTrades(res.data);
+      const res = await axios.get('/api/fast5m/trades?limit=50');
+      if (res.data) {
+        if (res.data.trades) {
+          setTrades(res.data.trades);
+          if (res.data.stats) setStats(res.data.stats);
+        } else if (Array.isArray(res.data)) {
+          setTrades(res.data);
+        }
+      }
     } catch (e) {
       console.debug('Fast5M trades fetch error', e);
     }
@@ -109,7 +142,7 @@ export default function Fast5MBoard() {
     }, 1000); // 1-second real-time poll
     const tradeInterval = setInterval(() => {
       fetchTrades();
-    }, 4000);
+    }, 3500);
     return () => {
       clearInterval(interval);
       clearInterval(tradeInterval);
@@ -148,12 +181,13 @@ export default function Fast5MBoard() {
   };
 
   const topPick = board?.top_ranked_pair;
+  const inspectedAsset = board?.assets?.find(a => a.asset === selectedAssetForScore) || topPick || board?.assets?.[0];
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12 font-sans text-slate-800">
       
-      {/* Top Banner / Engine Header */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6 relative overflow-hidden">
+      {/* 1. TOP HEADER & CONTROLS BAR */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-blue-50/60 via-indigo-50/30 to-transparent rounded-full blur-3xl pointer-events-none" />
         
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
@@ -170,19 +204,19 @@ export default function Fast5MBoard() {
                   </span>
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                  Direct Chainlink / Pyth Benchmark streams • Automated Top-Ranked Pair Execution • 1:1 Symmetrical Risk
+                  Direct Chainlink / Pyth Streams • Automated #1 Ranked Execution • Real-Time PnL Audit
                 </p>
               </div>
             </div>
           </div>
 
           {/* Engine Controls & Epoch Countdown */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             {/* Round Countdown */}
             <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
               <Timer className="w-4 h-4 text-blue-600 animate-spin" style={{ animationDuration: '4s' }} />
               <div className="text-left">
-                <div className="text-[10px] uppercase font-bold text-slate-400">Epoch Remaining</div>
+                <div className="text-[10px] uppercase font-bold text-slate-400">Round Remaining</div>
                 <div className="text-sm font-black font-mono text-slate-800">
                   {board ? formatSec(board.epoch_remaining_sec) : '--:--'}
                 </div>
@@ -193,7 +227,7 @@ export default function Fast5MBoard() {
             <button
               onClick={handleToggleAuto}
               disabled={toggling}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-xs ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
                 board?.auto_trading_active
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
                   : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
@@ -210,19 +244,27 @@ export default function Fast5MBoard() {
               )}
             </button>
 
-            {/* Tab switch */}
+            {/* View Switcher Tabs */}
             <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
               <button
                 onClick={() => setActiveTab('board')}
-                className={`px-3 py-1 rounded-lg transition-all ${
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
                   activeTab === 'board' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 Oracle Board
               </button>
               <button
+                onClick={() => setActiveTab('scoring')}
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'scoring' ? 'bg-white text-purple-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Scoring Breakdown
+              </button>
+              <button
                 onClick={() => setActiveTab('trades')}
-                className={`px-3 py-1 rounded-lg transition-all ${
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
                   activeTab === 'trades' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -232,7 +274,7 @@ export default function Fast5MBoard() {
           </div>
         </div>
 
-        {/* Global Settings Sub-Bar */}
+        {/* Global Settings & Targeting Sub-Bar */}
         <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4 text-xs font-medium text-slate-600">
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
@@ -267,7 +309,7 @@ export default function Fast5MBoard() {
                       setPositionSize(sz);
                       handleSaveSettings(confidenceThreshold, sz);
                     }}
-                    className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono transition-all ${
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono transition-all cursor-pointer ${
                       positionSize === sz
                         ? 'bg-blue-600 text-white shadow-xs'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -282,16 +324,260 @@ export default function Fast5MBoard() {
 
           <div className="flex items-center gap-3 text-slate-500 text-[11px]">
             <span className="flex items-center gap-1">
-              <Shield className="w-3 h-3 text-blue-500" /> Single-Position Risk Lock
+              <Shield className="w-3 h-3 text-blue-500" /> Single-Position Lock
             </span>
             <span className="flex items-center gap-1">
-              <Lock className="w-3 h-3 text-purple-500" /> 1:1 $1.00 TP / $1.00 SL Symmetry
+              <Lock className="w-3 h-3 text-purple-500" /> 1:1 Symmetrical $1.00 TP / $1.00 SL
             </span>
           </div>
         </div>
       </div>
 
-      {activeTab === 'board' ? (
+      {/* 2. FOUR KEY METRICS CARDS: TOTAL LOSS, TOTAL PROFIT, NET PNL, WIN RATE */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+        
+        {/* Card 1: Net Realized PnL */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Net Realized P&L</span>
+            <span className={`p-1.5 rounded-xl ${stats.total_pnl >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+              {stats.total_pnl >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            </span>
+          </div>
+          <div className="my-2">
+            <div className={`text-2xl sm:text-3xl font-black font-mono tracking-tight ${
+              stats.total_pnl >= 0 ? 'text-emerald-600' : 'text-rose-600'
+            }`}>
+              {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(2)}
+            </div>
+            <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+              Across {stats.total_trades} closed 5M rounds
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
+            <span className="text-slate-400">Active Positions:</span>
+            <span className="font-bold text-slate-700">{board?.active_trade ? '1 Open (Locked)' : '0 (Scanning)'}</span>
+          </div>
+        </div>
+
+        {/* Card 2: Total Profit */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Profit</span>
+            <span className="p-1.5 rounded-xl bg-emerald-50 text-emerald-600">
+              <CheckCircle2 className="w-4 h-4" />
+            </span>
+          </div>
+          <div className="my-2">
+            <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-600 tracking-tight">
+              +${stats.total_profit.toFixed(2)}
+            </div>
+            <div className="text-[11px] text-emerald-700 font-bold mt-0.5 flex items-center gap-1">
+              <span>{stats.wins} Winning Predictions</span>
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
+            <span className="text-slate-400">Reward Per Win:</span>
+            <span className="font-bold text-emerald-600">+$1.00 / Share</span>
+          </div>
+        </div>
+
+        {/* Card 3: Total Loss */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Loss</span>
+            <span className="p-1.5 rounded-xl bg-rose-50 text-rose-600">
+              <XCircle className="w-4 h-4" />
+            </span>
+          </div>
+          <div className="my-2">
+            <div className="text-2xl sm:text-3xl font-black font-mono text-rose-600 tracking-tight">
+              -${stats.total_loss.toFixed(2)}
+            </div>
+            <div className="text-[11px] text-rose-700 font-bold mt-0.5 flex items-center gap-1">
+              <span>{stats.losses} Stopped Losses</span>
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
+            <span className="text-slate-400">Max Stop Cap:</span>
+            <span className="font-bold text-rose-600">-$1.00 / Share</span>
+          </div>
+        </div>
+
+        {/* Card 4: Win Rate & Efficiency */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Prediction Win Rate</span>
+            <span className="p-1.5 rounded-xl bg-blue-50 text-blue-600">
+              <Award className="w-4 h-4" />
+            </span>
+          </div>
+          <div className="my-2">
+            <div className="text-2xl sm:text-3xl font-black font-mono text-blue-600 tracking-tight">
+              {stats.win_rate.toFixed(1)}%
+            </div>
+            <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+              {stats.wins} Won / {stats.total_trades} Resolved
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
+            <span className="text-slate-400">Target Confidence:</span>
+            <span className="font-bold text-slate-700">≥ {confidenceThreshold}%</span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* 3. SCORING BREAKDOWN & PREDICTION INSPECTOR TAB */}
+      {activeTab === 'scoring' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div>
+              <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-purple-600" />
+                Live Multi-Factor Scoring Inspector (0 - 100)
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">
+                Detailed quantitative breakdown showing why each asset is scored, ranked, and predicted
+              </p>
+            </div>
+
+            {/* Asset Selector for Detailed Scoring */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {board?.assets?.map((a) => (
+                <button
+                  key={a.asset}
+                  onClick={() => setSelectedAssetForScore(a.asset)}
+                  className={`px-3 py-1 rounded-xl text-xs font-black font-mono transition-all cursor-pointer ${
+                    inspectedAsset?.asset === a.asset
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {a.asset} ({a.confidence}%)
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {inspectedAsset && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 bg-slate-50/70 p-4 rounded-xl border border-slate-100">
+              
+              {/* Factor 1: Delta & Velocity */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="text-slate-700">1. Oracle Delta & Velocity</span>
+                  <span className="font-mono text-purple-700 font-black">{inspectedAsset.delta_score ?? 20}/40 pts</span>
+                </div>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-purple-600 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${((inspectedAsset.delta_score ?? 20) / 40) * 100}%` }}
+                  />
+                </div>
+                <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>Strike Price (P0):</span>
+                    <span className="font-bold text-slate-700">${inspectedAsset.strike_price}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Live Oracle Price:</span>
+                    <span className="font-bold text-slate-700">${inspectedAsset.live_price}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Oracle Delta:</span>
+                    <span className={inspectedAsset.delta >= 0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
+                      {inspectedAsset.delta >= 0 ? '+' : ''}${inspectedAsset.delta} ({inspectedAsset.delta_pct >= 0 ? '+' : ''}{inspectedAsset.delta_pct}%)
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>10s Price Velocity:</span>
+                    <span className="font-bold text-slate-700">{inspectedAsset.velocity_10s >= 0 ? '+' : ''}{inspectedAsset.velocity_10s}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Factor 2: Order Book Imbalance */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="text-slate-700">2. Order Book Imbalance (OBI)</span>
+                  <span className="font-mono text-blue-700 font-black">{inspectedAsset.obi_score ?? 15}/30 pts</span>
+                </div>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-blue-600 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${((inspectedAsset.obi_score ?? 15) / 30) * 100}%` }}
+                  />
+                </div>
+                <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>CLOB Imbalance Skew:</span>
+                    <span className="font-bold text-slate-700">{inspectedAsset.orderbook_imbalance >= 0 ? '+' : ''}{inspectedAsset.orderbook_imbalance}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>CLOB Book Spread:</span>
+                    <span className="font-bold text-slate-700">{(inspectedAsset.spread * 100).toFixed(2)}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Book Liquidity:</span>
+                    <span className="font-bold text-slate-700">${inspectedAsset.liquidity.toFixed(0)} USDC</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>UP / DOWN Asks:</span>
+                    <span className="font-bold text-slate-700">${inspectedAsset.up_share_price} / ${inspectedAsset.down_share_price}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Factor 3: Micro-Momentum Confluence */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="text-slate-700">3. Micro-Momentum Confluence</span>
+                  <span className="font-mono text-emerald-700 font-black">{inspectedAsset.momentum_score ?? 15}/30 pts</span>
+                </div>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-emerald-600 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${((inspectedAsset.momentum_score ?? 15) / 30) * 100}%` }}
+                  />
+                </div>
+                <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>30s Velocity Slope:</span>
+                    <span className="font-bold text-slate-700">{inspectedAsset.velocity_30s >= 0 ? '+' : ''}{inspectedAsset.velocity_30s}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Direct Wire Latency:</span>
+                    <span className="font-bold text-emerald-600">⚡ {inspectedAsset.latency_ms}ms</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Predicted Direction:</span>
+                    <span className={`font-black ${inspectedAsset.direction === 'UP' ? 'text-emerald-600' : inspectedAsset.direction === 'DOWN' ? 'text-rose-600' : 'text-slate-600'}`}>
+                      {inspectedAsset.direction}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Composite Score:</span>
+                    <span className="font-black text-purple-700">{inspectedAsset.confidence}%</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* Rationale explanation text box */}
+          {inspectedAsset && (
+            <div className="bg-slate-100/80 p-3 rounded-xl text-xs font-mono border border-slate-200 text-slate-700">
+              <span className="font-bold text-slate-900">PREDICTION FORMULA: </span>
+              {inspectedAsset.reason || 'Confluence calculated from live oracle delta, order book imbalance and momentum.'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. MAIN ORACLE BOARD TAB: TOP PICK & 4-COLUMN 7-ASSETS GRID */}
+      {activeTab === 'board' && (
         <>
           {/* Top-Ranked #1 Opportunity Highlight Banner */}
           {topPick && (
@@ -308,29 +594,36 @@ export default function Fast5MBoard() {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-                        #1 RANKED PAIR ACROSS 7 ASSETS
+                        #1 RANKED PREDICTION PAIR
                       </span>
                       <span className="text-xs text-slate-500 font-mono font-bold">
-                        {topPick.asset} / USD 5M Round
+                        {topPick.asset} 5-Minute Round
                       </span>
                     </div>
                     <div className="flex items-baseline gap-2 mt-0.5">
                       <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                        {topPick.asset} {topPick.direction === 'UP' ? '▲ BUY UP (YES)' : topPick.direction === 'DOWN' ? '▼ BUY DOWN (NO)' : 'NEUTRAL'}
+                        {topPick.asset} {topPick.direction === 'UP' ? '▲ BUY UP (YES)' : topPick.direction === 'DOWN' ? '▼ BUY DOWN (NO)' : 'NEUTRAL CHOP'}
                       </h2>
                       <span className={`text-sm font-black font-mono px-2 py-0.5 rounded-lg ${
                         topPick.direction === 'UP' ? 'bg-emerald-100 text-emerald-800' : topPick.direction === 'DOWN' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
                       }`}>
-                        {topPick.confidence}% CONFIDENCE
+                        {topPick.confidence}% SCORE
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 sm:gap-4">
+                <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+                  <div className="text-right">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">Score Breakdown</div>
+                    <div className="text-xs font-mono font-bold text-slate-700">
+                      Δ:{topPick.delta_score ?? 20} | OBI:{topPick.obi_score ?? 15} | Mom:{topPick.momentum_score ?? 15}
+                    </div>
+                  </div>
+
                   <div className="text-right">
                     <div className="text-[10px] uppercase font-bold text-slate-400">Oracle Delta</div>
-                    <div className={`text-base font-black font-mono ${topPick.delta >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    <div className={`text-sm sm:text-base font-black font-mono ${topPick.delta >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {topPick.delta >= 0 ? '+' : ''}{topPick.delta} ({topPick.delta_pct >= 0 ? '+' : ''}{topPick.delta_pct}%)
                     </div>
                   </div>
@@ -349,7 +642,7 @@ export default function Fast5MBoard() {
                         ? 'bg-emerald-600 text-white animate-pulse'
                         : 'bg-slate-200 text-slate-700'
                     }`}>
-                      {topPick.confidence >= confidenceThreshold && topPick.is_tradable ? 'ARMED & READY' : 'WAITING CONFLUENCE'}
+                      {topPick.confidence >= confidenceThreshold && topPick.is_tradable ? 'ARMED & READY' : 'WAITING EDGE'}
                     </span>
                   </div>
                 </div>
@@ -382,7 +675,7 @@ export default function Fast5MBoard() {
 
                 <div className="flex items-center gap-6">
                   <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Strike Price</div>
+                    <div className="text-[10px] uppercase font-bold text-blue-300">Strike (P0)</div>
                     <div className="text-sm font-bold font-mono">${board.active_trade.strike_price}</div>
                   </div>
 
@@ -400,8 +693,8 @@ export default function Fast5MBoard() {
             </div>
           )}
 
-          {/* 7 Fast Markets Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {/* 7 Fast Markets Grid — 4-Column Responsive Layout ("اس کو چار پہ بنائیں") */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {board?.assets.map((asset) => {
               const meta = ASSET_META[asset.asset] || {
                 name: asset.asset,
@@ -420,7 +713,7 @@ export default function Fast5MBoard() {
                     isTop ? 'border-amber-400 shadow-md ring-2 ring-amber-400/20' : 'border-slate-200 shadow-xs hover:border-slate-300'
                   }`}
                 >
-                  {/* Top Header Card */}
+                  {/* Card Header */}
                   <div className="p-4 border-b border-slate-100">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -464,7 +757,7 @@ export default function Fast5MBoard() {
                     </div>
 
                     <div className="text-[11px] text-slate-400 font-mono mt-0.5 flex justify-between">
-                      <span>Strike (Baseline): ${asset.strike_price.toLocaleString()}</span>
+                      <span>P0 Strike: ${asset.strike_price.toLocaleString()}</span>
                       <span>Δ {asset.delta >= 0 ? '+' : ''}${asset.delta}</span>
                     </div>
                   </div>
@@ -472,18 +765,18 @@ export default function Fast5MBoard() {
                   {/* Confluence & Order Book Body */}
                   <div className="p-4 space-y-3 flex-1 flex flex-col justify-between text-xs">
                     
-                    {/* Score Bar */}
+                    {/* Score Bar & Sub-Scores */}
                     <div>
                       <div className="flex items-center justify-between text-[11px] font-bold mb-1">
                         <span className="flex items-center gap-1 text-slate-600">
-                          Directional Signal:
+                          Direction:
                           <strong className={
                             asset.direction === 'UP' ? 'text-emerald-600' : asset.direction === 'DOWN' ? 'text-rose-600' : 'text-slate-500'
                           }>
                             {asset.direction}
                           </strong>
                         </span>
-                        <span className="font-mono text-slate-800">{asset.confidence}%</span>
+                        <span className="font-mono text-slate-800 font-black">{asset.confidence}%</span>
                       </div>
                       <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                         <div
@@ -492,6 +785,13 @@ export default function Fast5MBoard() {
                           }`}
                           style={{ width: `${Math.min(100, Math.max(5, asset.confidence))}%` }}
                         />
+                      </div>
+
+                      {/* 3 Sub-Score Mini Pills */}
+                      <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-slate-400">
+                        <span>Δ: {asset.delta_score ?? 20}/40</span>
+                        <span>OBI: {asset.obi_score ?? 15}/30</span>
+                        <span>Mom: {asset.momentum_score ?? 15}/30</span>
                       </div>
                     </div>
 
@@ -511,7 +811,7 @@ export default function Fast5MBoard() {
                       </div>
                     </div>
 
-                    {/* Confluence Reason & Countdown */}
+                    {/* Countdown and Tradability Badge */}
                     <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
                       <span className="flex items-center gap-1 font-mono font-bold text-blue-600">
                         <Timer className="w-3.5 h-3.5" /> {formatSec(asset.time_remaining_sec)}
@@ -529,17 +829,21 @@ export default function Fast5MBoard() {
             })}
           </div>
         </>
-      ) : (
-        /* Historical Trades Table */
+      )}
+
+      {/* 5. HISTORICAL TRADES TAB: TOTAL LOSS, PROFIT, AND EXACT PREDICTION SCORE */}
+      {activeTab === 'trades' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-black text-slate-900">Fast 5M Execution History</h2>
-              <p className="text-xs text-slate-500 font-medium">Authoritative trade settlements and 1:1 risk-reward realizations</p>
+              <h2 className="text-base font-black text-slate-900">Fast 5M Execution & PnL History</h2>
+              <p className="text-xs text-slate-500 font-medium">
+                Detailed record showing what score set the prediction, entry price, and realized profit/loss
+              </p>
             </div>
             <button
               onClick={fetchTrades}
-              className="p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors"
+              className="p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
@@ -551,20 +855,21 @@ export default function Fast5MBoard() {
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-[11px] font-bold uppercase text-slate-400">
                   <th className="py-2.5 px-4">Trade ID</th>
                   <th className="py-2.5 px-4">Asset</th>
-                  <th className="py-2.5 px-4">Outcome</th>
+                  <th className="py-2.5 px-4">Prediction Side</th>
+                  <th className="py-2.5 px-4">Prediction Score & Rationale</th>
                   <th className="py-2.5 px-4">Entry / Strike</th>
                   <th className="py-2.5 px-4">Exit Price</th>
                   <th className="py-2.5 px-4">Margin Cost</th>
                   <th className="py-2.5 px-4">Realized PnL</th>
-                  <th className="py-2.5 px-4">Status / Resolution</th>
-                  <th className="py-2.5 px-4">Timestamp</th>
+                  <th className="py-2.5 px-4">Status</th>
+                  <th className="py-2.5 px-4">Time</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs font-mono">
                 {trades.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-8 text-center text-slate-400 font-sans text-xs">
-                      No 5-minute fast trades recorded yet. Engine will execute the #1 ranked pair when confidence ≥ {confidenceThreshold}%.
+                    <td colSpan={10} className="py-8 text-center text-slate-400 font-sans text-xs">
+                      No 5-minute fast trades recorded yet. Engine will automatically execute when the #1 ranked pair reaches score ≥ {confidenceThreshold}%.
                     </td>
                   </tr>
                 ) : (
@@ -574,11 +879,13 @@ export default function Fast5MBoard() {
                     return (
                       <tr key={t.id} className="hover:bg-slate-50/60 transition-colors">
                         <td className="py-2.5 px-4 font-bold text-slate-900">#{t.id}</td>
+                        
                         <td className="py-2.5 px-4 font-black">
                           <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800">
                             {t.asset}
                           </span>
                         </td>
+
                         <td className="py-2.5 px-4">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-black ${
                             t.outcome === 'UP' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
@@ -586,16 +893,30 @@ export default function Fast5MBoard() {
                             {t.outcome === 'UP' ? '▲ UP' : '▼ DOWN'}
                           </span>
                         </td>
+
+                        {/* Prediction Score & Exact Breakdown */}
+                        <td className="py-2.5 px-4">
+                          <div className="font-bold text-purple-700">
+                            Score: {t.confidence_score}% (Rank #{t.asset_rank ?? 1})
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate max-w-[200px]" title={t.prediction_rationale}>
+                            {t.prediction_rationale || `Δ:${t.delta_score || 0} | OBI:${t.obi_score || 0} | Mom:${t.momentum_score || 0}`}
+                          </div>
+                        </td>
+
                         <td className="py-2.5 px-4">
                           <div className="font-bold text-slate-800">${t.entry_price}</div>
                           <div className="text-[10px] text-slate-400">P0: ${t.strike_price}</div>
                         </td>
+
                         <td className="py-2.5 px-4 font-bold">
                           {t.exit_price != null ? `$${t.exit_price.toFixed(2)}` : '—'}
                         </td>
+
                         <td className="py-2.5 px-4 font-bold text-slate-800">
                           ${t.cost}
                         </td>
+
                         <td className="py-2.5 px-4 font-bold text-sm">
                           {isOpen ? (
                             <span className="text-blue-600 animate-pulse">IN ROUND</span>
@@ -605,6 +926,7 @@ export default function Fast5MBoard() {
                             </span>
                           )}
                         </td>
+
                         <td className="py-2.5 px-4">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                             isOpen
@@ -616,6 +938,7 @@ export default function Fast5MBoard() {
                             {t.resolution || t.status}
                           </span>
                         </td>
+
                         <td className="py-2.5 px-4 text-slate-400 text-[11px]">
                           {t.created_at ? new Date(t.created_at).toLocaleTimeString() : '—'}
                         </td>

@@ -29,23 +29,26 @@ class ScoredAsset:
     direction: str # "UP", "DOWN", "NEUTRAL"
     composite_score: float # 0 - 100
     confidence: float # 0 - 100%
-    rank: int # 1 to 7
-    delta: float
-    delta_pct: float
-    live_price: float
-    strike_price: float
-    latency_ms: float
-    time_remaining_sec: float
-    up_share_price: float
-    down_share_price: float
-    spread: float
-    liquidity: float
-    orderbook_imbalance: float
-    velocity_10s: float
-    velocity_30s: float
-    reason: str
-    target_token_id: str
-    is_tradable: bool
+    delta_score: float = 0.0 # 0 - 40
+    obi_score: float = 0.0 # 0 - 30
+    momentum_score: float = 0.0 # 0 - 30
+    rank: int = 1 # 1 to 7
+    delta: float = 0.0
+    delta_pct: float = 0.0
+    live_price: float = 0.0
+    strike_price: float = 0.0
+    latency_ms: float = 0.0
+    time_remaining_sec: float = 0.0
+    up_share_price: float = 0.50
+    down_share_price: float = 0.50
+    spread: float = 0.01
+    liquidity: float = 0.0
+    orderbook_imbalance: float = 0.0
+    velocity_10s: float = 0.0
+    velocity_30s: float = 0.0
+    reason: str = ""
+    target_token_id: str = ""
+    is_tradable: bool = True
     rejection_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -54,6 +57,9 @@ class ScoredAsset:
             "direction": self.direction,
             "composite_score": round(self.composite_score, 1),
             "confidence": round(self.confidence, 1),
+            "delta_score": round(self.delta_score, 1),
+            "obi_score": round(self.obi_score, 1),
+            "momentum_score": round(self.momentum_score, 1),
             "rank": self.rank,
             "delta": round(self.delta, 4) if abs(self.delta) < 1 else round(self.delta, 2),
             "delta_pct": round(self.delta_pct, 4),
@@ -182,16 +188,25 @@ class FastScorer:
         if total_up > total_down and total_up >= 50.0:
             direction = "UP"
             confidence = total_up
+            chosen_delta_score = up_delta_score
+            chosen_obi_score = up_ob_score
+            chosen_mom_score = up_mom_score
             target_token = market.up_token_id if market else ""
-            reason = f"Delta +{delta_pct:.3f}% | v10: +{v10:.3f}% | OBI: {imbalance:+.2f}"
+            reason = f"Delta +{delta_pct:.3f}% (Sc:{up_delta_score:.1f}/40) | OBI:{imbalance:+.2f} (Sc:{up_ob_score:.1f}/30) | Mom (Sc:{up_mom_score:.1f}/30)"
         elif total_down > total_up and total_down >= 50.0:
             direction = "DOWN"
             confidence = total_down
+            chosen_delta_score = down_delta_score
+            chosen_obi_score = down_ob_score
+            chosen_mom_score = down_mom_score
             target_token = market.down_token_id if market else ""
-            reason = f"Delta {delta_pct:.3f}% | v10: {v10:.3f}% | OBI: {imbalance:+.2f}"
+            reason = f"Delta {delta_pct:.3f}% (Sc:{down_delta_score:.1f}/40) | OBI:{imbalance:+.2f} (Sc:{down_ob_score:.1f}/30) | Mom (Sc:{down_mom_score:.1f}/30)"
         else:
             direction = "NEUTRAL"
             confidence = max(total_up, total_down)
+            chosen_delta_score = up_delta_score if total_up >= total_down else down_delta_score
+            chosen_obi_score = up_ob_score if total_up >= total_down else down_ob_score
+            chosen_mom_score = up_mom_score if total_up >= total_down else down_mom_score
             target_token = ""
             reason = "Chop / Insufficient directional edge"
 
@@ -223,6 +238,9 @@ class FastScorer:
             direction=direction,
             composite_score=confidence,
             confidence=confidence,
+            delta_score=chosen_delta_score,
+            obi_score=chosen_obi_score,
+            momentum_score=chosen_mom_score,
             rank=99,
             delta=delta,
             delta_pct=delta_pct,

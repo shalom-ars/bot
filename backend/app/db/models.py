@@ -679,6 +679,10 @@ class Fast5MTrade(Base):
     entry_oracle_price  = Column(Float, nullable=False) # Oracle price at entry
     delta_at_entry      = Column(Float, nullable=False) # Live price - strike price
     confidence_score    = Column(Float, nullable=False) # 0 - 100
+    delta_score         = Column(Float, default=0.0) # Sub-score: Delta & velocity (0-40)
+    obi_score           = Column(Float, default=0.0) # Sub-score: Orderbook imbalance (0-30)
+    momentum_score      = Column(Float, default=0.0) # Sub-score: Momentum trend (0-30)
+    prediction_rationale = Column(String(256), default="") # Detailed rationale string
     asset_rank          = Column(Integer, default=1) # 1 for #1 ranked pair
     latency_ms          = Column(Float, default=0.0) # Oracle synchronization latency in ms
     status              = Column(String(32), default="OPEN", index=True) # OPEN, CLOSED

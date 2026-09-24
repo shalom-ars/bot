@@ -38,7 +38,7 @@ def get_fast5m_board():
 
 @router.get("/trades")
 def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
-    """Retrieve historical trades and PnL log."""
+    """Retrieve historical trades and comprehensive PnL stats."""
     trades = (
         db.query(Fast5MTrade)
         .order_by(Fast5MTrade.id.desc())
@@ -46,7 +46,25 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
         .all()
     )
     result = []
+    total_profit = 0.0
+    total_loss = 0.0
+    total_pnl = 0.0
+    wins = 0
+    losses = 0
+    closed_trades = 0
+
     for t in trades:
+        pnl_val = t.pnl or 0.0
+        if t.status == "CLOSED":
+            closed_trades += 1
+            total_pnl += pnl_val
+            if pnl_val > 0:
+                total_profit += pnl_val
+                wins += 1
+            elif pnl_val < 0:
+                total_loss += abs(pnl_val)
+                losses += 1
+
         result.append({
             "id": t.id,
             "asset": t.asset,
@@ -63,6 +81,10 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
             "entry_oracle_price": t.entry_oracle_price,
             "delta_at_entry": t.delta_at_entry,
             "confidence_score": t.confidence_score,
+            "delta_score": getattr(t, "delta_score", 0.0) or 0.0,
+            "obi_score": getattr(t, "obi_score", 0.0) or 0.0,
+            "momentum_score": getattr(t, "momentum_score", 0.0) or 0.0,
+            "prediction_rationale": getattr(t, "prediction_rationale", "") or "",
             "asset_rank": t.asset_rank,
             "latency_ms": t.latency_ms,
             "status": t.status,
@@ -73,7 +95,22 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
             "created_at": t.created_at.isoformat() if t.created_at else "",
             "closed_at": t.closed_at.isoformat() if t.closed_at else None,
         })
-    return result
+
+    win_rate = (wins / closed_trades * 100.0) if closed_trades > 0 else 0.0
+
+    return {
+        "stats": {
+            "total_pnl": round(total_pnl, 2),
+            "total_profit": round(total_profit, 2),
+            "total_loss": round(total_loss, 2),
+            "win_rate": round(win_rate, 1),
+            "wins": wins,
+            "losses": losses,
+            "total_trades": closed_trades,
+            "open_trades": len([t for t in trades if t.status == "OPEN"]),
+        },
+        "trades": result
+    }
 
 
 @router.get("/settings")
