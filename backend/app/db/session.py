@@ -152,7 +152,12 @@ def ensure_fast5m_schema(db_engine):
             ("obi_score", "FLOAT DEFAULT 0.0"),
             ("momentum_score", "FLOAT DEFAULT 0.0"),
             ("prediction_rationale", "VARCHAR DEFAULT ''"),
-            ("account_mode", "VARCHAR(16) DEFAULT 'demo'")
+            ("account_mode", "VARCHAR(16) DEFAULT 'demo'"),
+            ("execution_type", "VARCHAR(32) DEFAULT 'SIMULATED_ORDERBOOK'"),
+            ("tx_hash", "VARCHAR(66)"),
+            ("exit_slippage", "FLOAT DEFAULT 0.0"),
+            ("buffer_status", "VARCHAR(32) DEFAULT 'CLEARED'"),
+            ("real_orderbook_bid", "FLOAT")
         ]
         with db_engine.connect() as conn:
             for col_name, col_type in fast_cols:

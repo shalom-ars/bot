@@ -687,6 +687,11 @@ class Fast5MTrade(Base):
     latency_ms          = Column(Float, default=0.0) # Oracle synchronization latency in ms
     status              = Column(String(32), default="OPEN", index=True) # OPEN, CLOSED
     account_mode        = Column(String(16), default="demo", index=True) # "demo" or "live"
+    execution_type      = Column(String(32), default="SIMULATED_ORDERBOOK", index=True) # "SIMULATED_ORDERBOOK" or "LIVE_CLOB_ONCHAIN"
+    tx_hash             = Column(String(66), nullable=True) # Transaction hash or order ID
+    exit_slippage       = Column(Float, default=0.0) # Realized slippage ($)
+    buffer_status       = Column(String(32), default="CLEARED") # "SUPPRESSED", "CLEARED"
+    real_orderbook_bid  = Column(Float, nullable=True) # Actual CLOB top bid at exit
     exit_price          = Column(Float, nullable=True)
     pnl                 = Column(Float, nullable=True)
     pnl_percent         = Column(Float, nullable=True)

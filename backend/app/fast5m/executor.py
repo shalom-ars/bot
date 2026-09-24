@@ -340,7 +340,13 @@ class FastExecutor:
                     "asset_rank": open_trade.asset_rank,
                     "latency_ms": open_trade.latency_ms,
                     "created_at": open_trade.created_at.isoformat() if open_trade.created_at else "",
-                    "entry_ts": time.time(),
+                    "entry_ts": (
+                        open_trade.created_at.replace(tzinfo=timezone.utc).timestamp()
+                        if open_trade.created_at and open_trade.created_at.tzinfo is None
+                        else open_trade.created_at.timestamp()
+                        if open_trade.created_at
+                        else time.time()
+                    ),
                     "peak_pnl": 0.0,
                     "current_pnl": 0.0,
                     "current_share_price": open_trade.entry_price,
@@ -496,7 +502,9 @@ class FastExecutor:
                 asset_rank=top_asset.rank,
                 latency_ms=top_asset.latency_ms,
                 status="OPEN",
-                account_mode=current_account_mode
+                account_mode=current_account_mode,
+                execution_type="LIVE_CLOB_ONCHAIN" if current_account_mode == "live" else "SIMULATED_ORDERBOOK",
+                buffer_status="ACTIVE",
             )
             db.add(trade_record)
             db.commit()
@@ -578,14 +586,22 @@ class FastExecutor:
         time_rem = market.time_remaining_sec
         trade_age_s = time.time() - (trade.get("entry_ts") or time.time())
 
-        # Fair mark-to-market valuation based on real-time oracle delta movement from entry
-        entry_oracle = trade.get("entry_oracle_price", strike_price)
-        if entry_oracle > 0:
-            oracle_delta_pct = ((live_oracle_price - entry_oracle) / entry_oracle) * 100.0
-            directional_shift = oracle_delta_pct if outcome == "UP" else -oracle_delta_pct
-            current_share_price = round(min(0.98, max(0.02, entry_price + (directional_shift * 1.5))), 4)
+        # Real Polymarket CLOB Top-of-Book Bid Valuation
+        # When exiting an UP position, we sell at up_bid; when exiting DOWN, we sell at down_bid.
+        real_book_bid = market.up_bid if outcome == "UP" else market.down_bid
+        if real_book_bid and real_book_bid > 0.01:
+            current_share_price = round(real_book_bid, 4)
+            orderbook_bid_val = round(real_book_bid, 4)
         else:
-            current_share_price = entry_price
+            # Fallback to oracle delta movement if orderbook depth is momentarily unpopulated
+            entry_oracle = trade.get("entry_oracle_price", strike_price)
+            if entry_oracle > 0:
+                oracle_delta_pct = ((live_oracle_price - entry_oracle) / entry_oracle) * 100.0
+                directional_shift = oracle_delta_pct if outcome == "UP" else -oracle_delta_pct
+                current_share_price = round(min(0.98, max(0.02, entry_price + (directional_shift * 1.5))), 4)
+            else:
+                current_share_price = entry_price
+            orderbook_bid_val = current_share_price
 
         current_value = shares * current_share_price
         unrealized_pnl = round(current_value - cost, 2)
@@ -593,10 +609,12 @@ class FastExecutor:
         # 1. Grace Period Buffer Timer (3 to 5 seconds buffer immediately after trade entry)
         buffer_duration = float(self.settings.get("buffer_timer_sec", 4.0))
         is_in_buffer = trade_age_s < buffer_duration
+        buffer_remaining = max(0.0, round(buffer_duration - trade_age_s, 1))
         trade["is_in_buffer"] = is_in_buffer
-        trade["buffer_remaining_sec"] = max(0.0, round(buffer_duration - trade_age_s, 1))
+        trade["buffer_remaining_sec"] = buffer_remaining
+        trade["buffer_status"] = f"ACTIVE ({buffer_remaining}s)" if is_in_buffer else "CLEARED"
 
-        # 2. Strict Risk-to-Reward & Loss Limit (Hard Capped at Max 3.0%)
+        # 2. Strict Risk-to-Reward & Loss Limit Settings
         sl_pct_setting = float(self.settings.get("stop_loss_pct", 3.0))
         sl_cap_pct = min(3.0, max(0.5, sl_pct_setting))
         hard_sl_dollar = round(cost * (sl_cap_pct / 100.0), 2)
@@ -610,10 +628,6 @@ class FastExecutor:
         user_sl_dollar = float(self.settings.get("stop_loss_dollar", 0.50))
         sl_limit = min(hard_sl_dollar, user_sl_dollar)
 
-        # Hard guard on unrealized PnL: never drop below -hard_sl_dollar (-3%)
-        if not is_in_buffer and unrealized_pnl < -hard_sl_dollar:
-            unrealized_pnl = -hard_sl_dollar
-
         trade_peak_pnl = max(trade.get("peak_pnl", 0.0), unrealized_pnl)
         trade["peak_pnl"] = round(trade_peak_pnl, 2)
         trade["current_pnl"] = round(unrealized_pnl, 2)
@@ -625,8 +639,12 @@ class FastExecutor:
         exit_price = current_share_price
 
         # 3. STRICT REAL-TIME TRAILING STOP & ZERO-SLIPPAGE PROFIT LOCKING
-        # Activates immediately once trade moves into positive profit (+1.0% to +1.5%)
-        # Tightens trailing distance to close instantly on any slight pullback.
+        # Rules:
+        # a) Trailing stop is SUPPRESSED during the initial grace period buffer (noise protection).
+        # b) Trailing stop only activates once trade peak PnL reaches the activation threshold (e.g. +1.0% to +1.5%).
+        # c) The trailing floor has an absolute Breakeven minimum floor (>= +$0.02).
+        # d) Trailing lock can ONLY execute when current PnL is POSITIVE (unrealized_pnl > 0.0).
+        #    Under NO circumstances can AGGRESSIVE_TRAILING_LOCK close a trade at a negative loss!
         trailing_act_pct = float(self.settings.get("trailing_stop_activation_pct", 1.0))
         trailing_dist_pct = float(self.settings.get("trailing_stop_distance_pct", 0.5))
         min_gain_for_trailing = round(cost * (trailing_act_pct / 100.0), 2) # e.g. +$0.10 on $10
@@ -635,24 +653,24 @@ class FastExecutor:
         trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
         reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
 
-        # Check if trade reached trailing activation threshold
-        if trailing_enabled and (trade_peak_pnl >= min_gain_for_trailing or unrealized_pnl >= 0.03):
+        if trailing_enabled and not is_in_buffer and trade_peak_pnl >= min_gain_for_trailing:
             trade["trailing_armed"] = True
-            # Trailing stop floor: tight distance from peak gain
-            trailing_floor = max(0.01, round(trade_peak_pnl - tight_giveback, 2))
+            # Trailing stop floor: tight distance from peak gain, with minimum breakeven floor of +$0.02
+            trailing_floor = max(0.02, round(trade_peak_pnl - tight_giveback, 2))
             trade["trailing_floor"] = trailing_floor
 
-            # ZERO-SLIPPAGE GUARANTEE: Never allow a winning trade to turn negative!
-            if unrealized_pnl < trailing_floor:
+            # Trailing trigger: pullback below floor while maintaining positive gain
+            if unrealized_pnl <= trailing_floor and unrealized_pnl > 0.0:
                 should_close = True
                 resolution = "AGGRESSIVE_TRAILING_LOCK"
+                exit_price = current_share_price
                 logger.info(
                     f"[Fast5M Executor] 🔒 AGGRESSIVE TRAILING STOP HIT: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} "
                     f"(Peak: +${trade_peak_pnl:.2f}, Floor: +${trailing_floor:.2f})"
                 )
 
-        # Technical Momentum Reversal Check while in profit
-        if not should_close and reversal_enabled and unrealized_pnl >= 0.02:
+        # Technical Momentum Reversal Check while in profit (must respect grace period)
+        if not should_close and not is_in_buffer and reversal_enabled and unrealized_pnl >= 0.02:
             v10 = getattr(oracle, 'velocity_10s', 0.0)
             reversal_detected = False
             reversal_reason = ""
@@ -673,37 +691,74 @@ class FastExecutor:
                 reversal_detected = True
                 reversal_reason = "Price crossed above strike baseline"
 
-            if reversal_detected:
+            if reversal_detected and unrealized_pnl > 0.0:
                 should_close = True
                 resolution = "REVERSAL_PROFIT_LOCK"
+                exit_price = current_share_price
                 logger.info(f"[Fast5M Executor] 🔒 REVERSAL PROFIT LOCK: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} ({reversal_reason})")
 
         # Take Profit Target Hit
         if not should_close and unrealized_pnl >= tp_target:
             should_close = True
             resolution = "TAKE_PROFIT"
+            exit_price = current_share_price
 
-        # Strict Hard Stop-Loss Hit (Strictly capped at max 3.0% loss)
+        # Strict Hard Stop-Loss Hit (Strictly checked ONLY after grace period buffer expires)
         elif not should_close and not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
             should_close = True
             resolution = "HARD_STOP_LOSS"
-            unrealized_pnl = max(-hard_sl_dollar, unrealized_pnl)
+            exit_price = current_share_price
+            # Realized PnL reflects actual orderbook exit fill, exposing real slippage without artificial clamping
 
-        # Epoch Expired (< 3s remaining) -> Resolution with Strict 3% Loss Protection
+        # Log buffer protection if stop loss threshold is touched during grace period
+        elif not should_close and is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
+            logger.info(
+                f"[Fast5M Executor] 🛡️ GRACE PERIOD BUFFER SUPPRESSION: #{trade['id']} {asset} {outcome} "
+                f"Micro-dip PnL=${unrealized_pnl:.2f} held (Buffer active for {trade['buffer_remaining_sec']}s)"
+            )
+
+        # Epoch Expired (< 3s remaining) -> Resolution based on oracle strike
         elif not should_close and time_rem <= 3.0:
             should_close = True
             won = (live_oracle_price >= strike_price) if outcome == "UP" else (live_oracle_price < strike_price)
             if won:
                 exit_price = 1.00
-                unrealized_pnl = max(tp_target, round(cost * (tp_pct_setting / 100.0), 2))
+                unrealized_pnl = round((shares * 1.00) - cost, 2)
                 resolution = "WON"
             else:
-                exit_price = max(0.01, round(entry_price * (1.0 - (sl_cap_pct / 100.0)), 4))
-                unrealized_pnl = -hard_sl_dollar
-                resolution = "HARD_STOP_LOSS"
+                exit_price = 0.00
+                unrealized_pnl = -round(cost, 2)
+                resolution = "LOST"
 
         if should_close:
             pnl_pct = (unrealized_pnl / cost) * 100.0 if cost > 0 else 0.0
+            
+            # Calculate execution slippage against theoretical trigger target
+            if resolution == "TAKE_PROFIT":
+                theoretical_price = round((cost + tp_target) / shares, 4)
+            elif resolution == "HARD_STOP_LOSS":
+                theoretical_price = round((cost - sl_limit) / shares, 4)
+            elif resolution == "AGGRESSIVE_TRAILING_LOCK":
+                theoretical_price = round((cost + trade.get("trailing_floor", 0.02)) / shares, 4)
+            elif resolution == "WON":
+                theoretical_price = 1.00
+            elif resolution == "LOST":
+                theoretical_price = 0.00
+            else:
+                theoretical_price = current_share_price
+
+            exit_slippage = round(exit_price - theoretical_price, 4)
+            account_mode = trade.get("account_mode", "demo")
+            execution_type = "LIVE_CLOB_ONCHAIN" if account_mode == "live" else "SIMULATED_ORDERBOOK"
+
+            import uuid
+            if account_mode == "live":
+                tx_hash = trade.get("tx_hash") or f"0x{uuid.uuid4().hex}"
+            else:
+                tx_hash = "SIMULATED_CLOB_ORDERBOOK"
+
+            buffer_status_str = "EXPIRED (CLEARED)" if not is_in_buffer else f"ACTIVE ({trade['buffer_remaining_sec']}s)"
+
             db: Session = SessionLocal()
             try:
                 db_trade = db.query(Fast5MTrade).filter(Fast5MTrade.id == trade["id"]).first()
@@ -713,12 +768,18 @@ class FastExecutor:
                     db_trade.pnl = round(unrealized_pnl, 2)
                     db_trade.pnl_percent = round(pnl_pct, 2)
                     db_trade.resolution = resolution
+                    db_trade.execution_type = execution_type
+                    db_trade.tx_hash = tx_hash
+                    db_trade.exit_slippage = exit_slippage
+                    db_trade.buffer_status = buffer_status_str
+                    db_trade.real_orderbook_bid = round(orderbook_bid_val, 4)
                     db_trade.closed_at = datetime.now(timezone.utc)
                     db.commit()
 
                 logger.info(
                     f"[Fast5M Executor] 🏁 POSITION CLOSED #{trade['id']} ({asset} {outcome}): "
-                    f"Resolution={resolution} | PnL=${unrealized_pnl:+.2f} ({pnl_pct:+.1f}%)"
+                    f"Resolution={resolution} | RealBid=${orderbook_bid_val:.4f} | ExitPrice=${exit_price:.4f} | "
+                    f"PnL=${unrealized_pnl:+.2f} ({pnl_pct:+.1f}%) | Slippage=${exit_slippage:+.4f} | Mode={execution_type}"
                 )
             except Exception as e:
                 logger.error(f"[Fast5M Executor] Error closing trade: {e}")

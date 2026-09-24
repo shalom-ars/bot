@@ -474,6 +474,35 @@ class BTC5MStrategy:
         liquidity = bid_depth + ask_depth
         volatility = features.get("rolling_volatility", 0.0)
         
+        # ── Orderbook Staleness Guard (highest priority — checked BEFORE P2B) ──
+        # Reject if CLOB data is older than STALENESS_THRESHOLD_S regardless of P2B state.
+        if orderbook_timestamp is not None:
+            age_s = (now - orderbook_timestamp).total_seconds()
+            if age_s > STALENESS_THRESHOLD_S:
+                stale_flag = f"SKIP - Stale orderbook data ({age_s:.1f}s old > {STALENESS_THRESHOLD_S:.0f}s threshold)"
+                return BTC5MSignal(
+                    market_id=market_id, condition_id=condition_id, question=question,
+                    yes_token_id=yes_token_id, no_token_id=no_token_id,
+                    timestamp=now, state="SKIP", side="NONE",
+                    entry_price=0.0, bid=yes_bid, ask=yes_ask, spread=spread,
+                    bid_depth=bid_depth, ask_depth=ask_depth,
+                    momentum=features.get("short_momentum_1m", 0.0),
+                    imbalance=features.get("bid_ask_imbalance", 0.0),
+                    ob_pressure=features.get("ob_pressure", 0.0),
+                    volatility=volatility, momentum_persistence=0.0,
+                    market_probability=price, fair_probability=price,
+                    raw_edge=0.0, spread_cost=spread / 2.0, slippage_cost=0.0, fees=0.0, net_edge=0.0,
+                    risk_pct=settings.risk_per_trade, position_size=0.0, time_remaining_sec=time_remaining,
+                    planned_risk=0.0, planned_reward=0.0, planned_rr=0.0,
+                    stop_loss_price=0.0, take_profit_price=0.0,
+                    model_version="multi_factor_btc5m_100pt", strategy="BTC_5M",
+                    reason=stale_flag, skip_flags=[stale_flag],
+                    yes_score=0.0, no_score=0.0, yes_prob=0.0, no_prob=0.0,
+                    predicted_side="NONE", gate_results="{}", yes_breakdown="{}", no_breakdown="{}",
+                    rsi=float(features.get("rsi_14", 50.0)), macd_hist=float(features.get("macd_hist", 0.0)),
+                    bb_pct_b=float(features.get("bb_pct_b", 0.5)), bb_bandwidth=float(features.get("bb_bandwidth", 0.0))
+                )
+
         # P2B is mandatory for the BTC-vs-P2B component.
         # Never score/trade using a fabricated reference price.
         if btc_price is None or price_to_beat is None:
@@ -529,6 +558,34 @@ class BTC5MStrategy:
                 bb_pct_b=float(features.get("bb_pct_b", 0.5)),
                 bb_bandwidth=float(features.get("bb_bandwidth", 0.0))
             )
+
+        # Orderbook Staleness Guard: reject if CLOB data is older than STALENESS_THRESHOLD_S
+        if orderbook_timestamp is not None:
+            age_s = (now - orderbook_timestamp).total_seconds()
+            if age_s > STALENESS_THRESHOLD_S:
+                skip_flags.append(f"SKIP - Stale orderbook data ({age_s:.1f}s old > {STALENESS_THRESHOLD_S:.0f}s threshold)")
+                return BTC5MSignal(
+                    market_id=market_id, condition_id=condition_id, question=question,
+                    yes_token_id=yes_token_id, no_token_id=no_token_id,
+                    timestamp=now, state="SKIP", side="NONE",
+                    entry_price=0.0, bid=yes_bid, ask=yes_ask, spread=spread,
+                    bid_depth=bid_depth, ask_depth=ask_depth,
+                    momentum=features.get("short_momentum_1m", 0.0),
+                    imbalance=features.get("bid_ask_imbalance", 0.0),
+                    ob_pressure=features.get("ob_pressure", 0.0),
+                    volatility=volatility, momentum_persistence=0.0,
+                    market_probability=price, fair_probability=price,
+                    raw_edge=0.0, spread_cost=spread / 2.0, slippage_cost=0.0, fees=0.0, net_edge=0.0,
+                    risk_pct=settings.risk_per_trade, position_size=0.0, time_remaining_sec=time_remaining,
+                    planned_risk=0.0, planned_reward=0.0, planned_rr=0.0,
+                    stop_loss_price=0.0, take_profit_price=0.0,
+                    model_version="multi_factor_btc5m_100pt", strategy="BTC_5M",
+                    reason=skip_flags[-1], skip_flags=skip_flags,
+                    yes_score=0.0, no_score=0.0, yes_prob=0.0, no_prob=0.0,
+                    predicted_side="NONE", gate_results="{}", yes_breakdown="{}", no_breakdown="{}",
+                    rsi=float(features.get("rsi_14", 50.0)), macd_hist=float(features.get("macd_hist", 0.0)),
+                    bb_pct_b=float(features.get("bb_pct_b", 0.5)), bb_bandwidth=float(features.get("bb_bandwidth", 0.0))
+                )
 
         # 1. Score both sides with time-decayed option metrics
         yes_base_score, yes_breakdown = self._score_side(True, features, btc_price, price_to_beat, time_remaining)
@@ -695,6 +752,8 @@ class BTC5MStrategy:
             skip_flags.append("SKIP - Missing NO outcome token ID on Polymarket")
             
         min_p = float(self.settings.get("min_entry_price", 0.40))
+        # strong_directional: BTC is clearly trending (>$3 from P2B). Used to widen price cap.
+        strong_directional = abs(strike_delta) >= 3.0
         # Smart price cap: when BTC is strongly trending (>$3 above/below P2B),
         # allow entry price up to 0.80 (strong trend momentum justifies higher price).
         # Normal moves: cap at max_entry_price (default 0.72).
@@ -711,8 +770,7 @@ class BTC5MStrategy:
         rsi_ob = float(self.settings.get("rsi_overbought", 82.0))
         rsi_os = float(self.settings.get("rsi_oversold", 18.0))
         gate_results["rsi"]["value"] = f"{rsi_val:.1f}"
-        # Allow RSI 75-82 for strong directional moves (BTC clearly above P2B)
-        strong_directional = abs(strike_delta) >= 3.0
+        # strong_directional already computed above (abs(strike_delta) >= 3.0)
         if predicted_side == "YES" and rsi_val > rsi_ob and not strong_directional:
             gate_results["rsi"]["pass"] = False
             gate_results["rsi"]["value"] = f"{rsi_val:.1f} (Overbought > {rsi_ob:.0f})"

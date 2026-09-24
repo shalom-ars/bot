@@ -2707,6 +2707,14 @@ export default function Fast5MBoard() {
                           }`}>
                             {isLive ? '⚡ LIVE' : '🎮 DEMO'}
                           </span>
+                          <span className="text-[9px] font-mono text-slate-400 block mt-0.5">
+                            {t.execution_type === 'LIVE_CLOB_ONCHAIN' ? 'CLOB LIVE' : 'SIM ORDERBOOK'}
+                          </span>
+                          {t.tx_hash && t.tx_hash !== 'SIMULATED_CLOB_ORDERBOOK' && (
+                            <span className="text-[9px] text-indigo-600 truncate max-w-[85px] block font-mono" title={t.tx_hash}>
+                              tx:{t.tx_hash.slice(0, 8)}...
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-2.5 px-4 font-black">
@@ -2738,8 +2746,20 @@ export default function Fast5MBoard() {
                           <div className="text-[10px] text-slate-400">P0: ${t.strike_price}</div>
                         </td>
 
-                        <td className="py-2.5 px-4 font-bold">
-                          {t.exit_price != null ? `$${t.exit_price.toFixed(2)}` : '—'}
+                        <td className="py-2.5 px-4">
+                          <div className="font-bold text-slate-800">
+                            {t.exit_price != null ? `$${Number(t.exit_price).toFixed(4)}` : '—'}
+                          </div>
+                          {t.exit_slippage != null && (
+                            <div className={`text-[10px] font-mono ${Number(t.exit_slippage) > 0 ? 'text-emerald-600' : Number(t.exit_slippage) < 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                              Slip: {Number(t.exit_slippage) > 0 ? '+' : ''}${Number(t.exit_slippage).toFixed(4)}
+                            </div>
+                          )}
+                          {t.real_orderbook_bid != null && (
+                            <div className="text-[9px] text-indigo-500 font-mono">
+                              Bid: ${Number(t.real_orderbook_bid).toFixed(4)}
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-2.5 px-4 font-bold text-slate-800">
@@ -2766,6 +2786,11 @@ export default function Fast5MBoard() {
                           }`}>
                             {t.resolution || t.status}
                           </span>
+                          {t.buffer_status && t.buffer_status.includes('ACTIVE') && (
+                            <span className="block text-[9px] text-cyan-600 font-mono mt-0.5">
+                              Buffer: {t.buffer_status}
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-2.5 px-4 text-slate-400 text-[11px]">
