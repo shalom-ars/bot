@@ -2,9 +2,13 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../../api/client';
 import BrandLogo from '../../components/BrandLogo';
-import { AlertTriangle, RefreshCw, Wallet, CheckCircle, Shield, ArrowRight, X, ExternalLink, Mail } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Wallet, CheckCircle, Shield, ArrowRight, X, ExternalLink, Zap, Play } from 'lucide-react';
 
 export default function Login() {
+  const [selectedAuthMode, setSelectedAuthMode] = useState<'demo' | 'real'>('demo');
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [showAdminForm, setShowAdminForm] = useState(false);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -13,14 +17,29 @@ export default function Login() {
   const [walletStatus, setWalletStatus] = useState<string | null>(null);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
-  // Gmail auth states
-  const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
-  const [realGmail, setRealGmail] = useState('');
-  const [gmailError, setGmailError] = useState<string | null>(null);
-  const [googleLoading, setGoogleLoading] = useState(false);
-
   const [connectedWallet, setConnectedWallet] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // Instant 1-Click Demo Entry (No Gmail / Signup Required)
+  const handleEnterDemoAccount = async () => {
+    setDemoLoading(true);
+    setError(null);
+    try {
+      try {
+        await client.post('/fast5m/wallet/mode', { mode: 'demo' });
+      } catch (e) {
+        console.debug('Mode sync notice', e);
+      }
+      localStorage.setItem('account_mode', 'demo');
+      localStorage.setItem('demo_access', 'true');
+      navigate('/app');
+    } catch (err: any) {
+      console.error('Demo enter error:', err);
+      navigate('/app');
+    } finally {
+      setDemoLoading(false);
+    }
+  };
 
   // Web3 Wallet Login with User Signature Approval
   const handleConnectWallet = async () => {
@@ -88,45 +107,7 @@ export default function Login() {
     }
   };
 
-  // Trigger Real Gmail Modal
-  const handleOpenGmailModal = () => {
-    setError(null);
-    setGmailError(null);
-    setRealGmail(email.includes('@') ? email : '');
-    setIsGmailModalOpen(true);
-  };
-
-  // Confirm Real Gmail Connection
-  const handleConfirmGmailAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setGmailError(null);
-    
-    const cleanEmail = realGmail.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
-      setGmailError('Please enter a valid Gmail address (e.g. yourname@gmail.com).');
-      return;
-    }
-
-    setGoogleLoading(true);
-    try {
-      const res = await client.post('/auth/google', { 
-        email: cleanEmail,
-        name: cleanEmail.split('@')[0]
-      });
-      localStorage.setItem('token', res.data.access_token);
-      localStorage.setItem('user_email', cleanEmail);
-      localStorage.setItem('account_mode', 'demo');
-      setIsGmailModalOpen(false);
-      navigate('/app');
-    } catch (err: any) {
-      console.error('Google sign-in error:', err);
-      setGmailError(err?.response?.data?.detail || 'Failed to sign in with Gmail.');
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
-
-  // Standard Email / Password Login
+  // Standard Email / Password Login (Optional Admin Access)
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -158,14 +139,14 @@ export default function Login() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Brand Header */}
       <div className="text-center space-y-1">
         <div className="flex justify-center mb-2">
           <BrandLogo size={48} glow={true} />
         </div>
         <h1 className="text-2xl font-black text-white tracking-tight">Genanda Bot</h1>
-        <p className="text-xs text-slate-400 font-mono">Sign in to your Quantitative Terminal</p>
+        <p className="text-xs text-slate-400 font-mono">5-Minute Fast Prediction Terminal</p>
       </div>
 
       {error && (
@@ -187,201 +168,207 @@ export default function Login() {
         </div>
       )}
 
-      {/* 1. PRIMARY OPTION: CONNECT WEB3 WALLET (REAL MONEY TRADING) */}
-      <div className="bg-gradient-to-r from-purple-950/40 via-indigo-950/40 to-slate-900 border-2 border-indigo-500/40 rounded-2xl p-4 shadow-lg space-y-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400">
-              <Wallet className="w-4 h-4" />
+      {/* 1. TRADING MODE SWITCHER (DEMO VS REAL) */}
+      <div className="bg-slate-950 p-1.5 rounded-2xl border border-slate-800 flex items-center justify-between gap-1 shadow-inner">
+        <button
+          type="button"
+          onClick={() => setSelectedAuthMode('demo')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            selectedAuthMode === 'demo'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-900'
+          }`}
+        >
+          <span>🎮 Demo Account</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/30 text-blue-200 font-bold border border-blue-400/30">
+            $300 Virtual
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSelectedAuthMode('real')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            selectedAuthMode === 'real'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-900'
+          }`}
+        >
+          <span>⚡ Real Account</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/30 text-emerald-200 font-bold border border-emerald-400/30">
+            Live Wallet
+          </span>
+        </button>
+      </div>
+
+      {/* 2. DEMO MODE CARD: NO GMAIL / SIGNUP REQUIRED */}
+      {selectedAuthMode === 'demo' && (
+        <div className="bg-gradient-to-br from-blue-950/40 via-indigo-950/30 to-slate-900 border-2 border-blue-500/40 rounded-2xl p-5 shadow-xl space-y-4 text-left animate-fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-blue-600 text-white rounded-xl shadow-md shadow-blue-500/30">
+                <Zap className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-white">Virtual Demo Account</h2>
+                <p className="text-xs text-slate-400">Risk-Free 5-Minute Paper Trading</p>
+              </div>
+            </div>
+            <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-black px-2.5 py-1 rounded-full border border-emerald-500/30 font-mono uppercase">
+              No Gmail Required
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-300 leading-relaxed bg-blue-950/50 p-3 rounded-xl border border-blue-900/60">
+            ✨ Practice automated 5-minute round execution with a fresh <strong>$300.00 virtual paper balance</strong>. Zero signup or Gmail account required — instant 1-click terminal access!
+          </p>
+
+          <div className="space-y-1.5 text-xs text-slate-300 font-mono">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <span>$300 Initial Virtual Equity (Resettable in Settings)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Direct Chainlink & Pyth sub-second feeds</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Strict hard stop & anti-reversal profit locking</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleEnterDemoAccount}
+            disabled={demoLoading}
+            className="w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+          >
+            {demoLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Entering Demo Terminal...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                <span>Start Demo Trading ($300 Virtual)</span>
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* 3. REAL MODE CARD: WEB3 WALLET REQUIRED */}
+      {selectedAuthMode === 'real' && (
+        <div className="bg-gradient-to-br from-purple-950/40 via-indigo-950/30 to-slate-900 border-2 border-emerald-500/40 rounded-2xl p-5 shadow-xl space-y-4 text-left animate-fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-md shadow-emerald-500/30">
+                <Wallet className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-white">Real Money Account</h2>
+                <p className="text-xs text-slate-400">Live Polymarket CLOB Execution</p>
+              </div>
+            </div>
+            <span className="bg-purple-500/20 text-purple-300 text-[10px] font-black px-2.5 py-1 rounded-full border border-purple-500/30 font-mono uppercase">
+              Polygon Mainnet
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/50 p-3 rounded-xl border border-slate-800">
+            ⚡ Connect your Web3 wallet (MetaMask, Rabby, or Polygon Signer) to trade with real USDC on Polymarket&apos;s Central Limit Order Book with sub-second automation.
+          </p>
+
+          {walletStatus && (
+            <div className="bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 p-2.5 rounded-xl text-xs flex items-center gap-2 animate-pulse font-mono">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400 shrink-0" />
+              <span>{walletStatus}</span>
+            </div>
+          )}
+
+          <button
+            onClick={handleConnectWallet}
+            disabled={walletLoading}
+            type="button"
+            className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
+          >
+            {walletLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Awaiting MetaMask Approval...</span>
+              </>
+            ) : (
+              <>
+                <Wallet className="w-4 h-4" />
+                <span>Connect Wallet for Real Money</span>
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </>
+            )}
+          </button>
+
+          <p className="text-[10px] text-slate-400 text-center flex items-center justify-center gap-1.5">
+            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Non-custodial: Requires MetaMask signature to verify wallet ownership</span>
+          </p>
+        </div>
+      )}
+
+      {/* 4. COLLAPSIBLE ADMIN / EMAIL LOGIN */}
+      <div className="pt-2 border-t border-slate-800/80">
+        <button
+          type="button"
+          onClick={() => setShowAdminForm(!showAdminForm)}
+          className="text-slate-400 hover:text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 mx-auto transition-colors cursor-pointer"
+        >
+          <span>{showAdminForm ? '▲ Hide email login' : '▼ Or sign in with email / password (Admin)'}</span>
+        </button>
+
+        {showAdminForm && (
+          <form className="space-y-3 pt-3 animate-fade-in" onSubmit={handleLogin}>
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">Email Address</label>
+              <input 
+                type="email" 
+                required
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono" 
+                placeholder="admin@domain.com" 
+              />
             </div>
             <div>
-              <h3 className="text-xs font-black uppercase tracking-wider text-indigo-300">Sign In with Web3 Wallet</h3>
-              <p className="text-[11px] text-slate-400">Real Money Trading & Linked Funds</p>
+              <label className="block text-xs font-bold text-slate-300 mb-1">Password</label>
+              <input 
+                type="password" 
+                required
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono" 
+                placeholder="••••••••••••" 
+              />
             </div>
-          </div>
-          <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black px-2 py-0.5 rounded border border-amber-500/30 uppercase font-mono">
-            LIVE USDC
-          </span>
-        </div>
-
-        {walletStatus && (
-          <div className="bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 p-2 rounded-xl text-xs flex items-center gap-2 animate-pulse font-mono">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400 shrink-0" />
-            <span>{walletStatus}</span>
-          </div>
+            <button 
+              type="submit" 
+              disabled={loading}
+              className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-2 rounded-xl transition-all shadow-xs flex justify-center items-center cursor-pointer disabled:opacity-50"
+            >
+              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Log In with Password'}
+            </button>
+          </form>
         )}
-
-        <button
-          onClick={handleConnectWallet}
-          disabled={walletLoading}
-          type="button"
-          className="w-full bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-        >
-          {walletLoading ? (
-            <>
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>Awaiting MetaMask Approval...</span>
-            </>
-          ) : (
-            <>
-              <Wallet className="w-4 h-4" />
-              <span>Connect Wallet for Real Money</span>
-              <ArrowRight className="w-3.5 h-3.5 ml-1" />
-            </>
-          )}
-        </button>
-
-        <p className="text-[10px] text-slate-400 text-center flex items-center justify-center gap-1">
-          <Shield className="w-3 h-3 text-emerald-400" />
-          Requires MetaMask approval signature to verify real wallet ownership
-        </p>
       </div>
 
-      {/* 2. GMAIL / GOOGLE SIGN IN */}
-      <div>
-        <button
-          onClick={handleOpenGmailModal}
-          type="button"
-          className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-white font-bold text-xs py-2.5 px-4 rounded-xl transition-all shadow-xs flex items-center justify-center gap-2.5 cursor-pointer"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24">
-            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-          </svg>
-          <span>Sign in with Gmail</span>
-        </button>
-      </div>
-
-      {/* DIVIDER */}
-      <div className="relative flex items-center justify-center">
-        <div className="border-t border-slate-800 w-full"></div>
-        <span className="bg-slate-900 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-mono">
-          or continue with email
-        </span>
-      </div>
-
-      {/* 3. EMAIL & PASSWORD FORM */}
-      <form className="space-y-3.5" onSubmit={handleLogin}>
-        <div>
-          <label className="block text-xs font-bold text-slate-300 mb-1">Email Address</label>
-          <input 
-            type="email" 
-            required
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none font-mono" 
-            placeholder="trader@domain.com" 
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-bold text-slate-300 mb-1">Password</label>
-          <input 
-            type="password" 
-            required
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none font-mono" 
-            placeholder="••••••••••••" 
-          />
-        </div>
-        <button 
-          type="submit" 
-          disabled={loading}
-          className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-xs py-2.5 rounded-xl transition-all shadow-md flex justify-center items-center cursor-pointer disabled:opacity-50"
-        >
-          {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Sign In'}
-        </button>
-      </form>
-      
       <div className="text-center text-xs text-slate-400 pt-1">
-        Don't have an account?{' '}
+        Don&apos;t have an account?{' '}
         <Link to="/signup" className="text-blue-400 font-bold hover:underline">
           Sign Up
         </Link>
       </div>
 
-      {/* MODAL 1: REAL GMAIL CONNECTION MODAL */}
-      {isGmailModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border-2 border-slate-700/80 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
-            <button 
-              onClick={() => setIsGmailModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-white rounded-xl shadow-xs">
-                <svg className="w-6 h-6" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-base font-black text-white">Connect Real Gmail</h3>
-                <p className="text-xs text-slate-400">Authenticate with your genuine Google account</p>
-              </div>
-            </div>
-
-            {gmailError && (
-              <div className="bg-rose-500/15 border border-rose-500/30 text-rose-300 p-2.5 rounded-xl text-xs flex gap-2 items-center">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{gmailError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleConfirmGmailAuth} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Your Gmail Address</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type="email"
-                    required
-                    autoFocus
-                    value={realGmail}
-                    onChange={e => setRealGmail(e.target.value)}
-                    placeholder="yourname@gmail.com"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none font-mono"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-500 mt-1">Must be an active @gmail.com or Google Workspace address.</p>
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setIsGmailModalOpen(false)}
-                  className="w-1/3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={googleLoading}
-                  className="w-2/3 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs py-2.5 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {googleLoading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Connecting...</span>
-                    </>
-                  ) : (
-                    <span>Authorize & Connect</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 2: WEB3 WALLET NOT DETECTED MODAL */}
+      {/* MODAL: WEB3 WALLET NOT DETECTED */}
       {isWalletModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="bg-slate-900 border-2 border-indigo-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
@@ -410,7 +397,7 @@ export default function Login() {
               <button
                 type="button"
                 onClick={() => setIsWalletModalOpen(false)}
-                className="w-1/3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+                className="w-1/3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
               >
                 Close
               </button>
