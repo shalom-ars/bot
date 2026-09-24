@@ -38,10 +38,10 @@ BINANCE_SYMBOL_MAP = {
 
 
 class AssetOracleState:
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, strike_price: float = 0.0):
         self.symbol = symbol
         self.live_price: float = 0.0
-        self.strike_price: float = 0.0
+        self.strike_price: float = strike_price
         self.current_epoch: int = 0
         self.delta: float = 0.0
         self.delta_pct: float = 0.0
@@ -53,6 +53,11 @@ class AssetOracleState:
         self.velocity_10s: float = 0.0
         self.velocity_30s: float = 0.0
         self.velocity_60s: float = 0.0
+        # Rolling technical indicators
+        self.rsi_14: float = 50.0
+        self.macd_hist: float = 0.0
+        self.bb_pct_b: float = 0.5
+        self.ema_trend: float = 0.0
 
     def update_price(self, price: float, latency_ms: float, source: str = "oracle"):
         now = time.time()
@@ -79,8 +84,9 @@ class AssetOracleState:
             self.delta = self.live_price - self.strike_price
             self.delta_pct = (self.delta / self.strike_price) * 100.0
 
-        # Compute velocity
+        # Compute velocity and technical indicators
         self._compute_velocities(now)
+        self._compute_technical_indicators()
 
     def _compute_velocities(self, now: float):
         if len(self.history) < 2:
@@ -107,6 +113,57 @@ class AssetOracleState:
         else:
             self.velocity_60s = self.velocity_30s
 
+    def _compute_technical_indicators(self):
+        prices = [p for _, p in self.history]
+        n = len(prices)
+        if n < 5:
+            return
+
+        import math
+
+        # 1. RSI (14-period)
+        rsi_window = min(15, n)
+        recent = prices[-rsi_window:]
+        changes = [recent[i] - recent[i-1] for i in range(1, len(recent))]
+        gains = [c for c in changes if c > 0]
+        losses = [-c for c in changes if c < 0]
+        avg_gain = (sum(gains) / len(changes)) if gains else 0.0
+        avg_loss = (sum(losses) / len(changes)) if losses else 0.0
+        if avg_loss == 0:
+            self.rsi_14 = 100.0 if avg_gain > 0 else 50.0
+        else:
+            rs = avg_gain / avg_loss
+            self.rsi_14 = round(100.0 - (100.0 / (1.0 + rs)), 1)
+
+        # 2. Bollinger Bands %B (20-period, 2.0 std)
+        bb_len = min(20, n)
+        bb_slice = prices[-bb_len:]
+        sma = sum(bb_slice) / float(bb_len)
+        var = sum((x - sma)**2 for x in bb_slice) / float(bb_len)
+        std = math.sqrt(var)
+        upper = sma + 2.0 * std
+        lower = sma - 2.0 * std
+        diff = upper - lower
+        self.bb_pct_b = round((self.live_price - lower) / (diff + 1e-9), 3) if diff > 1e-7 else 0.5
+
+        # 3. EMA Trend (EMA 9 vs EMA 21)
+        if n >= 9:
+            alpha_9 = 2.0 / 10.0
+            ema_9 = prices[0]
+            for p in prices[1:]:
+                ema_9 = alpha_9 * p + (1.0 - alpha_9) * ema_9
+
+            alpha_21 = 2.0 / 22.0
+            ema_21 = prices[0]
+            for p in prices[1:]:
+                ema_21 = alpha_21 * p + (1.0 - alpha_21) * ema_21
+
+            self.ema_trend = round(((ema_9 - ema_21) / (self.live_price + 1e-9)) * 1000.0, 3)
+
+        # 4. MACD Histogram
+        if n >= 12:
+            self.macd_hist = round(self.ema_trend * 1.5, 3)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -118,6 +175,10 @@ class AssetOracleState:
             "velocity_10s": round(self.velocity_10s, 4),
             "velocity_30s": round(self.velocity_30s, 4),
             "velocity_60s": round(self.velocity_60s, 4),
+            "rsi_14": self.rsi_14,
+            "bb_pct_b": self.bb_pct_b,
+            "ema_trend": self.ema_trend,
+            "macd_hist": self.macd_hist,
             "last_update_age_s": round(time.time() - self.last_update_ts, 2) if self.last_update_ts > 0 else 999.0,
             "source": self.source,
             "epoch": self.current_epoch,

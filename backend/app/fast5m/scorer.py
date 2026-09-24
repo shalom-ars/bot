@@ -159,26 +159,54 @@ class FastScorer:
         up_ob_score = max(0.0, min(30.0, up_ob_score - spread_penalty))
         down_ob_score = max(0.0, min(30.0, down_ob_score - spread_penalty))
 
-        # Sub-Score 3: Micro-Momentum Confluence (0 - 30 pts)
-        # 10s, 30s, 60s velocity agreement
-        up_mom_score = 15.0
-        down_mom_score = 15.0
+        # Sub-Score 3: Technical Indicators & Momentum Confluence (0 - 30 pts)
+        # Evaluates RSI (14), Bollinger Bands (%B), EMA Trend (9/21), MACD, and micro-velocities
+        rsi = getattr(oracle, 'rsi_14', 50.0)
+        bb_b = getattr(oracle, 'bb_pct_b', 0.5)
+        ema_tr = getattr(oracle, 'ema_trend', 0.0)
+        macd = getattr(oracle, 'macd_hist', 0.0)
 
+        up_tech_pts = 15.0
+        down_tech_pts = 15.0
+
+        # RSI factor
+        if rsi > 55.0:
+            up_tech_pts += min(5.0, (rsi - 50.0) * 0.25)
+            down_tech_pts -= min(4.0, (rsi - 50.0) * 0.2)
+        elif rsi < 45.0:
+            down_tech_pts += min(5.0, (50.0 - rsi) * 0.25)
+            up_tech_pts -= min(4.0, (50.0 - rsi) * 0.2)
+
+        # EMA Trend & MACD factor
+        if ema_tr > 0.05 and macd > 0:
+            up_tech_pts += 5.0
+            down_tech_pts -= 4.0
+        elif ema_tr < -0.05 and macd < 0:
+            down_tech_pts += 5.0
+            up_tech_pts -= 4.0
+
+        # Bollinger Bands %B factor
+        if bb_b > 0.6:
+            up_tech_pts += 3.0
+        elif bb_b < 0.4:
+            down_tech_pts += 3.0
+
+        # Multi-timeframe velocity agreement (10s, 30s, 60s)
         if v10 > 0 and v30 > 0 and v60 > 0:
-            up_mom_score += 12.0
-            down_mom_score -= 10.0
+            up_tech_pts += 7.0
+            down_tech_pts -= 6.0
         elif v10 < 0 and v30 < 0 and v60 < 0:
-            down_mom_score += 12.0
-            up_mom_score -= 10.0
+            down_tech_pts += 7.0
+            up_tech_pts -= 6.0
         elif v10 > 0 and v30 > 0:
-            up_mom_score += 7.0
-            down_mom_score -= 6.0
+            up_tech_pts += 4.0
+            down_tech_pts -= 3.0
         elif v10 < 0 and v30 < 0:
-            down_mom_score += 7.0
-            up_mom_score -= 6.0
+            down_tech_pts += 4.0
+            up_tech_pts -= 3.0
 
-        up_mom_score = max(0.0, min(30.0, up_mom_score))
-        down_mom_score = max(0.0, min(30.0, down_mom_score))
+        up_mom_score = max(0.0, min(30.0, up_tech_pts))
+        down_mom_score = max(0.0, min(30.0, down_tech_pts))
 
         # Total Scores (0 - 100)
         total_up = round(min(100.0, max(0.0, up_delta_score + up_ob_score + up_mom_score)), 1)
