@@ -12,6 +12,7 @@ from app.fast5m.discovery import fast_markets
 from app.fast5m.scorer import fast_scorer, ScoredAsset
 from app.fast5m.executor import fast_executor
 from app.fast5m.squad import fast_squad
+from app.fast5m.wallet import wallet_manager
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class Fast5MEngine:
             "settings": fast_executor.settings,
             "auto_trading_active": fast_executor.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes"),
             "system_health": fast_squad.get_system_health(),
+            "wallet": wallet_manager.get_status(),
         }
 
 

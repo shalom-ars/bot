@@ -59,6 +59,19 @@ class ManualOrderRequest(BaseModel):
     cost: Optional[float] = 10.0
 
 
+class WalletConnectRequest(BaseModel):
+    address: str
+    private_key: Optional[str] = None
+    proxy_address: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    api_passphrase: Optional[str] = None
+
+
+class WalletModeRequest(BaseModel):
+    mode: str  # 'demo' or 'live'
+
+
 @router.get("/board")
 def get_fast5m_board():
     """Retrieve full real-time board state for all 7 assets."""
@@ -406,3 +419,61 @@ async def test_system_health():
     from app.fast5m.squad import fast_squad
     await fast_squad._measure_network_health()
     return fast_squad.get_system_health()
+
+
+# ==========================================
+# REAL WALLET & POLYMARKET CLOB ENDPOINTS
+# ==========================================
+
+@router.get("/wallet")
+def get_fast5m_wallet():
+    """Retrieve connected wallet status, Polygon on-chain balances, and CLOB configuration."""
+    from app.fast5m.wallet import wallet_manager
+    return wallet_manager.get_status()
+
+
+@router.post("/wallet/connect")
+def connect_fast5m_wallet(req: WalletConnectRequest):
+    """Connect a real Polygon wallet and configure signing credentials."""
+    from app.fast5m.wallet import wallet_manager
+    res = wallet_manager.connect(
+        address=req.address,
+        private_key=req.private_key,
+        proxy_address=req.proxy_address,
+        api_key=req.api_key,
+        api_secret=req.api_secret,
+        api_passphrase=req.api_passphrase,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to connect wallet"))
+    return res
+
+
+@router.post("/wallet/mode")
+def set_fast5m_wallet_mode(req: WalletModeRequest):
+    """Toggle between 'demo' (Virtual $300 Paper) and 'live' (Real Wallet Polymarket CLOB)."""
+    from app.fast5m.wallet import wallet_manager
+    res = wallet_manager.set_mode(req.mode)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to switch mode"))
+    return res
+
+
+@router.post("/wallet/disconnect")
+def disconnect_fast5m_wallet():
+    """Disconnect wallet, wipe credentials, and safely revert to demo mode."""
+    from app.fast5m.wallet import wallet_manager
+    return wallet_manager.disconnect()
+
+
+@router.post("/wallet/refresh")
+def refresh_fast5m_wallet_balances():
+    """Fetch fresh on-chain Polygon USDC and POL balances."""
+    from app.fast5m.wallet import wallet_manager
+    balances = wallet_manager.refresh_balances()
+    return {
+        "status": "success",
+        "balances": balances,
+        "wallet": wallet_manager.get_status()
+    }
+

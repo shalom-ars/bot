@@ -111,3 +111,32 @@ def test_multi_pair_execution_and_aggressive_trailing():
     assert len(executor.get_active_trades()) == 2
     assert executor.active_trade["id"] == 102 # Latest trade
 
+
+def test_wallet_manager_connect_and_mode_switching():
+    from app.fast5m.wallet import wallet_manager
+
+    # Test initial demo state
+    status = wallet_manager.get_status()
+    assert status["account_mode"] == "demo"
+    assert status["chain_id"] == 137
+
+    # Test connect with valid Polygon address & mock signer key
+    dummy_addr = "0x1234567890123456789012345678901234567890"
+    dummy_pk = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    res = wallet_manager.connect(address=dummy_addr, private_key=dummy_pk)
+    assert res["success"] is True
+    assert wallet_manager.is_connected is True
+    assert wallet_manager.has_signer is True
+
+    # Test mode toggle
+    mode_res = wallet_manager.set_mode("live")
+    assert mode_res["success"] is True
+    assert wallet_manager.account_mode == "live"
+
+    # Test disconnect
+    dc_res = wallet_manager.disconnect()
+    assert dc_res["success"] is True
+    assert wallet_manager.is_connected is False
+    assert wallet_manager.account_mode == "demo"
+
+

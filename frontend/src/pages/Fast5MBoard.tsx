@@ -5,7 +5,8 @@ import {
   Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
-  BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database
+  BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
+  Eye, EyeOff, Key, AlertTriangle, Check, Copy, Link2, Unlink, X
 } from 'lucide-react';
 
 interface AssetData {
@@ -80,6 +81,7 @@ interface BoardState {
   settings: Record<string, any>;
   auto_trading_active: boolean;
   system_health?: SystemHealth;
+  wallet?: any;
 }
 
 const ASSET_META: Record<string, { name: string; color: string; bg: string; border: string; text: string }> = {
@@ -147,8 +149,27 @@ export default function Fast5MBoard() {
   const [defaultSavedTime, setDefaultSavedTime] = useState<string>('');
   const [healthTesting, setHealthTesting] = useState<boolean>(false);
   const [toggling, setToggling] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'board' | 'settings' | 'squad' | 'trades' | 'scoring'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'settings' | 'squad' | 'trades' | 'scoring' | 'wallet'>('board');
   const [selectedAssetForScore, setSelectedAssetForScore] = useState<string>('BTC');
+
+  // Real Wallet & Polymarket CLOB State
+  const [walletInfo, setWalletInfo] = useState<any | null>(null);
+  const [walletModalOpen, setWalletModalOpen] = useState<boolean>(false);
+  const [walletAddressInput, setWalletAddressInput] = useState<string>('');
+  const [privateKeyInput, setPrivateKeyInput] = useState<string>('');
+  const [proxyAddressInput, setProxyAddressInput] = useState<string>('');
+  const [apiKeyInput, setApiKeyInput] = useState<string>('');
+  const [apiSecretInput, setApiSecretInput] = useState<string>('');
+  const [apiPassphraseInput, setApiPassphraseInput] = useState<string>('');
+  const [showPrivateKey, setShowPrivateKey] = useState<boolean>(false);
+  const [showAdvancedApi, setShowAdvancedApi] = useState<boolean>(false);
+  const [connectingBrowserWallet, setConnectingBrowserWallet] = useState<boolean>(false);
+  const [savingWalletCreds, setSavingWalletCreds] = useState<boolean>(false);
+  const [refreshingWalletBal, setRefreshingWalletBal] = useState<boolean>(false);
+  const [togglingMode, setTogglingMode] = useState<boolean>(false);
+  const [walletMsg, setWalletMsg] = useState<string>('');
+  const [walletError, setWalletError] = useState<string>('');
+  const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
 
   const prevPrices = useRef<Record<string, number>>({});
   const flashStates = useRef<Record<string, 'up' | 'down' | null>>({});
@@ -203,6 +224,15 @@ export default function Fast5MBoard() {
           if (s.min_time_remaining) setMinTimeRemaining(parseFloat(s.min_time_remaining));
           if (s.max_time_remaining) setMaxTimeRemaining(parseFloat(s.max_time_remaining));
           if (s.custom_defaults_saved_at) setDefaultSavedTime(s.custom_defaults_saved_at);
+        }
+        if (res.data.wallet) {
+          setWalletInfo(res.data.wallet);
+          if (!walletAddressInput && res.data.wallet.wallet_address) {
+            setWalletAddressInput(res.data.wallet.wallet_address);
+          }
+          if (!proxyAddressInput && res.data.wallet.proxy_address) {
+            setProxyAddressInput(res.data.wallet.proxy_address);
+          }
         }
       }
     } catch (e) {
@@ -400,6 +430,160 @@ export default function Fast5MBoard() {
     return `${m}:${rem.toString().padStart(2, '0')}`;
   };
 
+  const copyAddressToClipboard = (addr: string) => {
+    if (!addr) return;
+    navigator.clipboard.writeText(addr);
+    setCopiedAddress(true);
+    setTimeout(() => setCopiedAddress(false), 2000);
+  };
+
+  const connectBrowserWallet = async () => {
+    setConnectingBrowserWallet(true);
+    setWalletError('');
+    setWalletMsg('');
+    try {
+      if (typeof window === 'undefined' || !(window as any).ethereum) {
+        setWalletError('No Web3 wallet extension detected in browser. Please install MetaMask or Rabby, or enter your address & signer key manually below.');
+        return;
+      }
+      const eth = (window as any).ethereum;
+      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      if (!accounts || accounts.length === 0) {
+        setWalletError('No account selected in wallet.');
+        return;
+      }
+      const addr = accounts[0];
+      setWalletAddressInput(addr);
+
+      // Check Polygon Mainnet Chain ID (137 = 0x89)
+      try {
+        const chainId = await eth.request({ method: 'eth_chainId' });
+        if (chainId !== '0x89' && chainId !== '137') {
+          try {
+            await eth.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x89' }],
+            });
+          } catch (switchError: any) {
+            if (switchError.code === 4902) {
+              await eth.request({
+                method: 'wallet_addEthereumChain',
+                params: [
+                  {
+                    chainId: '0x89',
+                    chainName: 'Polygon Mainnet',
+                    nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+                    rpcUrls: ['https://1rpc.io/matic', 'https://polygon-rpc.com'],
+                    blockExplorerUrls: ['https://polygonscan.com/'],
+                  },
+                ],
+              });
+            }
+          }
+        }
+      } catch (chainErr) {
+        console.warn('Chain switch warning:', chainErr);
+      }
+
+      // Connect via backend API
+      const res = await axios.post('/api/fast5m/wallet/connect', {
+        address: addr,
+        proxy_address: proxyAddressInput.trim() || undefined,
+      });
+
+      if (res.data?.wallet) {
+        setWalletInfo(res.data.wallet);
+        setWalletMsg('Browser wallet connected to Polygon Mainnet successfully!');
+      }
+    } catch (e: any) {
+      console.error('Wallet connect error:', e);
+      setWalletError(e.response?.data?.detail || e.message || 'Failed to connect browser wallet.');
+    } finally {
+      setConnectingBrowserWallet(false);
+    }
+  };
+
+  const handleSaveWalletCredentials = async () => {
+    if (!walletAddressInput.trim()) {
+      setWalletError('Please enter a valid Polygon wallet address (0x...).');
+      return;
+    }
+    setSavingWalletCreds(true);
+    setWalletError('');
+    setWalletMsg('');
+    try {
+      const res = await axios.post('/api/fast5m/wallet/connect', {
+        address: walletAddressInput.trim(),
+        private_key: privateKeyInput.trim() || undefined,
+        proxy_address: proxyAddressInput.trim() || undefined,
+        api_key: apiKeyInput.trim() || undefined,
+        api_secret: apiSecretInput.trim() || undefined,
+        api_passphrase: apiPassphraseInput.trim() || undefined,
+      });
+      if (res.data?.wallet) {
+        setWalletInfo(res.data.wallet);
+        setWalletMsg('Polygon Wallet and Polymarket CLOB configuration verified & saved!');
+        setPrivateKeyInput(''); // Clear plain private key from input after saving
+      }
+    } catch (e: any) {
+      setWalletError(e.response?.data?.detail || e.message || 'Failed to save credentials.');
+    } finally {
+      setSavingWalletCreds(false);
+    }
+  };
+
+  const handleToggleWalletMode = async (targetMode: 'demo' | 'live') => {
+    setTogglingMode(true);
+    setWalletError('');
+    setWalletMsg('');
+    try {
+      const res = await axios.post('/api/fast5m/wallet/mode', { mode: targetMode });
+      if (res.data?.wallet) {
+        setWalletInfo(res.data.wallet);
+        setWalletMsg(
+          targetMode === 'live'
+            ? 'Armed on REAL MONEY Live Execution (Polymarket CLOB)!'
+            : 'Switched to Safe Virtual DEMO ($300 Paper) Mode.'
+        );
+      }
+    } catch (e: any) {
+      setWalletError(e.response?.data?.detail || e.message || 'Failed to switch trading mode.');
+    } finally {
+      setTogglingMode(false);
+    }
+  };
+
+  const handleRefreshWalletBalance = async () => {
+    setRefreshingWalletBal(true);
+    try {
+      const res = await axios.post('/api/fast5m/wallet/refresh');
+      if (res.data?.wallet) {
+        setWalletInfo(res.data.wallet);
+        setWalletMsg('On-chain Polygon balances updated!');
+        setTimeout(() => setWalletMsg(''), 3000);
+      }
+    } catch (e: any) {
+      setWalletError(e.response?.data?.detail || e.message || 'Failed to refresh balance.');
+    } finally {
+      setRefreshingWalletBal(false);
+    }
+  };
+
+  const handleDisconnectWallet = async () => {
+    try {
+      const res = await axios.post('/api/fast5m/wallet/disconnect');
+      if (res.data?.wallet) {
+        setWalletInfo(res.data.wallet);
+        setWalletAddressInput('');
+        setPrivateKeyInput('');
+        setProxyAddressInput('');
+        setWalletMsg('Wallet disconnected safely. Reverted to Demo mode.');
+      }
+    } catch (e) {
+      console.error('Disconnect error', e);
+    }
+  };
+
   const topPick = board?.top_ranked_pair;
   const inspectedAsset = board?.assets?.find(a => a.asset === selectedAssetForScore) || topPick || board?.assets?.[0];
 
@@ -441,12 +625,51 @@ export default function Fast5MBoard() {
             <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl shadow-xs">
               <Wallet className="w-4 h-4 text-emerald-600" />
               <div className="text-left">
-                <div className="text-[10px] uppercase font-bold text-emerald-700">Total Balance</div>
+                <div className="text-[10px] uppercase font-bold text-emerald-700">Account Equity</div>
                 <div className="text-sm font-black font-mono text-emerald-900">
-                  ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
+                  ${walletInfo?.account_mode === 'live' && walletInfo?.is_connected
+                    ? walletInfo.usdc_total.toFixed(2)
+                    : ((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
                 </div>
               </div>
             </div>
+
+            {/* Real Wallet Quick Status & Modal Trigger */}
+            {walletInfo?.is_connected ? (
+              <button
+                type="button"
+                onClick={() => setWalletModalOpen(true)}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs bg-slate-900 text-white border-slate-700 hover:border-indigo-400 group"
+                title="Click to manage real wallet & CLOB settings"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${walletInfo.account_mode === 'live' ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'}`} />
+                  <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                    walletInfo.account_mode === 'live' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                  }`}>
+                    {walletInfo.account_mode === 'live' ? 'LIVE CLOB' : 'DEMO'}
+                  </span>
+                </div>
+                <div className="text-left font-mono">
+                  <div className="text-[10px] text-slate-300 font-bold flex items-center gap-1">
+                    <span>{walletInfo.masked_address || 'Connected'}</span>
+                    <span className="text-[8px] px-1 rounded bg-purple-900/60 text-purple-300 border border-purple-500/40">POLYGON</span>
+                  </div>
+                  <div className="text-xs font-black text-emerald-400">
+                    ${walletInfo.usdc_total != null ? walletInfo.usdc_total.toFixed(2) : '0.00'} USDC
+                  </div>
+                </div>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWalletModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black text-white bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 shadow-md shadow-indigo-500/20 cursor-pointer transition-all animate-pulse"
+              >
+                <Wallet className="w-3.5 h-3.5" />
+                <span>Connect Real Wallet</span>
+              </button>
+            )}
 
             {/* Round Countdown */}
             <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
@@ -517,6 +740,18 @@ export default function Fast5MBoard() {
               >
                 <Sliders className="w-3.5 h-3.5" />
                 <span>Scoring</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('wallet')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'wallet' ? 'bg-white text-purple-700 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Wallet className="w-3.5 h-3.5 text-purple-600" />
+                <span>Real Wallet & CLOB</span>
+                {walletInfo?.account_mode === 'live' && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                )}
               </button>
               <button
                 onClick={() => setActiveTab('trades')}
@@ -2314,6 +2549,549 @@ export default function Fast5MBoard() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* 6. REAL WALLET & POLYMARKET CLOB SETUP TAB */}
+      {activeTab === 'wallet' && (
+        <div className="space-y-6">
+          {/* Main Wallet Control Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-6 space-y-6">
+            
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="p-2 rounded-xl bg-purple-50 text-purple-600">
+                    <Wallet className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      Real Wallet & Polymarket CLOB Connection
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                        Polygon Mainnet (Chain 137)
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Configure your real Web3 wallet, automated CLOB signer credentials, and live execution controls
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Balances Quick Badge */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRefreshWalletBalance}
+                  disabled={refreshingWalletBal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  title="Refresh on-chain Polygon balance"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshingWalletBal ? 'animate-spin' : ''}`} />
+                  <span>{refreshingWalletBal ? 'Syncing...' : 'Refresh Balance'}</span>
+                </button>
+
+                {walletInfo?.is_connected && (
+                  <button
+                    type="button"
+                    onClick={handleDisconnectWallet}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    <Unlink className="w-3.5 h-3.5" />
+                    <span>Disconnect</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Notification Messages */}
+            {walletMsg && (
+              <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{walletMsg}</span>
+              </div>
+            )}
+            {walletError && (
+              <div className="flex items-center gap-2 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{walletError}</span>
+              </div>
+            )}
+
+            {/* TRADING MODE SELECTOR: DEMO VS REAL MONEY */}
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-2">
+                1. Select Account Execution Mode
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Option A: Virtual Demo */}
+                <button
+                  type="button"
+                  onClick={() => handleToggleWalletMode('demo')}
+                  disabled={togglingMode}
+                  className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                    walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
+                      ? 'border-blue-500 bg-blue-50/50 shadow-md ring-2 ring-blue-500/20'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                        VIRTUAL DEMO ($300 BASE)
+                      </span>
+                      {(walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected) && (
+                        <span className="p-1 rounded-full bg-blue-600 text-white">
+                          <Check className="w-3.5 h-3.5" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-base font-black text-slate-900 mt-1">Paper Trading Simulation</div>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      Zero financial risk. Simulates all 5-minute round predictions with high-fidelity fill models, live oracle tracking, and virtual balance.
+                    </p>
+                  </div>
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/60 font-mono text-xs text-blue-700 font-bold">
+                    Virtual Equity: ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
+                  </div>
+                </button>
+
+                {/* Option B: Real Money Live Trading */}
+                <button
+                  type="button"
+                  onClick={() => handleToggleWalletMode('live')}
+                  disabled={togglingMode}
+                  className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                    walletInfo?.account_mode === 'live'
+                      ? 'border-emerald-500 bg-emerald-50/50 shadow-md ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        REAL MONEY (POLYMARKET CLOB)
+                      </span>
+                      {walletInfo?.account_mode === 'live' && (
+                        <span className="p-1 rounded-full bg-emerald-600 text-white animate-pulse">
+                          <Check className="w-3.5 h-3.5" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-base font-black text-slate-900 mt-1">Live Automated Execution</div>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      Direct sub-second order submission to Polymarket. Armed with Strict 3% Hard SL, Trailing Profit Lock, and Exposure Safeguards.
+                    </p>
+                  </div>
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/60 font-mono text-xs text-emerald-700 font-bold flex items-center justify-between">
+                    <span>Spendable Polygon USDC:</span>
+                    <span className="text-sm font-black">${walletInfo?.usdc_total != null ? walletInfo.usdc_total.toFixed(2) : '0.00'}</span>
+                  </div>
+                </button>
+
+              </div>
+            </div>
+
+            {/* LIVE ON-CHAIN BALANCES OVERVIEW CARD */}
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4 sm:p-5">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-purple-600" /> On-Chain Polygon Assets (Chain ID: 137)
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  {walletInfo?.last_balance_sync ? `Last Synced: ${new Date(walletInfo.last_balance_sync).toLocaleTimeString()}` : 'Live RPC'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono">
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Spendable USDC</span>
+                  <span className="text-lg font-black text-emerald-600 mt-0.5 block">
+                    ${walletInfo?.usdc_total != null ? walletInfo.usdc_total.toFixed(2) : '0.00'}
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Native USDC (PoS)</span>
+                  <span className="text-sm font-bold text-slate-800 mt-0.5 block">
+                    ${walletInfo?.usdc_native != null ? walletInfo.usdc_native.toFixed(2) : '0.00'}
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Bridged USDC.e</span>
+                  <span className="text-sm font-bold text-slate-800 mt-0.5 block">
+                    ${walletInfo?.usdc_bridged != null ? walletInfo.usdc_bridged.toFixed(2) : '0.00'}
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">POL (Gas Reserve)</span>
+                  <span className="text-sm font-bold text-purple-700 mt-0.5 block">
+                    {walletInfo?.pol_gas_balance != null ? walletInfo.pol_gas_balance.toFixed(4) : '0.0000'} POL
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* TWO METHODS TO CONNECT WALLET */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* METHOD 1: 1-CLICK BROWSER WALLET */}
+              <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="p-1.5 rounded-lg bg-indigo-100 text-indigo-700">
+                      <Link2 className="w-4 h-4" />
+                    </span>
+                    <h3 className="text-sm font-black text-slate-900">Method 1: Connect Browser Wallet</h3>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Connect directly via MetaMask, Rabby, Coinbase Wallet, or Phantom with 1-click account and network detection.
+                  </p>
+
+                  <div className="my-4 bg-white p-4 rounded-xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Connected Address:</span>
+                      <div className="flex items-center gap-1 font-mono font-bold text-slate-900">
+                        <span>{walletInfo?.masked_address || walletAddressInput || 'Not Connected'}</span>
+                        {walletInfo?.wallet_address && (
+                          <button
+                            type="button"
+                            onClick={() => copyAddressToClipboard(walletInfo.wallet_address)}
+                            className="p-1 hover:bg-slate-100 rounded text-slate-500 cursor-pointer"
+                            title="Copy full address"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Network:</span>
+                      <span className="inline-flex items-center gap-1 font-bold text-purple-700">
+                        🟣 Polygon Mainnet (137)
+                      </span>
+                    </div>
+
+                    {copiedAddress && (
+                      <div className="text-[10px] text-emerald-600 font-bold text-right">
+                        ✓ Address copied to clipboard
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={connectBrowserWallet}
+                  disabled={connectingBrowserWallet}
+                  className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
+                >
+                  <Wallet className="w-4 h-4" />
+                  <span>{connectingBrowserWallet ? 'Connecting Web3 Wallet...' : 'Connect MetaMask / Browser Extension'}</span>
+                </button>
+              </div>
+
+              {/* METHOD 2: AUTOMATED 5M BOT SIGNER KEY */}
+              <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="p-1.5 rounded-lg bg-purple-100 text-purple-700">
+                      <Key className="w-4 h-4" />
+                    </span>
+                    <h3 className="text-sm font-black text-slate-900">Method 2: Automated Bot Signer Key</h3>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Allows the bot to automatically sign 5-minute round orders without manual browser popups on every 250ms tick.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {/* Wallet Address */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Polygon Wallet Address:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="0x..."
+                      value={walletAddressInput}
+                      onChange={(e) => setWalletAddressInput(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-900 focus:outline-hidden focus:border-purple-500"
+                    />
+                  </div>
+
+                  {/* Private Key / Signer Key */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-bold text-slate-700">
+                        Signer Private Key (Sub-Second Execution):
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowPrivateKey(!showPrivateKey)}
+                        className="text-[10px] text-purple-600 font-bold flex items-center gap-0.5 hover:underline cursor-pointer"
+                      >
+                        {showPrivateKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        <span>{showPrivateKey ? 'Hide' : 'Show'}</span>
+                      </button>
+                    </div>
+                    <input
+                      type={showPrivateKey ? 'text' : 'password'}
+                      placeholder={walletInfo?.has_signer ? '•••••••••••••••••••••••••••••••••••• (Signer Active)' : 'Paste 64-character private key'}
+                      value={privateKeyInput}
+                      onChange={(e) => setPrivateKeyInput(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-900 focus:outline-hidden focus:border-purple-500"
+                    />
+                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                      🔒 Stored locally/server-side only. We recommend using a dedicated trading sub-wallet funded with $50–$300.
+                    </span>
+                  </div>
+
+                  {/* Polymarket Proxy Address (Optional) */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Polymarket Proxy Address (Optional for Magic/Email users):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="0x... (Leave empty if standard EOA)"
+                      value={proxyAddressInput}
+                      onChange={(e) => setProxyAddressInput(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-mono text-xs text-slate-800 focus:outline-hidden focus:border-purple-500"
+                    />
+                  </div>
+
+                  {/* Advanced CLOB API Keys Accordion */}
+                  <div className="pt-2 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedApi(!showAdvancedApi)}
+                      className="text-[11px] font-bold text-purple-700 hover:text-purple-800 flex items-center justify-between w-full cursor-pointer"
+                    >
+                      <span>Advanced: Polymarket CLOB API Keys (Optional)</span>
+                      <span>{showAdvancedApi ? '▲ Hide' : '▼ Show'}</span>
+                    </button>
+                    {showAdvancedApi && (
+                      <div className="mt-2 space-y-2 p-3 bg-slate-100/70 rounded-xl border border-slate-200">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-600 block mb-0.5">API Key:</label>
+                          <input
+                            type="text"
+                            placeholder="Polymarket API Key"
+                            value={apiKeyInput}
+                            onChange={(e) => setApiKeyInput(e.target.value)}
+                            className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-mono text-[11px] text-slate-800"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-600 block mb-0.5">API Secret:</label>
+                            <input
+                              type="password"
+                              placeholder="API Secret"
+                              value={apiSecretInput}
+                              onChange={(e) => setApiSecretInput(e.target.value)}
+                              className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-mono text-[11px] text-slate-800"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-600 block mb-0.5">API Passphrase:</label>
+                            <input
+                              type="password"
+                              placeholder="Passphrase"
+                              value={apiPassphraseInput}
+                              onChange={(e) => setApiPassphraseInput(e.target.value)}
+                              className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-mono text-[11px] text-slate-800"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveWalletCredentials}
+                    disabled={savingWalletCreds}
+                    className="w-full py-2.5 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white rounded-xl text-xs font-black shadow-md shadow-purple-500/20 cursor-pointer transition-all flex items-center justify-center gap-2 mt-2"
+                  >
+                    <Key className="w-4 h-4" />
+                    <span>{savingWalletCreds ? 'Verifying & Saving...' : 'Save & Authorize Bot Signer'}</span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* SAFETY & AUDIT NOTICE */}
+            <div className="bg-amber-50/70 border border-amber-200 p-3.5 rounded-2xl flex items-start gap-3 text-xs text-amber-900">
+              <Shield className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold">Automated Risk Safeguards Active in Live Execution:</div>
+                <div className="text-[11px] text-amber-800 leading-relaxed">
+                  When Live Mode is active, all orders strictly enforce your <strong>Hard Stop-Loss (Capped at 3%)</strong>, <strong>Zero-Slippage Trailing Profit Lock</strong>, and <strong>Max Portfolio Margin Safeguard ({maxPortfolioMarginPct}%)</strong>. Never fund a trading wallet with more capital than your set risk tolerance.
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 7. INTERACTIVE WALLET CONNECTION MODAL */}
+      {walletModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-xl w-full p-5 sm:p-6 space-y-5 relative overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-purple-50 text-purple-600">
+                  <Wallet className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Connect Real Wallet (Polymarket CLOB)</h3>
+                  <p className="text-[11px] text-slate-500">Polygon Mainnet (Chain ID 137) • Sub-Second Order Execution</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWalletModalOpen(false)}
+                className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Notification Messages in Modal */}
+            {walletMsg && (
+              <div className="flex items-center gap-2 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{walletMsg}</span>
+              </div>
+            )}
+            {walletError && (
+              <div className="flex items-center gap-2 p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{walletError}</span>
+              </div>
+            )}
+
+            {/* Balances Sub-Bar */}
+            {walletInfo?.is_connected && (
+              <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Connected Address</span>
+                  <span className="font-bold text-slate-800">{walletInfo.masked_address}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Spendable USDC</span>
+                  <span className="font-black text-emerald-600">${walletInfo.usdc_total.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[10px] block">POL Gas</span>
+                  <span className="font-bold text-purple-700">{walletInfo.pol_gas_balance.toFixed(3)} POL</span>
+                </div>
+              </div>
+            )}
+
+            {/* 1-Click Connect Button */}
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={connectBrowserWallet}
+                disabled={connectingBrowserWallet}
+                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
+              >
+                <Wallet className="w-4 h-4" />
+                <span>{connectingBrowserWallet ? 'Connecting Web3 Wallet...' : '1-Click Connect MetaMask / Rabby'}</span>
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div className="relative flex py-1 items-center">
+              <div className="grow border-t border-slate-200"></div>
+              <span className="shrink mx-3 text-slate-400 text-[10px] uppercase font-bold">OR Automated Signer Key</span>
+              <div className="grow border-t border-slate-200"></div>
+            </div>
+
+            {/* Manual Form */}
+            <div className="space-y-2.5">
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Polygon Wallet Address (0x...):</label>
+                <input
+                  type="text"
+                  placeholder="0x..."
+                  value={walletAddressInput}
+                  onChange={(e) => setWalletAddressInput(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-800 focus:outline-hidden focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-slate-700">Signer Private Key (for 24/7 fast execution):</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrivateKey(!showPrivateKey)}
+                    className="text-[10px] text-purple-600 font-bold flex items-center gap-0.5 hover:underline cursor-pointer"
+                  >
+                    {showPrivateKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showPrivateKey ? 'Hide' : 'Show'}</span>
+                  </button>
+                </div>
+                <input
+                  type={showPrivateKey ? 'text' : 'password'}
+                  placeholder={walletInfo?.has_signer ? '•••••••••••••••••••••••••••••••••••• (Signer Active)' : 'Paste 64-character private key'}
+                  value={privateKeyInput}
+                  onChange={(e) => setPrivateKeyInput(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-800 focus:outline-hidden focus:border-purple-500"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveWalletCredentials}
+                disabled={savingWalletCreds}
+                className="w-full py-2.5 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white rounded-xl text-xs font-black shadow-md shadow-purple-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
+              >
+                <Key className="w-4 h-4" />
+                <span>{savingWalletCreds ? 'Verifying...' : 'Save & Authorize Signer Key'}</span>
+              </button>
+            </div>
+
+            {/* Mode Toggle inside Modal */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600">Active Trading Mode:</span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleToggleWalletMode('demo')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
+                      ? 'bg-blue-600 text-white font-black shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Demo ($300)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleWalletMode('live')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    walletInfo?.account_mode === 'live'
+                      ? 'bg-emerald-600 text-white font-black shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Live (CLOB)
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
