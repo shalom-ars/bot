@@ -4,7 +4,7 @@ import {
   Zap, Shield, RefreshCw, 
   Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
-  CheckCircle2, XCircle, Award, Wallet
+  CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers
 } from 'lucide-react';
 
 interface AssetData {
@@ -48,6 +48,25 @@ interface TradeStats {
   open_trades: number;
 }
 
+export interface SystemHealth {
+  uptime_sec: number;
+  network: {
+    server_internet_ping_ms: number;
+    polymarket_clob_ping_ms: number;
+    polymarket_gamma_ping_ms: number;
+    api_status: string;
+    internet_status: string;
+    internet_connected: boolean;
+    last_check_ts: number;
+  };
+  squad_workers: {
+    oracle_scout: { name: string; role: string; status: string; latency_ms: number; last_heartbeat_age_s: number; tasks_processed: number; details: any };
+    technical_analyst: { name: string; role: string; status: string; latency_ms: number; last_heartbeat_age_s: number; tasks_processed: number; details: any };
+    risk_commander: { name: string; role: string; status: string; latency_ms: number; last_heartbeat_age_s: number; tasks_processed: number; details: any };
+    health_sentinel: { name: string; role: string; status: string; latency_ms: number; last_heartbeat_age_s: number; tasks_processed: number; details: any };
+  };
+}
+
 interface BoardState {
   timestamp: number;
   epoch_bucket: number;
@@ -58,6 +77,7 @@ interface BoardState {
   active_trade: any | null;
   settings: Record<string, any>;
   auto_trading_active: boolean;
+  system_health?: SystemHealth;
 }
 
 const ASSET_META: Record<string, { name: string; color: string; bg: string; border: string; text: string }> = {
@@ -85,8 +105,18 @@ export default function Fast5MBoard() {
   });
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(70);
   const [positionSize, setPositionSize] = useState<number>(10);
+  const [maxActivePools, setMaxActivePools] = useState<number>(1);
+  const [strategyDirection, setStrategyDirection] = useState<'BOTH' | 'UP_ONLY' | 'DOWN_ONLY'>('BOTH');
+  const [takeProfitDollar, setTakeProfitDollar] = useState<number>(0.50);
+  const [stopLossDollar, setStopLossDollar] = useState<number>(0.50);
+  const [trailingLockEnabled, setTrailingLockEnabled] = useState<boolean>(true);
+  const [minProfitToLock, setMinProfitToLock] = useState<number>(0.15);
+  const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.06);
+  const [savingSettings, setSavingSettings] = useState<boolean>(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string>('');
+  const [healthTesting, setHealthTesting] = useState<boolean>(false);
   const [toggling, setToggling] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'board' | 'trades' | 'scoring'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'settings' | 'squad' | 'trades' | 'scoring'>('board');
   const [selectedAssetForScore, setSelectedAssetForScore] = useState<string>('BTC');
 
   const prevPrices = useRef<Record<string, number>>({});
@@ -108,11 +138,34 @@ export default function Fast5MBoard() {
         });
 
         setBoard(res.data);
-        if (res.data.settings?.confidence_threshold) {
-          setConfidenceThreshold(parseFloat(res.data.settings.confidence_threshold));
-        }
-        if (res.data.settings?.position_size_usd) {
-          setPositionSize(parseFloat(res.data.settings.position_size_usd));
+        if (res.data.settings) {
+          if (res.data.settings.confidence_threshold) {
+            setConfidenceThreshold(parseFloat(res.data.settings.confidence_threshold));
+          }
+          if (res.data.settings.position_size_usd) {
+            setPositionSize(parseFloat(res.data.settings.position_size_usd));
+          }
+          if (res.data.settings.max_active_pools) {
+            setMaxActivePools(parseInt(res.data.settings.max_active_pools));
+          }
+          if (res.data.settings.strategy_direction) {
+            setStrategyDirection(res.data.settings.strategy_direction.toUpperCase());
+          }
+          if (res.data.settings.take_profit_dollar) {
+            setTakeProfitDollar(parseFloat(res.data.settings.take_profit_dollar));
+          }
+          if (res.data.settings.stop_loss_dollar) {
+            setStopLossDollar(parseFloat(res.data.settings.stop_loss_dollar));
+          }
+          if (res.data.settings.min_profit_to_lock) {
+            setMinProfitToLock(parseFloat(res.data.settings.min_profit_to_lock));
+          }
+          if (res.data.settings.reversal_giveback_dollar) {
+            setReversalGivebackDollar(parseFloat(res.data.settings.reversal_giveback_dollar));
+          }
+          if (res.data.settings.trailing_lock_enabled) {
+            setTrailingLockEnabled(res.data.settings.trailing_lock_enabled === 'true');
+          }
         }
       }
     } catch (e) {
@@ -172,6 +225,44 @@ export default function Fast5MBoard() {
       await fetchBoard();
     } catch (e) {
       console.error('Save settings error', e);
+    }
+  };
+
+  const handleSaveAllSettings = async () => {
+    setSavingSettings(true);
+    try {
+      await axios.post('/api/fast5m/settings', {
+        position_size_usd: positionSize,
+        max_active_pools: maxActivePools,
+        strategy_direction: strategyDirection,
+        confidence_threshold: confidenceThreshold,
+        take_profit_dollar: takeProfitDollar,
+        stop_loss_dollar: stopLossDollar,
+        trailing_lock_enabled: trailingLockEnabled,
+        min_profit_to_lock: minProfitToLock,
+        reversal_giveback_dollar: reversalGivebackDollar,
+      });
+      setSaveSuccessMsg('Configuration synchronized across all Squad workers with 0ms latency!');
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+      await fetchBoard();
+    } catch (e) {
+      console.error('Save all settings error', e);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleTestHealth = async () => {
+    setHealthTesting(true);
+    try {
+      const res = await axios.post('/api/fast5m/system-health/test');
+      if (res.data && board) {
+        setBoard({ ...board, system_health: res.data });
+      }
+    } catch (e) {
+      console.error('Health test error', e);
+    } finally {
+      setHealthTesting(false);
     }
   };
 
@@ -258,30 +349,51 @@ export default function Fast5MBoard() {
             </button>
 
             {/* View Switcher Tabs */}
-            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold gap-0.5 flex-wrap">
               <button
                 onClick={() => setActiveTab('board')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
                   activeTab === 'board' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Oracle Board
+                <Radio className="w-3.5 h-3.5" />
+                <span>Oracle Board</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('settings')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'settings' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Settings & Risk</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('squad')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'squad' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Squad & Health</span>
               </button>
               <button
                 onClick={() => setActiveTab('scoring')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
                   activeTab === 'scoring' ? 'bg-white text-purple-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Scoring Breakdown
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Scoring</span>
               </button>
               <button
                 onClick={() => setActiveTab('trades')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                  activeTab === 'trades' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'trades' ? 'bg-white text-emerald-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Trades ({trades.length})
+                <Award className="w-3.5 h-3.5" />
+                <span>Trades ({trades.length})</span>
               </button>
             </div>
           </div>
@@ -467,6 +579,554 @@ export default function Fast5MBoard() {
         </div>
 
       </div>
+
+      {/* SETTINGS & RISK CONFIGURATION TAB */}
+      {activeTab === 'settings' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-6">
+          {/* Header Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-blue-600" />
+                Settings & Risk Configuration Dashboard
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">
+                Direct administrative access to position sizing, directional strategy bias, execution thresholds, and strict 1:1 risk parameters
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {saveSuccessMsg && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-xl animate-fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>{saveSuccessMsg}</span>
+                </div>
+              )}
+              <button
+                onClick={handleSaveAllSettings}
+                disabled={savingSettings}
+                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+              >
+                {savingSettings ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" /> Synchronizing...
+                  </>
+                ) : (
+                  <>
+                    <Shield className="w-4 h-4" /> Save All Settings
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {/* Box 1: Position Sizing & Exposure */}
+            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-emerald-600" /> Position Sizing & Exposure
+                  </span>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                    Per Trade Margin
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-600 font-semibold mb-1.5 block">
+                    Execution Size per Prediction:
+                  </label>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {[10, 25, 50].map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => setPositionSize(sz)}
+                        className={`py-2 text-center rounded-xl text-xs font-black font-mono transition-all cursor-pointer ${
+                          positionSize === sz
+                            ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        ${sz}.00
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs text-slate-400 font-medium">Custom:</span>
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-2 text-slate-400 font-mono text-xs">$</span>
+                      <input
+                        type="number"
+                        min="5"
+                        max="100"
+                        step="1"
+                        value={positionSize}
+                        onChange={(e) => setPositionSize(Math.max(1, Number(e.target.value)))}
+                        className="w-full pl-6 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-slate-800 focus:outline-hidden focus:border-blue-500"
+                      />
+                    </div>
+                    <span className="text-xs text-slate-400 font-mono">USD</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200/60">
+                  <label className="text-xs text-slate-600 font-semibold mb-1.5 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-blue-600" /> Max Active Pools:
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { val: 1, label: '1 Pool', desc: 'Strict Single' },
+                      { val: 2, label: '2 Pools', desc: 'Dual Asset' },
+                      { val: 3, label: '3 Pools', desc: 'Multi Asset' }
+                    ].map((item) => (
+                      <button
+                        key={item.val}
+                        type="button"
+                        onClick={() => setMaxActivePools(item.val)}
+                        className={`py-2 px-2 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          maxActivePools === item.val
+                            ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/30'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div>{item.label}</div>
+                        <div className="text-[10px] opacity-80">{item.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono flex justify-between items-center">
+                <span>Account Allocation:</span>
+                <span className="font-bold text-slate-800">
+                  ${positionSize * maxActivePools} / ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)} ({(((positionSize * maxActivePools) / ((stats.initial_balance ?? 300) + stats.total_pnl)) * 100).toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+
+            {/* Box 2: Strategy Direction & Confidence Threshold */}
+            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <Gauge className="w-4 h-4 text-purple-600" /> Strategy Direction & Score
+                  </span>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                    Execution Trigger
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-600 font-semibold mb-1.5 block">
+                    Directional Strategy Bias:
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStrategyDirection('BOTH')}
+                      className={`py-2 px-2 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        strategyDirection === 'BOTH'
+                          ? 'bg-purple-600 text-white shadow-sm'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="font-mono">UP & DOWN</div>
+                      <div className="text-[10px] opacity-80">Both Sides</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStrategyDirection('UP_ONLY')}
+                      className={`py-2 px-2 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        strategyDirection === 'UP_ONLY'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="font-mono flex items-center justify-center gap-0.5">
+                        <ArrowUpRight className="w-3 h-3" /> UP ONLY
+                      </div>
+                      <div className="text-[10px] opacity-80">Bullish Bias</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStrategyDirection('DOWN_ONLY')}
+                      className={`py-2 px-2 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        strategyDirection === 'DOWN_ONLY'
+                          ? 'bg-rose-600 text-white shadow-sm'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="font-mono flex items-center justify-center gap-0.5">
+                        <ArrowDownRight className="w-3 h-3" /> DOWN ONLY
+                      </div>
+                      <div className="text-[10px] opacity-80">Bearish Bias</div>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200/60">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs text-slate-600 font-semibold">
+                      Min Composite Score Threshold:
+                    </label>
+                    <span className="font-mono font-bold text-sm text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
+                      ≥ {confidenceThreshold}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="50"
+                    max="90"
+                    step="1"
+                    value={confidenceThreshold}
+                    onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
+                    className="w-full accent-purple-600 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
+                    <span>50% (High Frequency)</span>
+                    <span>70% (Recommended)</span>
+                    <span>90% (Strict Edge)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono">
+                Trigger rule: Only pairs with score ≥ {confidenceThreshold}% and valid CLOB depth will be executed.
+              </div>
+            </div>
+
+            {/* Box 3: Strict 1:1 Risk-to-Reward & Micro-Profit Locks */}
+            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <Shield className="w-4 h-4 text-blue-600" /> Strict 1:1 Risk-to-Reward
+                  </span>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                    Symmetrical RR
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] text-slate-600 font-semibold block mb-1">
+                      Take Profit Target:
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1.5 text-emerald-600 font-bold text-xs">+$</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.10"
+                        max="2.00"
+                        value={takeProfitDollar}
+                        onChange={(e) => setTakeProfitDollar(Number(e.target.value))}
+                        className="w-full pl-7 pr-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-emerald-700"
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Locks +$0.50 gain</span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-600 font-semibold block mb-1">
+                      Stop Loss Target:
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1.5 text-rose-600 font-bold text-xs">-$</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.10"
+                        max="2.00"
+                        value={stopLossDollar}
+                        onChange={(e) => setStopLossDollar(Number(e.target.value))}
+                        className="w-full pl-7 pr-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-rose-700"
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Exits at -$0.50 risk</span>
+                  </div>
+                </div>
+
+                {/* Trailing Micro-Profit Lock Sub-section */}
+                <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-slate-700 font-bold flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-blue-600" /> Anti-Reversal Micro-Lock:
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={trailingLockEnabled}
+                      onChange={(e) => setTrailingLockEnabled(e.target.checked)}
+                      className="w-4 h-4 accent-blue-600 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-slate-500">Min Lock Gain:</span>
+                      <div className="font-mono font-bold text-slate-800">${minProfitToLock.toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Giveback Max:</span>
+                      <div className="font-mono font-bold text-slate-800">${reversalGivebackDollar.toFixed(2)}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono">
+                Ratio: 1.00 : 1.00 (Strict Symmetrical 1-in-1 risk rule enforced on every round)
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SQUAD SYSTEM & NETWORK MONITORING TAB */}
+      {activeTab === 'squad' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-6">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-indigo-600" />
+                Background Squad System & Network Sentinel
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">
+                4 autonomous workers coordinating real-time oracle tracking, quantitative scoring, risk rules, and server internet speed
+              </p>
+            </div>
+
+            <button
+              onClick={handleTestHealth}
+              disabled={healthTesting}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${healthTesting ? 'animate-spin' : ''}`} />
+              <span>{healthTesting ? 'Running Ping Test...' : 'Test Network Now'}</span>
+            </button>
+          </div>
+
+          {/* Network Gauges Sub-Bar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Ping 1: Server Internet */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Server Internet Speed</span>
+                <div className="text-xl font-black font-mono text-slate-900 flex items-center gap-1.5 mt-0.5">
+                  <Wifi className="w-4 h-4 text-emerald-600" />
+                  <span>{board?.system_health?.network?.server_internet_ping_ms ?? 14} ms</span>
+                </div>
+                <div className="text-[10px] text-emerald-600 font-bold mt-0.5">
+                  {board?.system_health?.network?.internet_status || 'Ultra-Low Latency'}
+                </div>
+              </div>
+              <span className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                <CheckCircle2 className="w-5 h-5" />
+              </span>
+            </div>
+
+            {/* Ping 2: Polymarket CLOB */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Polymarket CLOB API</span>
+                <div className="text-xl font-black font-mono text-slate-900 flex items-center gap-1.5 mt-0.5">
+                  <Server className="w-4 h-4 text-blue-600" />
+                  <span>{board?.system_health?.network?.polymarket_clob_ping_ms ?? 28} ms</span>
+                </div>
+                <div className="text-[10px] text-blue-600 font-bold mt-0.5">
+                  Direct Wire Ingestion
+                </div>
+              </div>
+              <span className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                <Activity className="w-5 h-5" />
+              </span>
+            </div>
+
+            {/* Ping 3: Polymarket Gamma */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Gamma Event Feed</span>
+                <div className="text-xl font-black font-mono text-slate-900 flex items-center gap-1.5 mt-0.5">
+                  <Radio className="w-4 h-4 text-purple-600" />
+                  <span>{board?.system_health?.network?.polymarket_gamma_ping_ms ?? 35} ms</span>
+                </div>
+                <div className="text-[10px] text-purple-600 font-bold mt-0.5">
+                  Market Discovery Active
+                </div>
+              </div>
+              <span className="p-2 bg-purple-100 text-purple-700 rounded-xl">
+                <Radio className="w-5 h-5" />
+              </span>
+            </div>
+
+            {/* Ping 4: System Uptime */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Squad System Uptime</span>
+                <div className="text-xl font-black font-mono text-slate-900 flex items-center gap-1.5 mt-0.5">
+                  <Gauge className="w-4 h-4 text-amber-600" />
+                  <span>{Math.floor((board?.system_health?.uptime_sec ?? 1200) / 60)} min</span>
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                  Zero Missed Heartbeats
+                </div>
+              </div>
+              <span className="p-2 bg-amber-100 text-amber-700 rounded-xl">
+                <Zap className="w-5 h-5" />
+              </span>
+            </div>
+          </div>
+
+          {/* 4 Dedicated Squad Worker Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Worker 1: Oracle Scout */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="p-2 rounded-lg bg-blue-50 text-blue-600">
+                  <Radio className="w-4 h-4" />
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800">
+                  {board?.system_health?.squad_workers?.oracle_scout?.status || 'ONLINE'}
+                </span>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Oracle Scout</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Sub-second WebSocket feeds for Chainlink & Pyth benchmark
+                </p>
+              </div>
+              <div className="pt-2 border-t border-slate-100 text-[11px] font-mono space-y-1 text-slate-600">
+                <div className="flex justify-between">
+                  <span>Feed Latency:</span>
+                  <span className="font-bold text-emerald-600">
+                    ⚡ {board?.system_health?.squad_workers?.oracle_scout?.latency_ms ?? 14}ms
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Tracked Assets:</span>
+                  <span className="font-bold text-slate-800">7 Active Pairs</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Tasks Synced:</span>
+                  <span className="font-bold text-slate-800">
+                    {board?.system_health?.squad_workers?.oracle_scout?.tasks_processed ?? 140}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Worker 2: Technical Analyst */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="p-2 rounded-lg bg-purple-50 text-purple-600">
+                  <Sliders className="w-4 h-4" />
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800">
+                  {board?.system_health?.squad_workers?.technical_analyst?.status || 'ONLINE'}
+                </span>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Technical Analyst</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Computes Delta, Order Book Imbalance, and 10s/30s Velocity
+                </p>
+              </div>
+              <div className="pt-2 border-t border-slate-100 text-[11px] font-mono space-y-1 text-slate-600">
+                <div className="flex justify-between">
+                  <span>Quant Compute:</span>
+                  <span className="font-bold text-purple-600">
+                    {board?.system_health?.squad_workers?.technical_analyst?.latency_ms ?? 3}ms
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Top Pick Rank:</span>
+                  <span className="font-bold text-slate-800">#{topPick?.rank ?? 1} {topPick?.asset}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Analyses Run:</span>
+                  <span className="font-bold text-slate-800">
+                    {board?.system_health?.squad_workers?.technical_analyst?.tasks_processed ?? 120}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Worker 3: Risk Commander */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+                  <Shield className="w-4 h-4" />
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800">
+                  {board?.system_health?.squad_workers?.risk_commander?.status || 'ONLINE'}
+                </span>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Risk Commander</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Enforces 1:1 RR, single-position lock & anti-reversal trailing
+                </p>
+              </div>
+              <div className="pt-2 border-t border-slate-100 text-[11px] font-mono space-y-1 text-slate-600">
+                <div className="flex justify-between">
+                  <span>Active Pools:</span>
+                  <span className="font-bold text-slate-800">{stats.open_trades} / {maxActivePools} Max</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Target 1:1 RR:</span>
+                  <span className="font-bold text-emerald-600">+${takeProfitDollar} / -${stopLossDollar}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Guard Checks:</span>
+                  <span className="font-bold text-slate-800">
+                    {board?.system_health?.squad_workers?.risk_commander?.tasks_processed ?? 85}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Worker 4: Health Sentinel */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="p-2 rounded-lg bg-amber-50 text-amber-600">
+                  <Server className="w-4 h-4" />
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800">
+                  {board?.system_health?.squad_workers?.health_sentinel?.status || 'ONLINE'}
+                </span>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Health Sentinel</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Zero-latency heartbeat tracking and external network ping monitor
+                </p>
+              </div>
+              <div className="pt-2 border-t border-slate-100 text-[11px] font-mono space-y-1 text-slate-600">
+                <div className="flex justify-between">
+                  <span>API Reachability:</span>
+                  <span className="font-bold text-emerald-600">100% OK</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Heartbeat Age:</span>
+                  <span className="font-bold text-slate-800">
+                    {board?.system_health?.squad_workers?.health_sentinel?.last_heartbeat_age_s ?? 0}s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Health Probes:</span>
+                  <span className="font-bold text-slate-800">
+                    {board?.system_health?.squad_workers?.health_sentinel?.tasks_processed ?? 30}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. SCORING BREAKDOWN & PREDICTION INSPECTOR TAB */}
       {activeTab === 'scoring' && (

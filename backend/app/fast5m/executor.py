@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_SETTINGS = {
     "auto_trading_enabled": "true",
     "total_balance_usd": "300.0",
-    "confidence_threshold": "55.0",       # 55.0 confidence threshold to ensure the top-ranked pair trades actively
-    "position_size_usd": "10.0",
+    "confidence_threshold": "70.0",       # Execution threshold: minimum composite confidence rating of >= 70
+    "position_size_usd": "10.0",          # Admin sizing: $10, $25, $50
+    "max_active_pools": "1",              # Max Active Pools: 1 (single-position risk strict), 2, 3
+    "strategy_direction": "BOTH",         # Strategy Direction: BOTH (Up/Down), UP_ONLY, DOWN_ONLY
     "take_profit_dollar": "0.50",         # Strict 1:1 RR: Target Profit $0.50 (50 cents)
     "stop_loss_dollar": "0.50",           # Strict 1:1 RR: Stop Loss $0.50 (50 cents)
     "trailing_lock_enabled": "true",      # Dynamic micro-profit lock
@@ -80,24 +82,22 @@ class FastExecutor:
                 else:
                     self.settings[k] = record.value
 
-            # Guarantee active auto-trading and $300 balance
+            # Guarantee active auto-trading, $300 balance, and 1:1 RR settings
             self.settings["auto_trading_enabled"] = "true"
             self.settings["total_balance_usd"] = "300.0"
-            for k in ("auto_trading_enabled", "total_balance_usd"):
+            self.settings["take_profit_dollar"] = "0.50"
+            self.settings["stop_loss_dollar"] = "0.50"
+            
+            # Ensure max_active_pools and strategy_direction exist in db
+            if "max_active_pools" not in self.settings:
+                self.settings["max_active_pools"] = "1"
+            if "strategy_direction" not in self.settings:
+                self.settings["strategy_direction"] = "BOTH"
+
+            for k in ("auto_trading_enabled", "total_balance_usd", "take_profit_dollar", "stop_loss_dollar", "max_active_pools", "strategy_direction"):
                 rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
                 if rec:
                     rec.value = self.settings[k]
-                else:
-                    db.add(Fast5MSetting(key=k, value=self.settings[k]))
-
-            # Guarantee 1:1 Risk-to-Reward symmetry ($0.50 TP / $0.50 SL) and 55.0 threshold
-            self.settings["take_profit_dollar"] = "0.50"
-            self.settings["stop_loss_dollar"] = "0.50"
-            self.settings["confidence_threshold"] = "55.0"
-            for k in ("take_profit_dollar", "stop_loss_dollar", "confidence_threshold"):
-                rec_k = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
-                if rec_k:
-                    rec_k.value = self.settings[k]
                 else:
                     db.add(Fast5MSetting(key=k, value=self.settings[k]))
 
@@ -161,7 +161,8 @@ class FastExecutor:
         while self.running:
             try:
                 auto_enabled = self.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes")
-                if auto_enabled and not self.active_trade:
+                max_pools = int(self.settings.get("max_active_pools", 1))
+                if auto_enabled and (not self.active_trade or max_pools > 1):
                     await self._check_and_execute_top_pair()
             except asyncio.CancelledError:
                 break
@@ -183,6 +184,18 @@ class FastExecutor:
         if not top_asset.is_tradable or top_asset.confidence < conf_threshold:
             return
 
+        # Check Strategy Direction (BOTH, UP_ONLY, DOWN_ONLY)
+        strat_dir = self.settings.get("strategy_direction", "BOTH").upper()
+        if strat_dir == "UP_ONLY" and top_asset.direction != "UP":
+            return
+        if strat_dir == "DOWN_ONLY" and top_asset.direction != "DOWN":
+            return
+
+        # Check Max Active Pools risk limit
+        max_pools = int(self.settings.get("max_active_pools", 1))
+        if self.active_trade and max_pools <= 1:
+            return
+
         market = fast_markets.get_market(top_asset.asset)
         if not market:
             return
@@ -192,8 +205,8 @@ class FastExecutor:
         if epoch_key in self._traded_epochs:
             return
 
-        min_time = float(self.settings.get("min_time_remaining", 30.0))
-        max_time = float(self.settings.get("max_time_remaining", 260.0))
+        min_time = float(self.settings.get("min_time_remaining", 20.0))
+        max_time = float(self.settings.get("max_time_remaining", 280.0))
         if not (min_time <= top_asset.time_remaining_sec <= max_time):
             return
 

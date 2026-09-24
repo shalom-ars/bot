@@ -11,6 +11,7 @@ from app.fast5m.oracle import fast_oracle, SUPPORTED_ASSETS
 from app.fast5m.discovery import fast_markets
 from app.fast5m.scorer import fast_scorer, ScoredAsset
 from app.fast5m.executor import fast_executor
+from app.fast5m.squad import fast_squad
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,14 @@ class Fast5MEngine:
         self.running = True
         logger.info("[Fast5M Engine] Starting master engine for all 7 fast prediction assets...")
         
-        # Start child subsystems
+        # Start child subsystems and background Squad system
+        await fast_squad.start()
         await fast_oracle.start()
         await fast_markets.start()
         await fast_executor.start()
         
         self._broadcast_task = asyncio.create_task(self._broadcast_loop())
-        logger.info("[Fast5M Engine] All Fast 5M subsystems active and synchronized.")
+        logger.info("[Fast5M Engine] All Fast 5M subsystems and Squad workers active and synchronized.")
 
     async def stop(self):
         self.running = False
@@ -41,6 +43,7 @@ class Fast5MEngine:
         await fast_executor.stop()
         await fast_markets.stop()
         await fast_oracle.stop()
+        await fast_squad.stop()
         logger.info("[Fast5M Engine] Stopped.")
 
     async def _broadcast_loop(self):
@@ -77,6 +80,23 @@ class Fast5MEngine:
         epoch_bucket = now_ts - (now_ts % 300)
         global_remaining_sec = max(0, (epoch_bucket + 300) - now_ts)
 
+        # Update Squad worker heartbeats
+        fast_squad.oracle_scout.heartbeat(
+            latency_ms=assets_data[0].get("latency_ms", 18.0) if assets_data else 18.0,
+            details={"active_streams": len(assets_data), "source": "Chainlink/Pyth/Hyperliquid"}
+        )
+        fast_squad.technical_analyst.heartbeat(
+            details={"ranked_assets": len(assets_data), "top_pick": top_pick.get("asset") if top_pick else None}
+        )
+        fast_squad.risk_commander.heartbeat(
+            details={
+                "position_size": fast_executor.settings.get("position_size_usd", "10.0"),
+                "max_pools": fast_executor.settings.get("max_active_pools", "1"),
+                "direction": fast_executor.settings.get("strategy_direction", "BOTH"),
+                "has_active_trade": fast_executor.active_trade is not None
+            }
+        )
+
         return {
             "timestamp": now,
             "epoch_bucket": epoch_bucket,
@@ -87,6 +107,7 @@ class Fast5MEngine:
             "active_trade": fast_executor.active_trade,
             "settings": fast_executor.settings,
             "auto_trading_active": fast_executor.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes"),
+            "system_health": fast_squad.get_system_health(),
         }
 
 

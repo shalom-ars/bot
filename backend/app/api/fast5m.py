@@ -19,6 +19,8 @@ class SettingsUpdate(BaseModel):
     total_balance_usd: Optional[float] = None
     confidence_threshold: Optional[float] = None
     position_size_usd: Optional[float] = None
+    max_active_pools: Optional[int] = None
+    strategy_direction: Optional[str] = None
     take_profit_dollar: Optional[float] = None
     stop_loss_dollar: Optional[float] = None
     min_profit_to_lock: Optional[float] = None
@@ -141,6 +143,10 @@ def update_fast5m_settings(payload: SettingsUpdate):
         updates["confidence_threshold"] = str(payload.confidence_threshold)
     if payload.position_size_usd is not None:
         updates["position_size_usd"] = str(payload.position_size_usd)
+    if payload.max_active_pools is not None:
+        updates["max_active_pools"] = str(payload.max_active_pools)
+    if payload.strategy_direction is not None:
+        updates["strategy_direction"] = str(payload.strategy_direction).upper()
     if payload.take_profit_dollar is not None:
         updates["take_profit_dollar"] = str(payload.take_profit_dollar)
     if payload.stop_loss_dollar is not None:
@@ -169,3 +175,18 @@ def toggle_auto_trading():
     new_val = not curr
     fast_executor.update_settings({"auto_trading_enabled": "true" if new_val else "false"})
     return {"status": "success", "auto_trading_enabled": new_val}
+
+
+@router.get("/system-health")
+def get_system_health():
+    """Retrieve real-time Squad background workers status, API health, and network speed."""
+    from app.fast5m.squad import fast_squad
+    return fast_squad.get_system_health()
+
+
+@router.post("/system-health/test")
+async def test_system_health():
+    """Force an immediate network latency and API diagnostic check."""
+    from app.fast5m.squad import fast_squad
+    await fast_squad._measure_network_health()
+    return fast_squad.get_system_health()
