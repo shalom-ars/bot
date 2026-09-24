@@ -172,6 +172,7 @@ export default function Fast5MBoard() {
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
   const [resettingDemo, setResettingDemo] = useState<boolean>(false);
+  const [accountMode, setAccountMode] = useState<'demo' | 'live' | 'all'>('demo');
 
   const prevPrices = useRef<Record<string, number>>({});
   const flashStates = useRef<Record<string, 'up' | 'down' | null>>({});
@@ -242,10 +243,11 @@ export default function Fast5MBoard() {
     }
   };
 
-  const fetchTrades = async (tf?: string) => {
+  const fetchTrades = async (tf?: string, mode?: string) => {
     try {
       const activeTf = tf || selectedTimeframe;
-      const res = await axios.get(`/api/fast5m/trades?timeframe=${activeTf}`);
+      const activeMode = mode !== undefined ? mode : accountMode;
+      const res = await axios.get(`/api/fast5m/trades?timeframe=${activeTf}&account_mode=${activeMode}`);
       if (res.data) {
         if (res.data.trades) {
           setTrades(res.data.trades);
@@ -262,23 +264,28 @@ export default function Fast5MBoard() {
 
   const handleSelectTimeframe = (tf: 'today' | 'week' | 'month' | 'all') => {
     setSelectedTimeframe(tf);
-    fetchTrades(tf);
+    fetchTrades(tf, accountMode);
+  };
+
+  const handleSelectAccountMode = (mode: 'demo' | 'live' | 'all') => {
+    setAccountMode(mode);
+    fetchTrades(selectedTimeframe, mode);
   };
 
   useEffect(() => {
     fetchBoard();
-    fetchTrades();
+    fetchTrades(selectedTimeframe, accountMode);
     const interval = setInterval(() => {
       fetchBoard();
     }, 1000); // 1-second real-time poll
     const tradeInterval = setInterval(() => {
-      fetchTrades();
+      fetchTrades(selectedTimeframe, accountMode);
     }, 3500);
     return () => {
       clearInterval(interval);
       clearInterval(tradeInterval);
     };
-  }, [selectedTimeframe]);
+  }, [selectedTimeframe, accountMode]);
 
   const handleEmergencyStop = async () => {
     setToggling(true);
@@ -319,10 +326,10 @@ export default function Fast5MBoard() {
       const res = await axios.post('/api/fast5m/reset-demo');
       if (res.data) {
         setResetModalOpen(false);
-        setSaveSuccessMsg('Demo account successfully reset to $300.00 base!');
+        setSaveSuccessMsg('Demo account reset successfully! Virtual paper history wiped and $300.00 baseline restored.');
         setTimeout(() => setSaveSuccessMsg(''), 5000);
         await fetchBoard();
-        await fetchTrades();
+        await fetchTrades(selectedTimeframe, 'demo');
       }
     } catch (e) {
       console.error('Reset demo error', e);
@@ -574,6 +581,11 @@ export default function Fast5MBoard() {
   };
 
   const handleToggleWalletMode = async (targetMode: 'demo' | 'live') => {
+    if (targetMode === 'live' && (!walletInfo?.is_connected || !walletInfo?.wallet_address)) {
+      setWalletModalOpen(true);
+      setWalletError('Please connect your Polygon wallet or enter credentials to switch to Real Account execution.');
+      return;
+    }
     setTogglingMode(true);
     setWalletError('');
     setWalletMsg('');
@@ -581,11 +593,14 @@ export default function Fast5MBoard() {
       const res = await axios.post('/api/fast5m/wallet/mode', { mode: targetMode });
       if (res.data?.wallet) {
         setWalletInfo(res.data.wallet);
+        setAccountMode(targetMode);
         setWalletMsg(
           targetMode === 'live'
             ? 'Armed on REAL MONEY Live Execution (Polymarket CLOB)!'
             : 'Switched to Safe Virtual DEMO ($300 Paper) Mode.'
         );
+        await fetchBoard();
+        await fetchTrades(selectedTimeframe, targetMode);
       }
     } catch (e: any) {
       setWalletError(e.response?.data?.detail || e.message || 'Failed to switch trading mode.');
@@ -904,7 +919,84 @@ export default function Fast5MBoard() {
         </div>
       )}
 
-      {/* 2. FIVE KEY METRICS CARDS: TOTAL BALANCE, NET PNL, TOTAL PROFIT, TOTAL LOSS, WIN RATE */}
+      {/* 2. REAL ACCOUNT VS DEMO ACCOUNT SWITCH SYSTEM */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-3.5 sm:p-4 border border-slate-700/80 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-400">Trading Mode:</span>
+            <div className="inline-flex p-1 bg-slate-950/80 rounded-xl border border-slate-700/60 shadow-inner">
+              <button
+                type="button"
+                onClick={() => handleToggleWalletMode('demo')}
+                disabled={togglingMode}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  accountMode === 'demo'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>🎮 Demo Account</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-200 font-bold border border-blue-400/30">
+                  $300 Virtual (Temporary)
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleToggleWalletMode('live')}
+                disabled={togglingMode}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  accountMode === 'live'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>⚡ Real Account</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold border ${
+                  walletInfo?.is_connected
+                    ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30'
+                    : 'bg-amber-500/20 text-amber-200 border-amber-400/30'
+                }`}>
+                  {walletInfo?.is_connected ? `$${(walletInfo?.usdc_total ?? 0).toFixed(2)} USDC` : 'Connect Wallet'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {accountMode === 'demo' ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400 hidden sm:inline">Demo history is temporary & paper only:</span>
+              <button
+                type="button"
+                onClick={() => setResetModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-xl font-bold transition-all cursor-pointer"
+                title="Wipe demo history and restore initial $300 balance"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset Demo ($300)</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2.5 text-xs">
+              <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                <Shield className="w-4 h-4 text-emerald-400" />
+                <span>Real CLOB Trading Active</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setWalletModalOpen(true)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl font-bold transition-all cursor-pointer"
+              >
+                Manage Real Wallet
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. FIVE KEY METRICS CARDS: TOTAL BALANCE, NET PNL, TOTAL PROFIT, TOTAL LOSS, WIN RATE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
         
         {/* Card 1: Total Account Balance ($300 Base) */}
@@ -2477,14 +2569,37 @@ export default function Fast5MBoard() {
               </p>
             </div>
 
-            {/* Timeframe Filter Buttons & Refresh */}
+            {/* Account Mode Filter & Timeframe Filter */}
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Account Mode Filter */}
               <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
                 {[
-                  { id: 'today' as const, label: 'Today (Daily)' },
-                  { id: 'week' as const, label: 'This Week' },
-                  { id: 'month' as const, label: 'This Month' },
-                  { id: 'all' as const, label: 'All-Time (Lifetime)' },
+                  { id: 'demo' as const, label: '🎮 Demo History' },
+                  { id: 'live' as const, label: '⚡ Real History' },
+                  { id: 'all' as const, label: 'All Accounts' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handleSelectAccountMode(m.id)}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      accountMode === m.id
+                        ? 'bg-white text-indigo-700 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Timeframe Filter Buttons */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                {[
+                  { id: 'today' as const, label: 'Today' },
+                  { id: 'week' as const, label: 'Week' },
+                  { id: 'month' as const, label: 'Month' },
+                  { id: 'all' as const, label: 'All-Time' },
                 ].map((tf) => (
                   <button
                     key={tf.id}
@@ -2501,8 +2616,21 @@ export default function Fast5MBoard() {
                 ))}
               </div>
 
+              {/* Reset Demo button if in Demo mode */}
+              {(accountMode === 'demo' || accountMode === 'all') && (
+                <button
+                  type="button"
+                  onClick={() => setResetModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  title="Wipe demo history and restore initial $300 balance"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Clear Demo History ($300)</span>
+                </button>
+              )}
+
               <button
-                onClick={() => fetchTrades(selectedTimeframe)}
+                onClick={() => fetchTrades(selectedTimeframe, accountMode)}
                 className="p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer border border-slate-200"
                 title="Refresh trade log"
               >
@@ -2515,7 +2643,7 @@ export default function Fast5MBoard() {
           <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
             <div className="flex items-center gap-4 flex-wrap">
               <span className="text-slate-500 font-sans font-bold">
-                Filtered: <span className="uppercase text-slate-800">{selectedTimeframe}</span>
+                Filtered: <span className="uppercase text-slate-800">{selectedTimeframe}</span> ({accountMode.toUpperCase()})
               </span>
               <span>
                 Trades: <strong className="text-slate-800">{stats.total_trades}</strong>
@@ -2543,6 +2671,7 @@ export default function Fast5MBoard() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-[11px] font-bold uppercase text-slate-400">
                   <th className="py-2.5 px-4">Trade ID</th>
+                  <th className="py-2.5 px-4">Account</th>
                   <th className="py-2.5 px-4">Asset</th>
                   <th className="py-2.5 px-4">Prediction Side</th>
                   <th className="py-2.5 px-4">Prediction Score & Rationale</th>
@@ -2557,18 +2686,29 @@ export default function Fast5MBoard() {
               <tbody className="divide-y divide-slate-100 text-xs font-mono">
                 {trades.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-8 text-center text-slate-400 font-sans text-xs">
-                      No 5-minute fast trades recorded yet. Engine will automatically execute when the #1 ranked pair reaches score ≥ {confidenceThreshold}%.
+                    <td colSpan={11} className="py-8 text-center text-slate-400 font-sans text-xs">
+                      No {accountMode !== 'all' ? accountMode : ''} 5-minute fast trades recorded yet. Engine will automatically execute when the #1 ranked pair reaches score ≥ {confidenceThreshold}%.
                     </td>
                   </tr>
                 ) : (
                   trades.map((t) => {
                     const isWin = (t.pnl || 0) > 0;
                     const isOpen = t.status === 'OPEN';
+                    const isLive = t.account_mode === 'live';
                     return (
                       <tr key={t.id} className="hover:bg-slate-50/60 transition-colors">
                         <td className="py-2.5 px-4 font-bold text-slate-900">#{t.id}</td>
                         
+                        <td className="py-2.5 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black border ${
+                            isLive
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                              : 'bg-blue-50 text-blue-700 border-blue-300'
+                          }`}>
+                            {isLive ? '⚡ LIVE' : '🎮 DEMO'}
+                          </span>
+                        </td>
+
                         <td className="py-2.5 px-4 font-black">
                           <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800">
                             {t.asset}

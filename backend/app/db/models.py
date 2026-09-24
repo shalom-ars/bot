@@ -686,6 +686,7 @@ class Fast5MTrade(Base):
     asset_rank          = Column(Integer, default=1) # 1 for #1 ranked pair
     latency_ms          = Column(Float, default=0.0) # Oracle synchronization latency in ms
     status              = Column(String(32), default="OPEN", index=True) # OPEN, CLOSED
+    account_mode        = Column(String(16), default="demo", index=True) # "demo" or "live"
     exit_price          = Column(Float, nullable=True)
     pnl                 = Column(Float, nullable=True)
     pnl_percent         = Column(Float, nullable=True)

@@ -81,15 +81,21 @@ def get_fast5m_board():
 @router.get("/trades")
 def get_fast5m_trades(
     timeframe: str = Query("all", regex="^(today|week|month|all)$"),
+    account_mode: Optional[str] = Query("demo", regex="^(demo|live|all)$"),
     limit: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
     Retrieve historical trades and comprehensive PnL metrics with lifetime database persistence
-    and dynamic timeframe filtering (today, week, month, all-time).
+    and dynamic timeframe filtering (today, week, month, all-time) separated by account mode (demo vs live).
     """
     now = datetime.now(timezone.utc)
     base_query = db.query(Fast5MTrade)
+
+    if account_mode == "demo":
+        base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
+    elif account_mode == "live":
+        base_query = base_query.filter(Fast5MTrade.account_mode == "live")
 
     if timeframe == "today":
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -132,6 +138,7 @@ def get_fast5m_trades(
         result.append({
             "id": t.id,
             "asset": t.asset,
+            "account_mode": getattr(t, "account_mode", "demo") or "demo",
             "market_id": t.market_id,
             "question": t.question,
             "epoch_bucket": t.epoch_bucket,
@@ -162,8 +169,14 @@ def get_fast5m_trades(
 
     win_rate = (wins / closed_trades * 100.0) if closed_trades > 0 else 0.0
 
-    # Also compute all-time lifetime stats across all closed records in database
-    all_closed_records = db.query(Fast5MTrade).filter(Fast5MTrade.status == "CLOSED").all()
+    # Also compute all-time lifetime stats across closed records matching mode
+    lifetime_q = db.query(Fast5MTrade).filter(Fast5MTrade.status == "CLOSED")
+    if account_mode == "demo":
+        lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
+    elif account_mode == "live":
+        lifetime_q = lifetime_q.filter(Fast5MTrade.account_mode == "live")
+
+    all_closed_records = lifetime_q.all()
     all_wins = sum(1 for t in all_closed_records if (t.pnl or 0) > 0)
     all_losses = sum(1 for t in all_closed_records if (t.pnl or 0) < 0)
     all_profit = sum(t.pnl for t in all_closed_records if (t.pnl or 0) > 0)
@@ -172,12 +185,19 @@ def get_fast5m_trades(
     all_closed_count = len(all_closed_records)
     all_win_rate = (all_wins / all_closed_count * 100.0) if all_closed_count > 0 else 0.0
 
-    initial_balance = float(fast_executor.settings.get("total_balance_usd", 300.0))
-    current_balance = round(initial_balance + all_pnl, 2)
-    active_open_trades = len(fast_executor.get_active_trades())
+    if account_mode == "live":
+        from app.fast5m.wallet import wallet_manager
+        current_balance = round(wallet_manager.total_usdc_balance, 2)
+        initial_balance = round(current_balance - all_pnl, 2) if wallet_manager.is_connected else 0.0
+        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode") == "live"])
+    else:
+        initial_balance = float(fast_executor.settings.get("total_balance_usd", 300.0))
+        current_balance = round(initial_balance + all_pnl, 2)
+        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode", "demo") == "demo"])
 
     return {
         "timeframe": timeframe,
+        "account_mode": account_mode,
         "stats": {
             "initial_balance": initial_balance,
             "current_balance": current_balance,

@@ -1,4 +1,6 @@
 import pytest
+from app.db.session import engine, ensure_fast5m_schema
+ensure_fast5m_schema(engine)
 from app.fast5m.oracle import AssetOracleState, fast_oracle
 from app.fast5m.scorer import FastScorer, ScoredAsset
 from app.fast5m.executor import FastExecutor
@@ -170,13 +172,45 @@ def test_emergency_stop_start_and_demo_reset():
     assert start_res["auto_trading_enabled"] is True
     assert executor.settings["auto_trading_enabled"] == "true"
 
-    # Test Reset Demo Account
+    # Test Reset Demo Account preserves live trades and deletes only demo trades
+    from app.db.session import SessionLocal
+    from app.db.models import Fast5MTrade
+    
+    db = SessionLocal()
+    try:
+        demo_t = Fast5MTrade(
+            asset="ETH", market_id="mkt_demo", question="ETH Up?", epoch_bucket=100,
+            outcome="UP", token_id="tok_1", entry_price=0.5, shares=20, cost=10.0,
+            strike_price=2000.0, entry_oracle_price=2005.0, delta_at_entry=5.0,
+            confidence_score=85.0, status="CLOSED", account_mode="demo", pnl=0.5
+        )
+        live_t = Fast5MTrade(
+            asset="BTC", market_id="mkt_live", question="BTC Up?", epoch_bucket=100,
+            outcome="UP", token_id="tok_2", entry_price=0.5, shares=20, cost=10.0,
+            strike_price=60000.0, entry_oracle_price=60050.0, delta_at_entry=50.0,
+            confidence_score=92.0, status="CLOSED", account_mode="live", pnl=1.2
+        )
+        db.add(demo_t)
+        db.add(live_t)
+        db.commit()
+    finally:
+        db.close()
+
     reset_res = executor.reset_demo_account()
     assert reset_res["status"] == "success"
     assert reset_res["balance"] == 300.0
-    assert reset_res["total_trades"] == 0
-    assert reset_res["win_rate"] == 0.0
     assert executor.settings["total_balance_usd"] == "300.0"
+
+    db = SessionLocal()
+    try:
+        remaining_demo = db.query(Fast5MTrade).filter(Fast5MTrade.account_mode == "demo").count()
+        remaining_live = db.query(Fast5MTrade).filter(Fast5MTrade.account_mode == "live").count()
+        assert remaining_demo == 0
+        assert remaining_live >= 1
+    finally:
+        db.query(Fast5MTrade).filter(Fast5MTrade.market_id == "mkt_live").delete()
+        db.commit()
+        db.close()
 
 
 

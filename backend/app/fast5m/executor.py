@@ -74,6 +74,11 @@ class FastExecutor:
         self._traded_epochs: set = set() # (asset, epoch_bucket) tuples already traded
         self._exec_task: Optional[asyncio.Task] = None
         self._exit_monitor_task: Optional[asyncio.Task] = None
+        try:
+            from app.db.session import engine, ensure_fast5m_schema
+            ensure_fast5m_schema(engine)
+        except Exception as e:
+            logger.debug(f"[Fast5M Executor] Schema initialization notice: {e}")
 
     @property
     def active_trade(self) -> Optional[Dict[str, Any]]:
@@ -267,18 +272,25 @@ class FastExecutor:
 
     def reset_demo_account(self) -> Dict[str, Any]:
         """
-        Wipes demo paper trading history and resets virtual balance to $300.00.
+        Wipes demo paper trading history (temporary paper simulation) and resets virtual balance to $300.00.
+        Real account history and live on-chain trades are strictly preserved.
         """
-        self.active_trades.clear()
+        demo_trade_ids = [tid for tid, t in self.active_trades.items() if t.get("account_mode", "demo") == "demo"]
+        for tid in demo_trade_ids:
+            self.active_trades.pop(tid, None)
+
         self._traded_epochs.clear()
         self.update_settings({"total_balance_usd": "300.0"})
 
         db: Session = SessionLocal()
         deleted_count = 0
         try:
-            deleted_count = db.query(Fast5MTrade).delete()
+            # Delete ONLY temporary demo trades (real trades are never touched)
+            deleted_count = db.query(Fast5MTrade).filter(
+                (Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None))
+            ).delete(synchronize_session=False)
             db.commit()
-            logger.info(f"[Fast5M Executor] 🔄 DEMO ACCOUNT RESET: {deleted_count} paper trades wiped. Base balance set to $300.00.")
+            logger.info(f"[Fast5M Executor] 🔄 DEMO ACCOUNT RESET: {deleted_count} temporary paper trades wiped. Base balance restored to $300.00.")
         except Exception as e:
             logger.error(f"[Fast5M Executor] Error resetting demo account: {e}")
             db.rollback()
@@ -287,7 +299,7 @@ class FastExecutor:
 
         return {
             "status": "success",
-            "message": "Demo account successfully reset to $300.00 base.",
+            "message": f"Demo account successfully reset. {deleted_count} temporary paper trade(s) wiped. Base balance set to $300.00.",
             "deleted_trades_count": deleted_count,
             "balance": 300.0,
             "total_trades": 0,
@@ -308,6 +320,7 @@ class FastExecutor:
                     "id": open_trade.id,
                     "asset": open_trade.asset,
                     "market_id": open_trade.market_id,
+                    "account_mode": getattr(open_trade, "account_mode", "demo") or "demo",
                     "question": open_trade.question,
                     "epoch_bucket": open_trade.epoch_bucket,
                     "side": open_trade.side,
@@ -454,6 +467,9 @@ class FastExecutor:
         shares = round(cost / entry_price, 2)
         epoch_key = (top_asset.asset, market.epoch_bucket)
 
+        from app.fast5m.wallet import wallet_manager
+        current_account_mode = getattr(wallet_manager, "account_mode", "demo") or "demo"
+
         # Place trade in DB
         db: Session = SessionLocal()
         try:
@@ -479,7 +495,8 @@ class FastExecutor:
                 prediction_rationale=top_asset.reason,
                 asset_rank=top_asset.rank,
                 latency_ms=top_asset.latency_ms,
-                status="OPEN"
+                status="OPEN",
+                account_mode=current_account_mode
             )
             db.add(trade_record)
             db.commit()
@@ -489,6 +506,7 @@ class FastExecutor:
                 "id": trade_record.id,
                 "asset": trade_record.asset,
                 "market_id": trade_record.market_id,
+                "account_mode": current_account_mode,
                 "question": trade_record.question,
                 "epoch_bucket": trade_record.epoch_bucket,
                 "side": trade_record.side,

@@ -151,7 +151,8 @@ def ensure_fast5m_schema(db_engine):
             ("delta_score", "FLOAT DEFAULT 0.0"),
             ("obi_score", "FLOAT DEFAULT 0.0"),
             ("momentum_score", "FLOAT DEFAULT 0.0"),
-            ("prediction_rationale", "VARCHAR DEFAULT ''")
+            ("prediction_rationale", "VARCHAR DEFAULT ''"),
+            ("account_mode", "VARCHAR(16) DEFAULT 'demo'")
         ]
         with db_engine.connect() as conn:
             for col_name, col_type in fast_cols:
@@ -161,4 +162,9 @@ def ensure_fast5m_schema(db_engine):
                         conn.commit()
                     except Exception:
                         pass
+            try:
+                conn.execute(text("UPDATE fast5m_trades SET account_mode = 'demo' WHERE account_mode IS NULL"))
+                conn.commit()
+            except Exception:
+                pass
 
