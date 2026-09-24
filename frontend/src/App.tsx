@@ -5,6 +5,7 @@ import Login from './pages/auth/Login';
 import Signup from './pages/auth/Signup';
 import Layout from './components/Layout';
 import BTC5M from './pages/BTC5M';
+import Fast5MBoard from './pages/Fast5MBoard';
 import AuthLayout from './components/AuthLayout';
 import { 
   Markets, MarketDetail, Signals, Portfolio, 
@@ -26,7 +27,9 @@ export default function App() {
 
         {/* Dashboard Routes */}
         <Route path="/app" element={<Layout />}>
-          <Route index element={<BTC5M />} />
+          <Route index element={<Fast5MBoard />} />
+          <Route path="fast5m" element={<Fast5MBoard />} />
+          <Route path="btc5m" element={<BTC5M />} />
           <Route path="research" element={<ResearchTerminal />} />
           <Route path="markets" element={<Markets />} />
           <Route path="markets/:id" element={<MarketDetail />} />
@@ -37,7 +40,6 @@ export default function App() {
           <Route path="performance" element={<Performance />} />
           <Route path="risk" element={<Risk />} />
           <Route path="orderbook" element={<OrderBook />} />
-          <Route path="btc5m" element={<BTC5M />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="settings" element={<Settings />} />
           <Route path="subscription" element={<Subscription />} />

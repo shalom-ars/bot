@@ -20,6 +20,7 @@ from app.api.health import router as health_router
 from app.api.markets import router as markets_router
 from app.api.signals import router as signals_router
 from app.api.btc5m import router as btc5m_router
+from app.api.fast5m import router as fast5m_router
 from app.api.system import router as system_router
 from app.engine.scanner import orchestrator
 from contextlib import asynccontextmanager
@@ -53,9 +54,14 @@ async def lifespan(app: FastAPI):
     from app.btc5m.engine import btc5m_engine, btc5m_engine_2
     await btc5m_engine.start()
     await btc5m_engine_2.start()
+
+    # Fast 5M 7-Asset Multi-Prediction Engine
+    from app.fast5m.engine import fast5m_engine
+    await fast5m_engine.start()
     
     yield
     # Teardown
+    await fast5m_engine.stop()
     logger.info("FastAPI lifecycle end.")
 
 app = FastAPI(title="Polymarket Bot API", lifespan=lifespan)
@@ -73,6 +79,7 @@ app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(markets_router, prefix="/api/markets", tags=["markets"])
 app.include_router(signals_router, prefix="/api/signals", tags=["signals"])
 app.include_router(btc5m_router, prefix="/api/btc5m", tags=["btc5m"])
+app.include_router(fast5m_router, prefix="/api/fast5m", tags=["fast5m"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(health_router, prefix="/api/health", tags=["health"])
 app.include_router(system_router, prefix="/api/system", tags=["system"])

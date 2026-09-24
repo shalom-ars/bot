@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { 
   RefreshCw, Shield, TrendingUp, 
@@ -1627,7 +1628,7 @@ function InnerBTC5M() {
                 >
                   {isTogglingTrading ? 'Updating...' : isTradingActive ? '■ PAUSE BOT' : '▶ START BOT'}
                 </button>
-                <div className="flex items-center ml-2 border-l border-slate-700 pl-3">
+                <div className="flex items-center ml-2 border-l border-slate-700 pl-3 gap-2">
                    <select 
                      className="bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                      value={selectedInstance}
@@ -1636,6 +1637,14 @@ function InnerBTC5M() {
                      <option value="instance_1">Bot 1 (Single Slot)</option>
                      <option value="instance_2">Bot 2 (Double Slot)</option>
                    </select>
+
+                   <Link
+                     to="/app/fast5m"
+                     className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-black shadow-md shadow-blue-500/20 transition-all border border-blue-400/40"
+                   >
+                     <Zap className="w-3.5 h-3.5 text-amber-300" />
+                     <span>7-ASSET FAST ORACLES</span>
+                   </Link>
                 </div>
               </div>
 

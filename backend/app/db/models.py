@@ -650,7 +650,6 @@ class BTC5MSelfLearningLog(Base):
     market_id           = Column(String, index=True, nullable=True)
     timestamp           = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc), index=True)
     outcome             = Column(String, default="LOSS", index=True) # "LOSS", "PROFIT_LEAK", "PERIODIC_OPTIMIZATION"
-    pnl                 = Column(Float, nullable=True)
     root_cause          = Column(String, index=True) # "MOMENTUM_REVERSAL", "OBI_FAKE_WALL", "RSI_EXTREME", "P2B_CHOP", etc.
     error_analysis      = Column(String, nullable=False)
     parameter_adjusted  = Column(String, nullable=False, index=True) # "min_entry_score", "min_entry_probability", etc.
@@ -658,5 +657,46 @@ class BTC5MSelfLearningLog(Base):
     new_value           = Column(String, nullable=False)
     adaptation_delta    = Column(String, nullable=True)
     status              = Column(String, default="APPLIED")
+
+
+class Fast5MTrade(Base):
+    """Authoritative executed trades for 7-Asset 5-Minute Fast Markets."""
+    __tablename__ = "fast5m_trades"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    asset               = Column(String(16), index=True, nullable=False) # BTC, ETH, SOL, XRP, DOGE, BNB, HYPE
+    market_id           = Column(String(128), index=True, nullable=False)
+    condition_id        = Column(String(128), index=True, nullable=True)
+    question            = Column(String(256), nullable=False)
+    epoch_bucket        = Column(Integer, index=True, nullable=False)
+    side                = Column(String(16), default="BUY") # BUY
+    outcome             = Column(String(16), nullable=False) # UP or DOWN
+    token_id            = Column(String(128), nullable=False)
+    entry_price         = Column(Float, nullable=False) # share price (0.01 - 0.99)
+    shares              = Column(Float, nullable=False)
+    cost                = Column(Float, nullable=False) # USDC margin
+    strike_price        = Column(Float, nullable=False) # Strike / baseline at epoch open
+    entry_oracle_price  = Column(Float, nullable=False) # Oracle price at entry
+    delta_at_entry      = Column(Float, nullable=False) # Live price - strike price
+    confidence_score    = Column(Float, nullable=False) # 0 - 100
+    asset_rank          = Column(Integer, default=1) # 1 for #1 ranked pair
+    latency_ms          = Column(Float, default=0.0) # Oracle synchronization latency in ms
+    status              = Column(String(32), default="OPEN", index=True) # OPEN, CLOSED
+    exit_price          = Column(Float, nullable=True)
+    pnl                 = Column(Float, nullable=True)
+    pnl_percent         = Column(Float, nullable=True)
+    resolution          = Column(String(32), nullable=True) # WON, LOST, TAKE_PROFIT, STOP_LOSS
+    created_at          = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc), index=True)
+    closed_at           = Column(DateTime, nullable=True)
+
+
+class Fast5MSetting(Base):
+    """Persistent configuration for 7-Asset 5-Minute Prediction Engine."""
+    __tablename__ = "fast5m_settings"
+
+    key                 = Column(String(64), primary_key=True, index=True)
+    value               = Column(String(256), nullable=False)
+    updated_at          = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+
 
 
