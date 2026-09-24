@@ -208,27 +208,43 @@ class FastMarketTracker:
     async def _fetch_single_orderbook(self, client: httpx.AsyncClient, market: FastMarketInfo):
         """Fetch CLOB depth for UP token and compute live mid, spread, depth, and imbalance."""
         try:
+            from app.fast5m.oracle import fast_oracle
+            oracle_st = fast_oracle.get_asset_state(market.asset)
+            delta_pct = oracle_st.delta_pct if oracle_st else 0.0
+            # Calculate fair binary option mid anchored to real-time oracle delta
+            fair_mid = min(0.88, max(0.12, 0.50 + (delta_pct * 1.5)))
+
             url = f"{CLOB_API}/book?token_id={market.up_token_id}"
             resp = await client.get(url)
             if resp.status_code == 200:
                 book = resp.json()
                 bids = book.get("bids", [])
                 asks = book.get("asks", [])
+
+                raw_bid = float(bids[0]["price"]) if bids else 0.0
+                raw_ask = float(asks[0]["price"]) if asks else 0.0
+
+                # Use real CLOB quotes if both sides exist and spread is reasonable (<= 25%)
+                if bids and asks and (raw_ask - raw_bid) <= 0.25 and raw_bid > 0.05 and raw_ask < 0.95:
+                    up_bid = raw_bid
+                    up_ask = raw_ask
+                else:
+                    # Synthetic fair market maker quotes based on oracle delta
+                    up_bid = round(max(0.02, fair_mid - 0.02), 3)
+                    up_ask = round(min(0.98, fair_mid + 0.02), 3)
+
+                up_mid = round((up_bid + up_ask) / 2.0, 3)
                 
-                up_bid = float(bids[0]["price"]) if bids else 0.49
-                up_ask = float(asks[0]["price"]) if asks else 0.51
-                up_mid = (up_bid + up_ask) / 2.0
-                
-                bid_depth = sum(float(b.get("size", 0)) * float(b.get("price", 0)) for b in bids[:5])
-                ask_depth = sum(float(a.get("size", 0)) * float(a.get("price", 0)) for a in asks[:5])
+                bid_depth = sum(float(b.get("size", 0)) * float(b.get("price", 0)) for b in bids[:5]) if bids else 500.0
+                ask_depth = sum(float(a.get("size", 0)) * float(a.get("price", 0)) for a in asks[:5]) if asks else 500.0
                 
                 market.up_bid = up_bid
                 market.up_ask = up_ask
                 market.up_mid = up_mid
                 market.down_bid = round(max(0.01, 1.0 - up_ask), 4)
                 market.down_ask = round(min(0.99, 1.0 - up_bid), 4)
-                market.down_mid = (market.down_bid + market.down_ask) / 2.0
-                market.spread = max(0.001, up_ask - up_bid)
+                market.down_mid = round((market.down_bid + market.down_ask) / 2.0, 4)
+                market.spread = round(max(0.01, up_ask - up_bid), 4)
                 market.up_bid_depth = bid_depth
                 market.up_ask_depth = ask_depth
                 market.total_liquidity = bid_depth + ask_depth

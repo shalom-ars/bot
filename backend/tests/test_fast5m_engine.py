@@ -42,14 +42,15 @@ def test_executor_balance_and_micro_profit_locking():
     bal = float(executor.settings.get("total_balance_usd", 300.0))
     assert bal == 300.0
     
-    # Check micro-profit scalp target & trailing locking parameters
-    tp = float(executor.settings.get("take_profit_dollar", 0.40))
-    sl = float(executor.settings.get("stop_loss_dollar", 0.60))
+    # Check strict 1:1 Risk-to-Reward ratio ($0.50 TP / $0.50 SL)
+    tp = float(executor.settings.get("take_profit_dollar", 0.50))
+    sl = float(executor.settings.get("stop_loss_dollar", 0.50))
     min_lock = float(executor.settings.get("min_profit_to_lock", 0.15))
     giveback = float(executor.settings.get("reversal_giveback_dollar", 0.06))
     
-    assert tp == 0.40
-    assert sl == 0.60
+    assert tp == 0.50
+    assert sl == 0.50
+    assert tp == sl # Strict 1:1 Risk-to-Reward symmetry
     assert min_lock == 0.15
     assert giveback == 0.06
     assert executor.settings.get("trailing_lock_enabled") == "true"

@@ -245,18 +245,15 @@ class FastScorer:
         if not market:
             is_tradable = False
             rejection_reason = "No active Polymarket 5m epoch"
-        elif time_rem < 25.0:
+        elif time_rem < 20.0:
             is_tradable = False
             rejection_reason = f"Too close to round resolution ({time_rem:.0f}s)"
-        elif time_rem > 275.0:
+        elif time_rem > 280.0:
             is_tradable = False
             rejection_reason = f"Waiting for round to mature ({time_rem:.0f}s)"
-        elif spread > 0.06:
+        elif spread > 0.20:
             is_tradable = False
             rejection_reason = f"Spread too wide ({spread*100:.1f}%)"
-        elif liquidity < 50.0:
-            is_tradable = False
-            rejection_reason = f"Low book depth (${liquidity:.0f})"
         elif confidence < threshold:
             is_tradable = False
             rejection_reason = f"Confidence {confidence:.1f} < threshold {threshold:.1f}"

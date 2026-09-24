@@ -337,13 +337,13 @@ export default function Fast5MBoard() {
 
           <div className="flex items-center gap-3 text-slate-500 text-[11px] flex-wrap">
             <span className="flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-              <Zap className="w-3 h-3 text-emerald-600" /> Micro-Profit Lock: +$0.15+ (Take +$0.40)
+              <Zap className="w-3 h-3 text-emerald-600" /> Strict 1:1 RR: +$0.50 TP / -$0.50 SL
+            </span>
+            <span className="flex items-center gap-1 font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+              <Shield className="w-3 h-3 text-blue-500" /> Micro-Profit Lock: +$0.15+ (Anti-Reversal)
             </span>
             <span className="flex items-center gap-1">
-              <Shield className="w-3 h-3 text-blue-500" /> Single-Position Risk Lock
-            </span>
-            <span className="flex items-center gap-1">
-              <Lock className="w-3 h-3 text-purple-500" /> Anti-Reversal Early Exit
+              <Lock className="w-3 h-3 text-purple-500" /> Single-Position Lock
             </span>
           </div>
         </div>
@@ -417,8 +417,8 @@ export default function Fast5MBoard() {
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Scalp Target:</span>
-            <span className="font-bold text-emerald-600">+$0.40 Cents</span>
+            <span className="text-slate-400">1:1 Target:</span>
+            <span className="font-bold text-emerald-600">+$0.50 Cents</span>
           </div>
         </div>
 
@@ -439,8 +439,8 @@ export default function Fast5MBoard() {
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Stop Cap:</span>
-            <span className="font-bold text-rose-600">-$0.60 Cents</span>
+            <span className="text-slate-400">1:1 Stop:</span>
+            <span className="font-bold text-rose-600">-$0.50 Cents</span>
           </div>
         </div>
 
@@ -739,8 +739,8 @@ export default function Fast5MBoard() {
                   </div>
 
                   <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Scalp / SL Target</div>
-                    <div className="text-sm font-bold font-mono text-cyan-300">+$0.40 TP / -$0.60 SL</div>
+                    <div className="text-[10px] uppercase font-bold text-blue-300">Strict 1:1 Target</div>
+                    <div className="text-sm font-bold font-mono text-cyan-300">+$0.50 TP / -$0.50 SL</div>
                   </div>
                 </div>
               </div>

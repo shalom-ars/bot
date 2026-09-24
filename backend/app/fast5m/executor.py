@@ -26,17 +26,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_SETTINGS = {
     "auto_trading_enabled": "true",
     "total_balance_usd": "300.0",
-    "confidence_threshold": "60.0",
+    "confidence_threshold": "55.0",       # 55.0 confidence threshold to ensure the top-ranked pair trades actively
     "position_size_usd": "10.0",
-    "take_profit_dollar": "0.40",         # Quick scalp profit target ($0.40 / 40 cents)
-    "stop_loss_dollar": "0.60",           # Strict stop loss ($0.60 / 60 cents)
+    "take_profit_dollar": "0.50",         # Strict 1:1 RR: Target Profit $0.50 (50 cents)
+    "stop_loss_dollar": "0.50",           # Strict 1:1 RR: Stop Loss $0.50 (50 cents)
     "trailing_lock_enabled": "true",      # Dynamic micro-profit lock
     "min_profit_to_lock": "0.15",         # Lock as soon as +$0.15 (15 cents) profit is touched
     "reversal_giveback_dollar": "0.06",   # If profit dips 6 cents from peak, book profit immediately before reverse!
     "reversal_lock_enabled": "true",      # Technical momentum reversal exit
-    "max_spread": "0.08",
-    "min_time_remaining": "25.0",
-    "max_time_remaining": "275.0",
+    "max_spread": "0.20",
+    "min_time_remaining": "20.0",
+    "max_time_remaining": "280.0",
 }
 
 
@@ -90,12 +90,16 @@ class FastExecutor:
                 else:
                     db.add(Fast5MSetting(key=k, value=self.settings[k]))
 
-            # If confidence threshold was higher than 60, lower to 60 for responsive execution
-            if float(self.settings.get("confidence_threshold", 70.0)) > 60.0:
-                self.settings["confidence_threshold"] = "60.0"
-                rec_c = db.query(Fast5MSetting).filter(Fast5MSetting.key == "confidence_threshold").first()
-                if rec_c:
-                    rec_c.value = "60.0"
+            # Guarantee 1:1 Risk-to-Reward symmetry ($0.50 TP / $0.50 SL) and 55.0 threshold
+            self.settings["take_profit_dollar"] = "0.50"
+            self.settings["stop_loss_dollar"] = "0.50"
+            self.settings["confidence_threshold"] = "55.0"
+            for k in ("take_profit_dollar", "stop_loss_dollar", "confidence_threshold"):
+                rec_k = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
+                if rec_k:
+                    rec_k.value = self.settings[k]
+                else:
+                    db.add(Fast5MSetting(key=k, value=self.settings[k]))
 
             db.commit()
         except Exception as e:
