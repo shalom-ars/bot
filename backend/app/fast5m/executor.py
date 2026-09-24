@@ -266,6 +266,7 @@ class FastExecutor:
                 "prediction_rationale": trade_record.prediction_rationale,
                 "asset_rank": 1,
                 "latency_ms": trade_record.latency_ms,
+                "entry_ts": time.time(),
                 "peak_pnl": 0.0,
                 "current_pnl": 0.0,
                 "current_share_price": trade_record.entry_price,
@@ -314,26 +315,19 @@ class FastExecutor:
 
         live_oracle_price = oracle.live_price
         time_rem = market.time_remaining_sec
+        trade_age_s = time.time() - (trade.get("entry_ts") or time.time())
 
-        # 1. Use Polymarket CLOB bid if available
-        clob_bid = market.up_bid if outcome == "UP" else market.down_bid
-        
-        # 2. Also calculate real-time theoretical fair price from sub-second oracle price shift
+        # Fair mark-to-market valuation based on real-time oracle delta movement from entry
         entry_oracle = trade.get("entry_oracle_price", strike_price)
         if entry_oracle > 0:
             oracle_delta_pct = ((live_oracle_price - entry_oracle) / entry_oracle) * 100.0
             directional_shift = oracle_delta_pct if outcome == "UP" else -oracle_delta_pct
-            oracle_fair_price = entry_price + (directional_shift * 1.2)
+            current_share_price = round(min(0.98, max(0.02, entry_price + (directional_shift * 1.5))), 4)
         else:
-            oracle_fair_price = entry_price
-
-        if clob_bid > 0.01:
-            current_share_price = clob_bid
-        else:
-            current_share_price = min(0.98, max(0.02, oracle_fair_price))
+            current_share_price = entry_price
 
         current_value = shares * current_share_price
-        unrealized_pnl = current_value - cost
+        unrealized_pnl = round(current_value - cost, 2)
 
         # Live tracking in memory for real-time UI broadcast
         trade_peak_pnl = max(trade.get("peak_pnl", 0.0), unrealized_pnl)
@@ -342,8 +336,8 @@ class FastExecutor:
         trade["current_share_price"] = round(current_share_price, 4)
         trade["live_oracle_price"] = live_oracle_price
 
-        tp_target = float(self.settings.get("take_profit_dollar", 0.40))
-        sl_limit = float(self.settings.get("stop_loss_dollar", 0.60))
+        tp_target = float(self.settings.get("take_profit_dollar", 0.50))
+        sl_limit = float(self.settings.get("stop_loss_dollar", 0.50))
         min_profit_to_lock = float(self.settings.get("min_profit_to_lock", 0.15))
         giveback_limit = float(self.settings.get("reversal_giveback_dollar", 0.06))
         trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
@@ -353,20 +347,17 @@ class FastExecutor:
         resolution = "HOLD"
         exit_price = current_share_price
 
-        # Rule 1: Take Profit Hit (Micro-Scalp target reached, e.g. +$0.40 / 40 cents)
+        # Rule 1: Take Profit Hit (Strict 1:1 RR Target reached, e.g. +$0.50)
         if unrealized_pnl >= tp_target:
             should_close = True
             resolution = "TAKE_PROFIT"
 
         # Rule 2: Dynamic Trailing Micro-Profit Lock (Cents Gain Locked Before Reversal)
-        # If profit touched at least min_profit_to_lock ($0.15), and has pulled back by >= giveback_limit ($0.06) from peak,
-        # while still retaining positive profit (unrealized_pnl >= $0.05) -> Immediately sell and lock in the profit!
         elif trailing_enabled and trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit and unrealized_pnl >= 0.05:
             should_close = True
             resolution = "TRAILING_PROFIT_LOCK"
 
         # Rule 3: Anti-Reversal Early Lock
-        # If trade is in profit (>= $0.10) and sub-second momentum velocity turns opposite to the trade:
         elif reversal_enabled and unrealized_pnl >= 0.10:
             v10 = getattr(oracle, 'velocity_10s', 0.0)
             if outcome == "UP" and v10 < -0.01:
@@ -376,8 +367,8 @@ class FastExecutor:
                 should_close = True
                 resolution = "REVERSAL_PROFIT_LOCK"
 
-        # Rule 4: Stop Loss Hit ($0.60 or configured limit)
-        elif unrealized_pnl <= -sl_limit:
+        # Rule 4: Stop Loss Hit (Strict 1:1 RR Limit, with 5s initial stabilization)
+        elif trade_age_s >= 5.0 and unrealized_pnl <= -sl_limit:
             should_close = True
             resolution = "STOP_LOSS"
 
