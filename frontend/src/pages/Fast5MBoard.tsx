@@ -4,7 +4,8 @@ import {
   Zap, Shield, RefreshCw, 
   Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
-  CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers
+  CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
+  BookmarkCheck, RotateCcw, Scale, SlidersHorizontal
 } from 'lucide-react';
 
 interface AssetData {
@@ -112,8 +113,27 @@ export default function Fast5MBoard() {
   const [trailingLockEnabled, setTrailingLockEnabled] = useState<boolean>(true);
   const [minProfitToLock, setMinProfitToLock] = useState<number>(0.15);
   const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.06);
+
+  // Active Quantitative Filters & Indicator Flags
+  const [filterDeltaEnabled, setFilterDeltaEnabled] = useState<boolean>(true);
+  const [filterDeltaWeight, setFilterDeltaWeight] = useState<number>(40);
+  const [filterObiEnabled, setFilterObiEnabled] = useState<boolean>(true);
+  const [filterObiWeight, setFilterObiWeight] = useState<number>(30);
+  const [filterMomentumEnabled, setFilterMomentumEnabled] = useState<boolean>(true);
+  const [filterMomentumWeight, setFilterMomentumWeight] = useState<number>(30);
+  const [filterRsiEnabled, setFilterRsiEnabled] = useState<boolean>(true);
+  const [filterBbEnabled, setFilterBbEnabled] = useState<boolean>(true);
+  const [filterEmaMacdEnabled, setFilterEmaMacdEnabled] = useState<boolean>(true);
+  const [maxSpread, setMaxSpread] = useState<number>(0.20);
+  const [minLiquidityUsd, setMinLiquidityUsd] = useState<number>(100);
+  const [minTimeRemaining, setMinTimeRemaining] = useState<number>(20);
+  const [maxTimeRemaining, setMaxTimeRemaining] = useState<number>(280);
+
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
+  const [savingAsDefault, setSavingAsDefault] = useState<boolean>(false);
+  const [restoringDefaults, setRestoringDefaults] = useState<boolean>(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string>('');
+  const [defaultSavedTime, setDefaultSavedTime] = useState<string>('');
   const [healthTesting, setHealthTesting] = useState<boolean>(false);
   const [toggling, setToggling] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'board' | 'settings' | 'squad' | 'trades' | 'scoring'>('board');
@@ -139,33 +159,31 @@ export default function Fast5MBoard() {
 
         setBoard(res.data);
         if (res.data.settings) {
-          if (res.data.settings.confidence_threshold) {
-            setConfidenceThreshold(parseFloat(res.data.settings.confidence_threshold));
-          }
-          if (res.data.settings.position_size_usd) {
-            setPositionSize(parseFloat(res.data.settings.position_size_usd));
-          }
-          if (res.data.settings.max_active_pools) {
-            setMaxActivePools(parseInt(res.data.settings.max_active_pools));
-          }
-          if (res.data.settings.strategy_direction) {
-            setStrategyDirection(res.data.settings.strategy_direction.toUpperCase());
-          }
-          if (res.data.settings.take_profit_dollar) {
-            setTakeProfitDollar(parseFloat(res.data.settings.take_profit_dollar));
-          }
-          if (res.data.settings.stop_loss_dollar) {
-            setStopLossDollar(parseFloat(res.data.settings.stop_loss_dollar));
-          }
-          if (res.data.settings.min_profit_to_lock) {
-            setMinProfitToLock(parseFloat(res.data.settings.min_profit_to_lock));
-          }
-          if (res.data.settings.reversal_giveback_dollar) {
-            setReversalGivebackDollar(parseFloat(res.data.settings.reversal_giveback_dollar));
-          }
-          if (res.data.settings.trailing_lock_enabled) {
-            setTrailingLockEnabled(res.data.settings.trailing_lock_enabled === 'true');
-          }
+          const s = res.data.settings;
+          if (s.confidence_threshold) setConfidenceThreshold(parseFloat(s.confidence_threshold));
+          if (s.position_size_usd) setPositionSize(parseFloat(s.position_size_usd));
+          if (s.max_active_pools) setMaxActivePools(parseInt(s.max_active_pools));
+          if (s.strategy_direction) setStrategyDirection(s.strategy_direction.toUpperCase());
+          if (s.take_profit_dollar) setTakeProfitDollar(parseFloat(s.take_profit_dollar));
+          if (s.stop_loss_dollar) setStopLossDollar(parseFloat(s.stop_loss_dollar));
+          if (s.min_profit_to_lock) setMinProfitToLock(parseFloat(s.min_profit_to_lock));
+          if (s.reversal_giveback_dollar) setReversalGivebackDollar(parseFloat(s.reversal_giveback_dollar));
+          if (s.trailing_lock_enabled) setTrailingLockEnabled(s.trailing_lock_enabled === 'true');
+
+          if (s.filter_delta_enabled !== undefined) setFilterDeltaEnabled(s.filter_delta_enabled !== 'false');
+          if (s.filter_delta_weight) setFilterDeltaWeight(parseFloat(s.filter_delta_weight));
+          if (s.filter_obi_enabled !== undefined) setFilterObiEnabled(s.filter_obi_enabled !== 'false');
+          if (s.filter_obi_weight) setFilterObiWeight(parseFloat(s.filter_obi_weight));
+          if (s.filter_momentum_enabled !== undefined) setFilterMomentumEnabled(s.filter_momentum_enabled !== 'false');
+          if (s.filter_momentum_weight) setFilterMomentumWeight(parseFloat(s.filter_momentum_weight));
+          if (s.filter_rsi_enabled !== undefined) setFilterRsiEnabled(s.filter_rsi_enabled !== 'false');
+          if (s.filter_bb_enabled !== undefined) setFilterBbEnabled(s.filter_bb_enabled !== 'false');
+          if (s.filter_ema_macd_enabled !== undefined) setFilterEmaMacdEnabled(s.filter_ema_macd_enabled !== 'false');
+          if (s.max_spread) setMaxSpread(parseFloat(s.max_spread));
+          if (s.min_liquidity_usd) setMinLiquidityUsd(parseFloat(s.min_liquidity_usd));
+          if (s.min_time_remaining) setMinTimeRemaining(parseFloat(s.min_time_remaining));
+          if (s.max_time_remaining) setMaxTimeRemaining(parseFloat(s.max_time_remaining));
+          if (s.custom_defaults_saved_at) setDefaultSavedTime(s.custom_defaults_saved_at);
         }
       }
     } catch (e) {
@@ -241,14 +259,81 @@ export default function Fast5MBoard() {
         trailing_lock_enabled: trailingLockEnabled,
         min_profit_to_lock: minProfitToLock,
         reversal_giveback_dollar: reversalGivebackDollar,
+        filter_delta_enabled: filterDeltaEnabled,
+        filter_delta_weight: filterDeltaWeight,
+        filter_obi_enabled: filterObiEnabled,
+        filter_obi_weight: filterObiWeight,
+        filter_momentum_enabled: filterMomentumEnabled,
+        filter_momentum_weight: filterMomentumWeight,
+        filter_rsi_enabled: filterRsiEnabled,
+        filter_bb_enabled: filterBbEnabled,
+        filter_ema_macd_enabled: filterEmaMacdEnabled,
+        max_spread: maxSpread,
+        min_liquidity_usd: minLiquidityUsd,
+        min_time_remaining: minTimeRemaining,
+        max_time_remaining: maxTimeRemaining,
       });
       setSaveSuccessMsg('Configuration synchronized across all Squad workers with 0ms latency!');
-      setTimeout(() => setSaveSuccessMsg(''), 4000);
+      setTimeout(() => setSaveSuccessMsg(''), 4500);
       await fetchBoard();
     } catch (e) {
       console.error('Save all settings error', e);
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleSaveAsDefault = async () => {
+    setSavingAsDefault(true);
+    try {
+      const res = await axios.post('/api/fast5m/settings/default', {
+        position_size_usd: positionSize,
+        max_active_pools: maxActivePools,
+        strategy_direction: strategyDirection,
+        confidence_threshold: confidenceThreshold,
+        take_profit_dollar: takeProfitDollar,
+        stop_loss_dollar: stopLossDollar,
+        trailing_lock_enabled: trailingLockEnabled,
+        min_profit_to_lock: minProfitToLock,
+        reversal_giveback_dollar: reversalGivebackDollar,
+        filter_delta_enabled: filterDeltaEnabled,
+        filter_delta_weight: filterDeltaWeight,
+        filter_obi_enabled: filterObiEnabled,
+        filter_obi_weight: filterObiWeight,
+        filter_momentum_enabled: filterMomentumEnabled,
+        filter_momentum_weight: filterMomentumWeight,
+        filter_rsi_enabled: filterRsiEnabled,
+        filter_bb_enabled: filterBbEnabled,
+        filter_ema_macd_enabled: filterEmaMacdEnabled,
+        max_spread: maxSpread,
+        min_liquidity_usd: minLiquidityUsd,
+        min_time_remaining: minTimeRemaining,
+        max_time_remaining: maxTimeRemaining,
+      });
+      if (res.data?.defaults?.custom_defaults_saved_at) {
+        setDefaultSavedTime(res.data.defaults.custom_defaults_saved_at);
+      }
+      setSaveSuccessMsg('Custom configuration saved as permanent default baseline!');
+      setTimeout(() => setSaveSuccessMsg(''), 4500);
+      await fetchBoard();
+    } catch (e) {
+      console.error('Save as default error', e);
+    } finally {
+      setSavingAsDefault(false);
+    }
+  };
+
+  const handleRestoreDefaults = async () => {
+    setRestoringDefaults(true);
+    try {
+      await axios.post('/api/fast5m/settings/restore-defaults');
+      setSaveSuccessMsg('Restored active configuration from custom default baseline profile!');
+      setTimeout(() => setSaveSuccessMsg(''), 4500);
+      await fetchBoard();
+    } catch (e) {
+      console.error('Restore defaults error', e);
+    } finally {
+      setRestoringDefaults(false);
     }
   };
 
@@ -583,56 +668,425 @@ export default function Fast5MBoard() {
       {/* SETTINGS & RISK CONFIGURATION TAB */}
       {activeTab === 'settings' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-6">
-          {/* Header Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          {/* Header Bar with Action Controls */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-5">
             <div>
-              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-blue-600" />
-                Settings & Risk Configuration Dashboard
-              </h2>
-              <p className="text-xs text-slate-500 font-medium">
-                Direct administrative access to position sizing, directional strategy bias, execution thresholds, and strict 1:1 risk parameters
-              </p>
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                  <Settings className="w-5 h-5" />
+                </span>
+                <div>
+                  <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                    Settings & Risk Configuration Dashboard
+                    <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                      Full Administrative Access
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Manual adjustments to Risk—to—Reward ratio, active quantitative filters, indicator weights, and default profiles
+                  </p>
+                </div>
+              </div>
+              {defaultSavedTime && (
+                <div className="text-[10px] text-slate-400 font-mono mt-1.5 flex items-center gap-1">
+                  <BookmarkCheck className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Custom Default Baseline Active (Saved: {new Date(defaultSavedTime).toLocaleString()})</span>
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center gap-3">
+            {/* Action Buttons: Save All Settings, Save as Default, Restore Defaults */}
+            <div className="flex flex-wrap items-center gap-2.5">
               {saveSuccessMsg && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-xl animate-fade-in">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-xl animate-fade-in shadow-xs">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>{saveSuccessMsg}</span>
                 </div>
               )}
+
+              {/* Restore Defaults Button */}
               <button
+                type="button"
+                onClick={handleRestoreDefaults}
+                disabled={restoringDefaults || savingSettings || savingAsDefault}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200"
+                title="Restore settings to saved default baseline"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${restoringDefaults ? 'animate-spin' : ''}`} />
+                <span>{restoringDefaults ? 'Restoring...' : 'Restore Defaults'}</span>
+              </button>
+
+              {/* Save as Default Button */}
+              <button
+                type="button"
+                onClick={handleSaveAsDefault}
+                disabled={savingAsDefault || savingSettings || restoringDefaults}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                title="Save current custom configuration as permanent default profile"
+              >
+                <BookmarkCheck className={`w-3.5 h-3.5 ${savingAsDefault ? 'animate-spin' : ''}`} />
+                <span>{savingAsDefault ? 'Saving Default...' : 'Save as Default'}</span>
+              </button>
+
+              {/* Save All Settings (Active Apply) */}
+              <button
+                type="button"
                 onClick={handleSaveAllSettings}
-                disabled={savingSettings}
-                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                disabled={savingSettings || savingAsDefault || restoringDefaults}
+                className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 cursor-pointer transition-all"
               >
                 {savingSettings ? (
                   <>
-                    <RefreshCw className="w-4 h-4 animate-spin" /> Synchronizing...
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Synchronizing...
                   </>
                 ) : (
                   <>
-                    <Shield className="w-4 h-4" /> Save All Settings
+                    <Shield className="w-3.5 h-3.5" /> Save All Settings
                   </>
                 )}
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {/* Box 1: Position Sizing & Exposure */}
+          {/* MAIN 3-PANEL CONFIGURATION GRID */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+            {/* PANEL 1: MANUAL RISK—TO—REWARD RATIO & TARGETS */}
             <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* Header & Dynamic Ratio Badge */}
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                    <DollarSign className="w-4 h-4 text-emerald-600" /> Position Sizing & Exposure
+                    <Scale className="w-4 h-4 text-blue-600" /> Risk—to—Reward Ratio
                   </span>
-                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                    Per Trade Margin
+                  <span className={`text-xs font-mono font-black px-2.5 py-0.5 rounded-full border ${
+                    (takeProfitDollar / (stopLossDollar || 0.01)) >= 1.0
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : 'bg-amber-100 text-amber-800 border-amber-300'
+                  }`}>
+                    {stopLossDollar > 0 ? (takeProfitDollar / stopLossDollar).toFixed(2) : '1.00'} : 1.00 R:R
                   </span>
                 </div>
 
+                {/* Quick Presets for R:R */}
+                <div>
+                  <label className="text-[11px] text-slate-500 font-semibold block mb-1.5">
+                    Quick Risk:Reward Presets:
+                  </label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      { label: '1:1 Strict', tp: 0.50, sl: 0.50 },
+                      { label: '1.5:1 Target', tp: 0.75, sl: 0.50 },
+                      { label: '2:1 Runner', tp: 1.00, sl: 0.50 },
+                      { label: '3:1 Deep', tp: 1.50, sl: 0.50 },
+                    ].map((p) => {
+                      const isActive = Math.abs(takeProfitDollar - p.tp) < 0.01 && Math.abs(stopLossDollar - p.sl) < 0.01;
+                      return (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => {
+                            setTakeProfitDollar(p.tp);
+                            setStopLossDollar(p.sl);
+                          }}
+                          className={`py-1.5 px-1 text-center rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                            isActive
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <div>{p.label}</div>
+                          <div className="text-[9px] opacity-75 font-mono">${p.tp}/${p.sl}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Manual Target Inputs */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] text-slate-700 font-bold">Take Profit Target:</label>
+                      <span className="text-[10px] text-emerald-600 font-mono font-bold">
+                        +{((takeProfitDollar / positionSize) * 100).toFixed(0)}% ROI
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-emerald-600 font-bold text-xs">+$</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.10"
+                        max="3.00"
+                        value={takeProfitDollar}
+                        onChange={(e) => setTakeProfitDollar(Math.max(0.05, Number(e.target.value)))}
+                        className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-emerald-700 focus:outline-hidden focus:border-blue-500"
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">Exit gain per trade</span>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] text-slate-700 font-bold">Stop Loss Target:</label>
+                      <span className="text-[10px] text-rose-600 font-mono font-bold">
+                        -{((stopLossDollar / positionSize) * 100).toFixed(0)}% Risk
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-rose-600 font-bold text-xs">-$</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.10"
+                        max="3.00"
+                        value={stopLossDollar}
+                        onChange={(e) => setStopLossDollar(Math.max(0.05, Number(e.target.value)))}
+                        className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-rose-700 focus:outline-hidden focus:border-blue-500"
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">Max loss stop limit</span>
+                  </div>
+                </div>
+
+                {/* Quantitative Edge & Break-even Win Rate */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 text-[11px] font-mono space-y-1 text-slate-600">
+                  <div className="flex justify-between">
+                    <span>Break-even Win Rate:</span>
+                    <span className="font-bold text-blue-600">
+                      {((stopLossDollar / (takeProfitDollar + stopLossDollar || 1)) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Reward-to-Risk Edge:</span>
+                    <span className="font-bold text-emerald-600">
+                      +${(takeProfitDollar - stopLossDollar).toFixed(2)} Edge / Round
+                    </span>
+                  </div>
+                </div>
+
+                {/* Anti-Reversal Micro-Profit Lock Sub-section */}
+                <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-slate-700 font-bold flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-blue-600" /> Anti-Reversal Micro-Lock:
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={trailingLockEnabled}
+                      onChange={(e) => setTrailingLockEnabled(e.target.checked)}
+                      className="w-4 h-4 accent-blue-600 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-slate-500">Min Lock Gain:</span>
+                      <div className="font-mono font-bold text-slate-800">${minProfitToLock.toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Giveback Max:</span>
+                      <div className="font-mono font-bold text-slate-800">${reversalGivebackDollar.toFixed(2)}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200/60 text-[10px] text-slate-400 font-mono">
+                Manual configuration active. Custom presets can be saved as default profile.
+              </div>
+            </div>
+
+            {/* PANEL 2: ACTIVE QUANTITATIVE FILTERS & INDICATORS */}
+            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <SlidersHorizontal className="w-4 h-4 text-purple-600" /> Active Filters & Indicators
+                  </span>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                    Quant Confluence
+                  </span>
+                </div>
+
+                {/* Filter 1: Oracle Price Delta & Velocity */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterDeltaEnabled}
+                        onChange={(e) => setFilterDeltaEnabled(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-purple-600"
+                      />
+                      <span>1. Oracle Delta & Velocity</span>
+                    </label>
+                    <span className="text-xs font-mono font-bold text-purple-700">
+                      {filterDeltaEnabled ? `${filterDeltaWeight} pts` : 'BYPASSED'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="50"
+                    step="5"
+                    disabled={!filterDeltaEnabled}
+                    value={filterDeltaWeight}
+                    onChange={(e) => setFilterDeltaWeight(Number(e.target.value))}
+                    className="w-full accent-purple-600 cursor-pointer disabled:opacity-40"
+                  />
+                  <div className="text-[10px] text-slate-400">
+                    Weight for sub-second oracle price divergence from epoch strike price
+                  </div>
+                </div>
+
+                {/* Filter 2: Order Book Imbalance (OBI) */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterObiEnabled}
+                        onChange={(e) => setFilterObiEnabled(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-blue-600"
+                      />
+                      <span>2. Order Book Imbalance (OBI)</span>
+                    </label>
+                    <span className="text-xs font-mono font-bold text-blue-700">
+                      {filterObiEnabled ? `${filterObiWeight} pts` : 'BYPASSED'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="50"
+                    step="5"
+                    disabled={!filterObiEnabled}
+                    value={filterObiWeight}
+                    onChange={(e) => setFilterObiWeight(Number(e.target.value))}
+                    className="w-full accent-blue-600 cursor-pointer disabled:opacity-40"
+                  />
+                  <div className="text-[10px] text-slate-400">
+                    Weight for Polymarket CLOB liquidity skew between UP/DOWN shares
+                  </div>
+                </div>
+
+                {/* Filter 3: Micro-Momentum Confluence */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterMomentumEnabled}
+                        onChange={(e) => setFilterMomentumEnabled(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-emerald-600"
+                      />
+                      <span>3. Micro-Momentum Confluence</span>
+                    </label>
+                    <span className="text-xs font-mono font-bold text-emerald-700">
+                      {filterMomentumEnabled ? `${filterMomentumWeight} pts` : 'BYPASSED'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="50"
+                    step="5"
+                    disabled={!filterMomentumEnabled}
+                    value={filterMomentumWeight}
+                    onChange={(e) => setFilterMomentumWeight(Number(e.target.value))}
+                    className="w-full accent-emerald-600 cursor-pointer disabled:opacity-40"
+                  />
+                </div>
+
+                {/* Technical Sub-Indicator Checkboxes */}
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <div className="text-[11px] font-bold text-slate-700 mb-1.5">Active Indicator Sub-Filters:</div>
+                  <div className="grid grid-cols-3 gap-2 text-[11px]">
+                    <label className="flex items-center gap-1 text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterRsiEnabled}
+                        onChange={(e) => setFilterRsiEnabled(e.target.checked)}
+                        className="accent-indigo-600"
+                      />
+                      <span>RSI (14)</span>
+                    </label>
+                    <label className="flex items-center gap-1 text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterBbEnabled}
+                        onChange={(e) => setFilterBbEnabled(e.target.checked)}
+                        className="accent-indigo-600"
+                      />
+                      <span>BB (%B)</span>
+                    </label>
+                    <label className="flex items-center gap-1 text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterEmaMacdEnabled}
+                        onChange={(e) => setFilterEmaMacdEnabled(e.target.checked)}
+                        className="accent-indigo-600"
+                      />
+                      <span>EMA & MACD</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Market Protection Thresholds */}
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div>
+                    <label className="text-slate-600 font-semibold block mb-0.5">Max CLOB Spread:</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        step="1"
+                        min="2"
+                        max="35"
+                        value={Math.round(maxSpread * 100)}
+                        onChange={(e) => setMaxSpread(Number(e.target.value) / 100)}
+                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg font-mono text-xs font-bold"
+                      />
+                      <span className="absolute right-2 top-1 text-slate-400 font-mono">%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-slate-600 font-semibold block mb-0.5">Min Liquidity:</label>
+                    <div className="relative">
+                      <span className="absolute left-2 top-1 text-slate-400 font-mono">$</span>
+                      <input
+                        type="number"
+                        step="50"
+                        min="50"
+                        max="2000"
+                        value={minLiquidityUsd}
+                        onChange={(e) => setMinLiquidityUsd(Number(e.target.value))}
+                        className="w-full pl-5 pr-2 py-1 bg-white border border-slate-200 rounded-lg font-mono text-xs font-bold"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200/60 text-[10px] text-slate-400 font-mono">
+                Total Weight: {(filterDeltaEnabled ? filterDeltaWeight : 0) + (filterObiEnabled ? filterObiWeight : 0) + (filterMomentumEnabled ? filterMomentumWeight : 0)} pts (Normalized to 0 - 100)
+              </div>
+            </div>
+
+            {/* PANEL 3: POSITION SIZING & STRATEGY DIRECTION */}
+            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-emerald-600" /> Capital & Directional Bias
+                  </span>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                    Execution Rules
+                  </span>
+                </div>
+
+                {/* Position Sizing */}
                 <div>
                   <label className="text-xs text-slate-600 font-semibold mb-1.5 block">
                     Execution Size per Prediction:
@@ -653,7 +1107,7 @@ export default function Fast5MBoard() {
                       </button>
                     ))}
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400 font-medium">Custom:</span>
                     <div className="relative flex-1">
                       <span className="absolute left-3 top-2 text-slate-400 font-mono text-xs">$</span>
@@ -671,54 +1125,7 @@ export default function Fast5MBoard() {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-200/60">
-                  <label className="text-xs text-slate-600 font-semibold mb-1.5 flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-blue-600" /> Max Active Pools:
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { val: 1, label: '1 Pool', desc: 'Strict Single' },
-                      { val: 2, label: '2 Pools', desc: 'Dual Asset' },
-                      { val: 3, label: '3 Pools', desc: 'Multi Asset' }
-                    ].map((item) => (
-                      <button
-                        key={item.val}
-                        type="button"
-                        onClick={() => setMaxActivePools(item.val)}
-                        className={`py-2 px-2 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          maxActivePools === item.val
-                            ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/30'
-                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        <div>{item.label}</div>
-                        <div className="text-[10px] opacity-80">{item.desc}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono flex justify-between items-center">
-                <span>Account Allocation:</span>
-                <span className="font-bold text-slate-800">
-                  ${positionSize * maxActivePools} / ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)} ({(((positionSize * maxActivePools) / ((stats.initial_balance ?? 300) + stats.total_pnl)) * 100).toFixed(1)}%)
-                </span>
-              </div>
-            </div>
-
-            {/* Box 2: Strategy Direction & Confidence Threshold */}
-            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                    <Gauge className="w-4 h-4 text-purple-600" /> Strategy Direction & Score
-                  </span>
-                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
-                    Execution Trigger
-                  </span>
-                </div>
-
+                {/* Strategy Direction */}
                 <div>
                   <label className="text-xs text-slate-600 font-semibold mb-1.5 block">
                     Directional Strategy Bias:
@@ -767,11 +1174,38 @@ export default function Fast5MBoard() {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-200/60">
+                {/* Max Active Pools */}
+                <div>
+                  <label className="text-xs text-slate-600 font-semibold mb-1.5 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-blue-600" /> Max Active Pools:
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { val: 1, label: '1 Pool', desc: 'Strict Single' },
+                      { val: 2, label: '2 Pools', desc: 'Dual Asset' },
+                      { val: 3, label: '3 Pools', desc: 'Multi Asset' }
+                    ].map((item) => (
+                      <button
+                        key={item.val}
+                        type="button"
+                        onClick={() => setMaxActivePools(item.val)}
+                        className={`py-2 px-2 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          maxActivePools === item.val
+                            ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/30'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div>{item.label}</div>
+                        <div className="text-[10px] opacity-80">{item.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Score Threshold */}
+                <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs text-slate-600 font-semibold">
-                      Min Composite Score Threshold:
-                    </label>
+                    <label className="text-xs text-slate-600 font-semibold">Min Composite Score Threshold:</label>
                     <span className="font-mono font-bold text-sm text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
                       ≥ {confidenceThreshold}%
                     </span>
@@ -786,101 +1220,21 @@ export default function Fast5MBoard() {
                     className="w-full accent-purple-600 cursor-pointer"
                   />
                   <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
-                    <span>50% (High Frequency)</span>
+                    <span>50% (High Freq)</span>
                     <span>70% (Recommended)</span>
-                    <span>90% (Strict Edge)</span>
+                    <span>90% (Strict)</span>
                   </div>
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono">
-                Trigger rule: Only pairs with score ≥ {confidenceThreshold}% and valid CLOB depth will be executed.
-              </div>
-            </div>
-
-            {/* Box 3: Strict 1:1 Risk-to-Reward & Micro-Profit Locks */}
-            <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                    <Shield className="w-4 h-4 text-blue-600" /> Strict 1:1 Risk-to-Reward
-                  </span>
-                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
-                    Symmetrical RR
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] text-slate-600 font-semibold block mb-1">
-                      Take Profit Target:
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-2.5 top-1.5 text-emerald-600 font-bold text-xs">+$</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0.10"
-                        max="2.00"
-                        value={takeProfitDollar}
-                        onChange={(e) => setTakeProfitDollar(Number(e.target.value))}
-                        className="w-full pl-7 pr-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-emerald-700"
-                      />
-                    </div>
-                    <span className="text-[10px] text-slate-400 mt-0.5 block">Locks +$0.50 gain</span>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-600 font-semibold block mb-1">
-                      Stop Loss Target:
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-2.5 top-1.5 text-rose-600 font-bold text-xs">-$</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0.10"
-                        max="2.00"
-                        value={stopLossDollar}
-                        onChange={(e) => setStopLossDollar(Number(e.target.value))}
-                        className="w-full pl-7 pr-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-rose-700"
-                      />
-                    </div>
-                    <span className="text-[10px] text-slate-400 mt-0.5 block">Exits at -$0.50 risk</span>
-                  </div>
-                </div>
-
-                {/* Trailing Micro-Profit Lock Sub-section */}
-                <div className="pt-2 border-t border-slate-200/60 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-slate-700 font-bold flex items-center gap-1.5">
-                      <Lock className="w-3.5 h-3.5 text-blue-600" /> Anti-Reversal Micro-Lock:
-                    </label>
-                    <input
-                      type="checkbox"
-                      checked={trailingLockEnabled}
-                      onChange={(e) => setTrailingLockEnabled(e.target.checked)}
-                      className="w-4 h-4 accent-blue-600 cursor-pointer"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-[11px]">
-                    <div>
-                      <span className="text-slate-500">Min Lock Gain:</span>
-                      <div className="font-mono font-bold text-slate-800">${minProfitToLock.toFixed(2)}</div>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Giveback Max:</span>
-                      <div className="font-mono font-bold text-slate-800">${reversalGivebackDollar.toFixed(2)}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono">
-                Ratio: 1.00 : 1.00 (Strict Symmetrical 1-in-1 risk rule enforced on every round)
+              <div className="pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 font-mono flex justify-between items-center">
+                <span>Account Allocation:</span>
+                <span className="font-bold text-slate-800">
+                  ${positionSize * maxActivePools} / ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)} ({(((positionSize * maxActivePools) / ((stats.initial_balance ?? 300) + stats.total_pnl)) * 100).toFixed(1)}%)
+                </span>
               </div>
             </div>
+
           </div>
         </div>
       )}

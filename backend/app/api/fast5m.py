@@ -29,6 +29,19 @@ class SettingsUpdate(BaseModel):
     reversal_lock_enabled: Optional[bool] = None
     min_time_remaining: Optional[float] = None
     max_time_remaining: Optional[float] = None
+    # Active Quantitative Filters & Indicator Flags
+    filter_delta_enabled: Optional[bool] = None
+    filter_delta_weight: Optional[float] = None
+    filter_obi_enabled: Optional[bool] = None
+    filter_obi_weight: Optional[float] = None
+    filter_momentum_enabled: Optional[bool] = None
+    filter_momentum_weight: Optional[float] = None
+    filter_rsi_enabled: Optional[bool] = None
+    filter_bb_enabled: Optional[bool] = None
+    filter_ema_macd_enabled: Optional[bool] = None
+    max_spread: Optional[float] = None
+    min_liquidity_usd: Optional[float] = None
+    save_as_default: Optional[bool] = None
 
 
 class ManualOrderRequest(BaseModel):
@@ -127,13 +140,16 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
 
 @router.get("/settings")
 def get_fast5m_settings():
-    """Get active Fast 5M settings."""
-    return fast_executor.settings
+    """Get active Fast 5M settings and saved custom default baseline."""
+    return {
+        **fast_executor.settings,
+        "_defaults": fast_executor.get_default_settings()
+    }
 
 
 @router.post("/settings")
 def update_fast5m_settings(payload: SettingsUpdate):
-    """Update Fast 5M settings."""
+    """Update Fast 5M settings and optionally persist as permanent custom default baseline."""
     updates = {}
     if payload.auto_trading_enabled is not None:
         updates["auto_trading_enabled"] = "true" if payload.auto_trading_enabled else "false"
@@ -164,8 +180,107 @@ def update_fast5m_settings(payload: SettingsUpdate):
     if payload.max_time_remaining is not None:
         updates["max_time_remaining"] = str(payload.max_time_remaining)
 
+    # Active Filters & Indicators
+    if payload.filter_delta_enabled is not None:
+        updates["filter_delta_enabled"] = "true" if payload.filter_delta_enabled else "false"
+    if payload.filter_delta_weight is not None:
+        updates["filter_delta_weight"] = str(payload.filter_delta_weight)
+    if payload.filter_obi_enabled is not None:
+        updates["filter_obi_enabled"] = "true" if payload.filter_obi_enabled else "false"
+    if payload.filter_obi_weight is not None:
+        updates["filter_obi_weight"] = str(payload.filter_obi_weight)
+    if payload.filter_momentum_enabled is not None:
+        updates["filter_momentum_enabled"] = "true" if payload.filter_momentum_enabled else "false"
+    if payload.filter_momentum_weight is not None:
+        updates["filter_momentum_weight"] = str(payload.filter_momentum_weight)
+    if payload.filter_rsi_enabled is not None:
+        updates["filter_rsi_enabled"] = "true" if payload.filter_rsi_enabled else "false"
+    if payload.filter_bb_enabled is not None:
+        updates["filter_bb_enabled"] = "true" if payload.filter_bb_enabled else "false"
+    if payload.filter_ema_macd_enabled is not None:
+        updates["filter_ema_macd_enabled"] = "true" if payload.filter_ema_macd_enabled else "false"
+    if payload.max_spread is not None:
+        updates["max_spread"] = str(payload.max_spread)
+    if payload.min_liquidity_usd is not None:
+        updates["min_liquidity_usd"] = str(payload.min_liquidity_usd)
+
+    if payload.save_as_default:
+        saved_defaults = fast_executor.save_as_default(updates)
+        return {
+            "status": "success",
+            "message": "Custom settings saved as permanent default baseline.",
+            "settings": fast_executor.settings,
+            "defaults": saved_defaults
+        }
+
     fast_executor.update_settings(updates)
     return {"status": "success", "settings": fast_executor.settings}
+
+
+@router.post("/settings/default")
+def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
+    """Save current or specified settings as custom default baseline."""
+    updates = {}
+    if payload:
+        if payload.take_profit_dollar is not None:
+            updates["take_profit_dollar"] = str(payload.take_profit_dollar)
+        if payload.stop_loss_dollar is not None:
+            updates["stop_loss_dollar"] = str(payload.stop_loss_dollar)
+        if payload.position_size_usd is not None:
+            updates["position_size_usd"] = str(payload.position_size_usd)
+        if payload.confidence_threshold is not None:
+            updates["confidence_threshold"] = str(payload.confidence_threshold)
+        if payload.max_active_pools is not None:
+            updates["max_active_pools"] = str(payload.max_active_pools)
+        if payload.strategy_direction is not None:
+            updates["strategy_direction"] = str(payload.strategy_direction).upper()
+        if payload.min_profit_to_lock is not None:
+            updates["min_profit_to_lock"] = str(payload.min_profit_to_lock)
+        if payload.reversal_giveback_dollar is not None:
+            updates["reversal_giveback_dollar"] = str(payload.reversal_giveback_dollar)
+        if payload.trailing_lock_enabled is not None:
+            updates["trailing_lock_enabled"] = "true" if payload.trailing_lock_enabled else "false"
+        if payload.filter_delta_enabled is not None:
+            updates["filter_delta_enabled"] = "true" if payload.filter_delta_enabled else "false"
+        if payload.filter_delta_weight is not None:
+            updates["filter_delta_weight"] = str(payload.filter_delta_weight)
+        if payload.filter_obi_enabled is not None:
+            updates["filter_obi_enabled"] = "true" if payload.filter_obi_enabled else "false"
+        if payload.filter_obi_weight is not None:
+            updates["filter_obi_weight"] = str(payload.filter_obi_weight)
+        if payload.filter_momentum_enabled is not None:
+            updates["filter_momentum_enabled"] = "true" if payload.filter_momentum_enabled else "false"
+        if payload.filter_momentum_weight is not None:
+            updates["filter_momentum_weight"] = str(payload.filter_momentum_weight)
+        if payload.filter_rsi_enabled is not None:
+            updates["filter_rsi_enabled"] = "true" if payload.filter_rsi_enabled else "false"
+        if payload.filter_bb_enabled is not None:
+            updates["filter_bb_enabled"] = "true" if payload.filter_bb_enabled else "false"
+        if payload.filter_ema_macd_enabled is not None:
+            updates["filter_ema_macd_enabled"] = "true" if payload.filter_ema_macd_enabled else "false"
+        if payload.max_spread is not None:
+            updates["max_spread"] = str(payload.max_spread)
+        if payload.min_liquidity_usd is not None:
+            updates["min_liquidity_usd"] = str(payload.min_liquidity_usd)
+
+    defaults = fast_executor.save_as_default(updates if updates else None)
+    return {
+        "status": "success",
+        "message": "Custom configuration saved as default profile.",
+        "settings": fast_executor.settings,
+        "defaults": defaults
+    }
+
+
+@router.post("/settings/restore-defaults")
+def restore_settings_defaults():
+    """Restore active settings to the saved custom default baseline."""
+    restored = fast_executor.restore_defaults()
+    return {
+        "status": "success",
+        "message": "Settings restored to custom default baseline.",
+        "settings": restored
+    }
 
 
 @router.post("/toggle")

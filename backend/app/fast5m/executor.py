@@ -37,8 +37,19 @@ DEFAULT_SETTINGS = {
     "reversal_giveback_dollar": "0.06",   # If profit dips 6 cents from peak, book profit immediately before reverse!
     "reversal_lock_enabled": "true",      # Technical momentum reversal exit
     "max_spread": "0.20",
+    "min_liquidity_usd": "100.0",
     "min_time_remaining": "20.0",
     "max_time_remaining": "280.0",
+    # Active Quantitative Filters & Indicator Weights
+    "filter_delta_enabled": "true",
+    "filter_delta_weight": "40.0",
+    "filter_obi_enabled": "true",
+    "filter_obi_weight": "30.0",
+    "filter_momentum_enabled": "true",
+    "filter_momentum_weight": "30.0",
+    "filter_rsi_enabled": "true",
+    "filter_bb_enabled": "true",
+    "filter_ema_macd_enabled": "true",
 }
 
 
@@ -74,32 +85,33 @@ class FastExecutor:
     def _load_settings(self):
         db: Session = SessionLocal()
         try:
-            for k, default_val in DEFAULT_SETTINGS.items():
+            # Check for custom saved defaults first
+            custom_defaults = {}
+            for k in DEFAULT_SETTINGS.keys():
+                custom_rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == f"custom_default_{k}").first()
+                if custom_rec:
+                    custom_defaults[k] = custom_rec.value
+
+            for k, factory_default in DEFAULT_SETTINGS.items():
+                default_to_use = custom_defaults.get(k, str(factory_default))
                 record = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
                 if not record:
-                    db.add(Fast5MSetting(key=k, value=str(default_val)))
-                    self.settings[k] = str(default_val)
+                    db.add(Fast5MSetting(key=k, value=default_to_use))
+                    self.settings[k] = default_to_use
                 else:
                     self.settings[k] = record.value
 
-            # Guarantee active auto-trading, $300 balance, and 1:1 RR settings
-            self.settings["auto_trading_enabled"] = "true"
-            self.settings["total_balance_usd"] = "300.0"
-            self.settings["take_profit_dollar"] = "0.50"
-            self.settings["stop_loss_dollar"] = "0.50"
-            
-            # Ensure max_active_pools and strategy_direction exist in db
-            if "max_active_pools" not in self.settings:
-                self.settings["max_active_pools"] = "1"
-            if "strategy_direction" not in self.settings:
-                self.settings["strategy_direction"] = "BOTH"
+            # Guarantee mandatory base attributes if missing
+            if "auto_trading_enabled" not in self.settings:
+                self.settings["auto_trading_enabled"] = "true"
+            if "total_balance_usd" not in self.settings:
+                self.settings["total_balance_usd"] = "300.0"
 
-            for k in ("auto_trading_enabled", "total_balance_usd", "take_profit_dollar", "stop_loss_dollar", "max_active_pools", "strategy_direction"):
-                rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
-                if rec:
-                    rec.value = self.settings[k]
-                else:
-                    db.add(Fast5MSetting(key=k, value=self.settings[k]))
+            # Seed custom default baseline if not already present
+            for k, val in self.settings.items():
+                def_rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == f"custom_default_{k}").first()
+                if not def_rec:
+                    db.add(Fast5MSetting(key=f"custom_default_{k}", value=str(val)))
 
             db.commit()
         except Exception as e:
@@ -123,6 +135,64 @@ class FastExecutor:
             logger.error(f"[Fast5M Executor] Error updating settings: {e}")
         finally:
             db.close()
+
+    def save_as_default(self, updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Save current or provided settings as the permanent custom default baseline."""
+        if updates:
+            self.update_settings(updates)
+        db: Session = SessionLocal()
+        try:
+            for k, v in self.settings.items():
+                def_key = f"custom_default_{k}"
+                rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == def_key).first()
+                if rec:
+                    rec.value = str(v)
+                else:
+                    db.add(Fast5MSetting(key=def_key, value=str(v)))
+            
+            ts_key = "custom_defaults_saved_at"
+            ts_val = datetime.now(timezone.utc).isoformat()
+            ts_rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == ts_key).first()
+            if ts_rec:
+                ts_rec.value = ts_val
+            else:
+                db.add(Fast5MSetting(key=ts_key, value=ts_val))
+
+            db.commit()
+            logger.info("[Fast5M Executor] Saved custom default profile successfully.")
+            return self.get_default_settings()
+        except Exception as e:
+            logger.error(f"[Fast5M Executor] Error saving default settings: {e}")
+            return self.get_default_settings()
+        finally:
+            db.close()
+
+    def restore_defaults(self) -> Dict[str, Any]:
+        """Restore active settings from the saved custom default baseline."""
+        defaults = self.get_default_settings()
+        # Filter out metadata keys
+        to_apply = {k: v for k, v in defaults.items() if not k.startswith("custom_")}
+        self.update_settings(to_apply)
+        logger.info("[Fast5M Executor] Restored settings from custom default baseline.")
+        return self.settings
+
+    def get_default_settings(self) -> Dict[str, Any]:
+        """Retrieve the saved custom default profile."""
+        db: Session = SessionLocal()
+        defaults = dict(DEFAULT_SETTINGS)
+        try:
+            for k in DEFAULT_SETTINGS.keys():
+                rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == f"custom_default_{k}").first()
+                if rec:
+                    defaults[k] = rec.value
+            ts_rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == "custom_defaults_saved_at").first()
+            if ts_rec:
+                defaults["custom_defaults_saved_at"] = ts_rec.value
+        except Exception as e:
+            logger.warning(f"[Fast5M Executor] Error reading default settings: {e}")
+        finally:
+            db.close()
+        return defaults
 
     def _rehydrate_active_trade(self):
         db: Session = SessionLocal()

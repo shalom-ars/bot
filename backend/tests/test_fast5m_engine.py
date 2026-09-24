@@ -55,3 +55,30 @@ def test_executor_balance_and_micro_profit_locking():
     assert giveback == 0.06
     assert executor.settings.get("trailing_lock_enabled") == "true"
     assert executor.settings.get("reversal_lock_enabled") == "true"
+
+def test_executor_save_and_restore_defaults():
+    executor = FastExecutor()
+    # Modify settings to custom configuration
+    executor.update_settings({
+        "take_profit_dollar": "0.75",
+        "stop_loss_dollar": "0.50",
+        "filter_delta_weight": "45.0",
+        "filter_rsi_enabled": "false"
+    })
+    assert float(executor.settings["take_profit_dollar"]) == 0.75
+    
+    # Save as custom default baseline
+    defaults = executor.save_as_default()
+    assert float(defaults["take_profit_dollar"]) == 0.75
+    assert float(defaults["filter_delta_weight"]) == 45.0
+    assert defaults["filter_rsi_enabled"] == "false"
+
+    # Now change active settings to something else
+    executor.update_settings({"take_profit_dollar": "1.20"})
+    assert float(executor.settings["take_profit_dollar"]) == 1.20
+
+    # Restore to default
+    restored = executor.restore_defaults()
+    assert float(restored["take_profit_dollar"]) == 0.75
+    assert float(restored["filter_delta_weight"]) == 45.0
+    assert restored["filter_rsi_enabled"] == "false"

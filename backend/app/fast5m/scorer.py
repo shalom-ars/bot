@@ -85,7 +85,18 @@ class FastScorer:
     """
     Computes real-time directional confluence scores and ranks all 7 fast markets.
     """
-    def score_all_assets(self, confidence_threshold: float = 70.0) -> List[ScoredAsset]:
+    def score_all_assets(
+        self,
+        confidence_threshold: float = 70.0,
+        settings: Optional[Dict[str, Any]] = None
+    ) -> List[ScoredAsset]:
+        if settings is None:
+            try:
+                from app.fast5m.executor import fast_executor
+                settings = fast_executor.settings
+            except Exception:
+                settings = {}
+
         scored_list: List[ScoredAsset] = []
 
         for asset in SUPPORTED_ASSETS:
@@ -95,7 +106,7 @@ class FastScorer:
             if not oracle_state or oracle_state.live_price <= 0:
                 continue
 
-            scored = self._score_single_asset(asset, oracle_state, market_info, confidence_threshold)
+            scored = self._score_single_asset(asset, oracle_state, market_info, confidence_threshold, settings)
             scored_list.append(scored)
 
         # Sort by composite confidence descending
@@ -112,8 +123,30 @@ class FastScorer:
         asset: str,
         oracle: Any,
         market: Optional[FastMarketInfo],
-        threshold: float
+        threshold: float,
+        settings: Optional[Dict[str, Any]] = None
     ) -> ScoredAsset:
+        cfg = settings or {}
+
+        # 1. Filter configuration & Weights
+        delta_enabled = str(cfg.get("filter_delta_enabled", "true")).lower() in ("true", "1", "yes")
+        delta_max_pts = float(cfg.get("filter_delta_weight", 40.0)) if delta_enabled else 0.0
+
+        obi_enabled = str(cfg.get("filter_obi_enabled", "true")).lower() in ("true", "1", "yes")
+        obi_max_pts = float(cfg.get("filter_obi_weight", 30.0)) if obi_enabled else 0.0
+
+        mom_enabled = str(cfg.get("filter_momentum_enabled", "true")).lower() in ("true", "1", "yes")
+        mom_max_pts = float(cfg.get("filter_momentum_weight", 30.0)) if mom_enabled else 0.0
+
+        rsi_enabled = str(cfg.get("filter_rsi_enabled", "true")).lower() in ("true", "1", "yes")
+        bb_enabled = str(cfg.get("filter_bb_enabled", "true")).lower() in ("true", "1", "yes")
+        ema_macd_enabled = str(cfg.get("filter_ema_macd_enabled", "true")).lower() in ("true", "1", "yes")
+
+        max_spread = float(cfg.get("max_spread", 0.20))
+        min_liquidity = float(cfg.get("min_liquidity_usd", 100.0))
+        min_time = float(cfg.get("min_time_remaining", 20.0))
+        max_time = float(cfg.get("max_time_remaining", 280.0))
+
         delta = oracle.delta
         delta_pct = oracle.delta_pct
         live_price = oracle.live_price
@@ -130,87 +163,103 @@ class FastScorer:
         liquidity = market.total_liquidity if market else 500.0
         imbalance = market.orderbook_imbalance if market else 0.0
 
-        # Sub-Score 1: Oracle Delta & Expiration Velocity (0 - 40 pts)
-        # Closer to expiration with established delta yields highest confidence
-        time_factor = max(0.5, min(1.5, 300.0 / (time_rem + 60.0)))
-        
-        # Normalize delta_pct based on typical 5m volatility (0.15% is significant for 5m)
-        vol_scale = 0.12 if asset in ("BTC", "ETH", "BNB") else 0.25 # higher beta for SOL, XRP, DOGE, HYPE
-        normalized_delta = (delta_pct / vol_scale) * time_factor
-        
-        up_delta_score = 20.0 + min(20.0, max(-20.0, normalized_delta * 12.0))
-        down_delta_score = 20.0 + min(20.0, max(-20.0, -normalized_delta * 12.0))
+        # Sub-Score 1: Oracle Delta & Expiration Velocity
+        up_delta_score = 0.0
+        down_delta_score = 0.0
+        if delta_enabled and delta_max_pts > 0:
+            time_factor = max(0.5, min(1.5, 300.0 / (time_rem + 60.0)))
+            vol_scale = 0.12 if asset in ("BTC", "ETH", "BNB") else 0.25
+            normalized_delta = (delta_pct / vol_scale) * time_factor
+            
+            mid = delta_max_pts / 2.0
+            scale_step = delta_max_pts * 0.3
+            up_delta_score = mid + min(mid, max(-mid, normalized_delta * scale_step))
+            down_delta_score = mid + min(mid, max(-mid, -normalized_delta * scale_step))
 
-        # Add velocity continuation bonus
-        if v10 > 0.02 and v30 > 0.01:
-            up_delta_score = min(40.0, up_delta_score + 5.0)
-            down_delta_score = max(0.0, down_delta_score - 5.0)
-        elif v10 < -0.02 and v30 < -0.01:
-            down_delta_score = min(40.0, down_delta_score + 5.0)
-            up_delta_score = max(0.0, up_delta_score - 5.0)
+            # Velocity continuation bonus
+            bonus = delta_max_pts * 0.125
+            if v10 > 0.02 and v30 > 0.01:
+                up_delta_score = min(delta_max_pts, up_delta_score + bonus)
+                down_delta_score = max(0.0, down_delta_score - bonus)
+            elif v10 < -0.02 and v30 < -0.01:
+                down_delta_score = min(delta_max_pts, down_delta_score + bonus)
+                up_delta_score = max(0.0, up_delta_score - bonus)
 
-        # Sub-Score 2: Order Book Imbalance & Depth (0 - 30 pts)
-        # Imbalance is in range [-1.0, 1.0]
-        up_ob_score = 15.0 + (imbalance * 12.0)
-        down_ob_score = 15.0 - (imbalance * 12.0)
-        
-        # Spread penalty
-        spread_penalty = max(0.0, (spread - 0.02) * 100.0)
-        up_ob_score = max(0.0, min(30.0, up_ob_score - spread_penalty))
-        down_ob_score = max(0.0, min(30.0, down_ob_score - spread_penalty))
+        # Sub-Score 2: Order Book Imbalance & Depth
+        up_ob_score = 0.0
+        down_ob_score = 0.0
+        if obi_enabled and obi_max_pts > 0:
+            mid_ob = obi_max_pts / 2.0
+            up_ob_score = mid_ob + (imbalance * (obi_max_pts * 0.4))
+            down_ob_score = mid_ob - (imbalance * (obi_max_pts * 0.4))
+            
+            spread_penalty = max(0.0, (spread - 0.02) * (obi_max_pts * 3.33))
+            up_ob_score = max(0.0, min(obi_max_pts, up_ob_score - spread_penalty))
+            down_ob_score = max(0.0, min(obi_max_pts, down_ob_score - spread_penalty))
 
-        # Sub-Score 3: Technical Indicators & Momentum Confluence (0 - 30 pts)
-        # Evaluates RSI (14), Bollinger Bands (%B), EMA Trend (9/21), MACD, and micro-velocities
-        rsi = getattr(oracle, 'rsi_14', 50.0)
-        bb_b = getattr(oracle, 'bb_pct_b', 0.5)
-        ema_tr = getattr(oracle, 'ema_trend', 0.0)
-        macd = getattr(oracle, 'macd_hist', 0.0)
+        # Sub-Score 3: Technical Indicators & Momentum Confluence
+        up_mom_score = 0.0
+        down_mom_score = 0.0
+        if mom_enabled and mom_max_pts > 0:
+            mid_mom = mom_max_pts / 2.0
+            up_tech_pts = mid_mom
+            down_tech_pts = mid_mom
 
-        up_tech_pts = 15.0
-        down_tech_pts = 15.0
+            rsi = getattr(oracle, 'rsi_14', 50.0)
+            bb_b = getattr(oracle, 'bb_pct_b', 0.5)
+            ema_tr = getattr(oracle, 'ema_trend', 0.0)
+            macd = getattr(oracle, 'macd_hist', 0.0)
 
-        # RSI factor
-        if rsi > 55.0:
-            up_tech_pts += min(5.0, (rsi - 50.0) * 0.25)
-            down_tech_pts -= min(4.0, (rsi - 50.0) * 0.2)
-        elif rsi < 45.0:
-            down_tech_pts += min(5.0, (50.0 - rsi) * 0.25)
-            up_tech_pts -= min(4.0, (50.0 - rsi) * 0.2)
+            # RSI factor
+            if rsi_enabled:
+                if rsi > 55.0:
+                    up_tech_pts += min(mid_mom * 0.33, (rsi - 50.0) * 0.25)
+                    down_tech_pts -= min(mid_mom * 0.27, (rsi - 50.0) * 0.2)
+                elif rsi < 45.0:
+                    down_tech_pts += min(mid_mom * 0.33, (50.0 - rsi) * 0.25)
+                    up_tech_pts -= min(mid_mom * 0.27, (50.0 - rsi) * 0.2)
 
-        # EMA Trend & MACD factor
-        if ema_tr > 0.05 and macd > 0:
-            up_tech_pts += 5.0
-            down_tech_pts -= 4.0
-        elif ema_tr < -0.05 and macd < 0:
-            down_tech_pts += 5.0
-            up_tech_pts -= 4.0
+            # EMA Trend & MACD factor
+            if ema_macd_enabled:
+                if ema_tr > 0.05 and macd > 0:
+                    up_tech_pts += mid_mom * 0.33
+                    down_tech_pts -= mid_mom * 0.27
+                elif ema_tr < -0.05 and macd < 0:
+                    down_tech_pts += mid_mom * 0.33
+                    up_tech_pts -= mid_mom * 0.27
 
-        # Bollinger Bands %B factor
-        if bb_b > 0.6:
-            up_tech_pts += 3.0
-        elif bb_b < 0.4:
-            down_tech_pts += 3.0
+            # Bollinger Bands factor
+            if bb_enabled:
+                if bb_b > 0.6:
+                    up_tech_pts += mid_mom * 0.2
+                elif bb_b < 0.4:
+                    down_tech_pts += mid_mom * 0.2
 
-        # Multi-timeframe velocity agreement (10s, 30s, 60s)
-        if v10 > 0 and v30 > 0 and v60 > 0:
-            up_tech_pts += 7.0
-            down_tech_pts -= 6.0
-        elif v10 < 0 and v30 < 0 and v60 < 0:
-            down_tech_pts += 7.0
-            up_tech_pts -= 6.0
-        elif v10 > 0 and v30 > 0:
-            up_tech_pts += 4.0
-            down_tech_pts -= 3.0
-        elif v10 < 0 and v30 < 0:
-            down_tech_pts += 4.0
-            up_tech_pts -= 3.0
+            # Multi-timeframe velocity agreement
+            if v10 > 0 and v30 > 0 and v60 > 0:
+                up_tech_pts += mid_mom * 0.46
+                down_tech_pts -= mid_mom * 0.4
+            elif v10 < 0 and v30 < 0 and v60 < 0:
+                down_tech_pts += mid_mom * 0.46
+                up_tech_pts -= mid_mom * 0.4
+            elif v10 > 0 and v30 > 0:
+                up_tech_pts += mid_mom * 0.26
+                down_tech_pts -= mid_mom * 0.2
+            elif v10 < 0 and v30 < 0:
+                down_tech_pts += mid_mom * 0.26
+                up_tech_pts -= mid_mom * 0.2
 
-        up_mom_score = max(0.0, min(30.0, up_tech_pts))
-        down_mom_score = max(0.0, min(30.0, down_tech_pts))
+            up_mom_score = max(0.0, min(mom_max_pts, up_tech_pts))
+            down_mom_score = max(0.0, min(mom_max_pts, down_tech_pts))
 
-        # Total Scores (0 - 100)
-        total_up = round(min(100.0, max(0.0, up_delta_score + up_ob_score + up_mom_score)), 1)
-        total_down = round(min(100.0, max(0.0, down_delta_score + down_ob_score + down_mom_score)), 1)
+        # Total Scores normalized to 0 - 100
+        total_weight = delta_max_pts + obi_max_pts + mom_max_pts
+        if total_weight > 0:
+            total_up = round(min(100.0, max(0.0, ((up_delta_score + up_ob_score + up_mom_score) / total_weight) * 100.0)), 1)
+            total_down = round(min(100.0, max(0.0, ((down_delta_score + down_ob_score + down_mom_score) / total_weight) * 100.0)), 1)
+        else:
+            total_up = 50.0
+            total_down = 50.0
 
         # Direction and Composite Confidence
         if total_up > total_down and total_up >= 50.0:
@@ -220,7 +269,7 @@ class FastScorer:
             chosen_obi_score = up_ob_score
             chosen_mom_score = up_mom_score
             target_token = market.up_token_id if market else ""
-            reason = f"Delta +{delta_pct:.3f}% (Sc:{up_delta_score:.1f}/40) | OBI:{imbalance:+.2f} (Sc:{up_ob_score:.1f}/30) | Mom (Sc:{up_mom_score:.1f}/30)"
+            reason = f"Delta +{delta_pct:.3f}% ({up_delta_score:.1f}/{delta_max_pts:.0f}) | OBI:{imbalance:+.2f} ({up_ob_score:.1f}/{obi_max_pts:.0f}) | Mom ({up_mom_score:.1f}/{mom_max_pts:.0f})"
         elif total_down > total_up and total_down >= 50.0:
             direction = "DOWN"
             confidence = total_down
@@ -228,7 +277,7 @@ class FastScorer:
             chosen_obi_score = down_ob_score
             chosen_mom_score = down_mom_score
             target_token = market.down_token_id if market else ""
-            reason = f"Delta {delta_pct:.3f}% (Sc:{down_delta_score:.1f}/40) | OBI:{imbalance:+.2f} (Sc:{down_ob_score:.1f}/30) | Mom (Sc:{down_mom_score:.1f}/30)"
+            reason = f"Delta {delta_pct:.3f}% ({down_delta_score:.1f}/{delta_max_pts:.0f}) | OBI:{imbalance:+.2f} ({down_ob_score:.1f}/{obi_max_pts:.0f}) | Mom ({down_mom_score:.1f}/{mom_max_pts:.0f})"
         else:
             direction = "NEUTRAL"
             confidence = max(total_up, total_down)
@@ -245,15 +294,18 @@ class FastScorer:
         if not market:
             is_tradable = False
             rejection_reason = "No active Polymarket 5m epoch"
-        elif time_rem < 20.0:
+        elif time_rem < min_time:
             is_tradable = False
-            rejection_reason = f"Too close to round resolution ({time_rem:.0f}s)"
-        elif time_rem > 280.0:
+            rejection_reason = f"Too close to round resolution ({time_rem:.0f}s < {min_time:.0f}s)"
+        elif time_rem > max_time:
             is_tradable = False
-            rejection_reason = f"Waiting for round to mature ({time_rem:.0f}s)"
-        elif spread > 0.20:
+            rejection_reason = f"Waiting for round to mature ({time_rem:.0f}s > {max_time:.0f}s)"
+        elif spread > max_spread:
             is_tradable = False
-            rejection_reason = f"Spread too wide ({spread*100:.1f}%)"
+            rejection_reason = f"Spread too wide ({spread*100:.1f}% > {max_spread*100:.1f}%)"
+        elif liquidity < min_liquidity:
+            is_tradable = False
+            rejection_reason = f"Liquidity too low (${liquidity:.0f} < ${min_liquidity:.0f})"
         elif confidence < threshold:
             is_tradable = False
             rejection_reason = f"Confidence {confidence:.1f} < threshold {threshold:.1f}"
