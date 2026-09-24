@@ -16,10 +16,15 @@ router = APIRouter()
 
 class SettingsUpdate(BaseModel):
     auto_trading_enabled: Optional[bool] = None
+    total_balance_usd: Optional[float] = None
     confidence_threshold: Optional[float] = None
     position_size_usd: Optional[float] = None
     take_profit_dollar: Optional[float] = None
     stop_loss_dollar: Optional[float] = None
+    min_profit_to_lock: Optional[float] = None
+    reversal_giveback_dollar: Optional[float] = None
+    trailing_lock_enabled: Optional[bool] = None
+    reversal_lock_enabled: Optional[bool] = None
     min_time_remaining: Optional[float] = None
     max_time_remaining: Optional[float] = None
 
@@ -98,8 +103,13 @@ def get_fast5m_trades(limit: int = 50, db: Session = Depends(get_db)):
 
     win_rate = (wins / closed_trades * 100.0) if closed_trades > 0 else 0.0
 
+    initial_balance = float(fast_executor.settings.get("total_balance_usd", 300.0))
+    current_balance = round(initial_balance + total_pnl, 2)
+
     return {
         "stats": {
+            "initial_balance": initial_balance,
+            "current_balance": current_balance,
             "total_pnl": round(total_pnl, 2),
             "total_profit": round(total_profit, 2),
             "total_loss": round(total_loss, 2),
@@ -125,6 +135,8 @@ def update_fast5m_settings(payload: SettingsUpdate):
     updates = {}
     if payload.auto_trading_enabled is not None:
         updates["auto_trading_enabled"] = "true" if payload.auto_trading_enabled else "false"
+    if payload.total_balance_usd is not None:
+        updates["total_balance_usd"] = str(payload.total_balance_usd)
     if payload.confidence_threshold is not None:
         updates["confidence_threshold"] = str(payload.confidence_threshold)
     if payload.position_size_usd is not None:
@@ -133,6 +145,14 @@ def update_fast5m_settings(payload: SettingsUpdate):
         updates["take_profit_dollar"] = str(payload.take_profit_dollar)
     if payload.stop_loss_dollar is not None:
         updates["stop_loss_dollar"] = str(payload.stop_loss_dollar)
+    if payload.min_profit_to_lock is not None:
+        updates["min_profit_to_lock"] = str(payload.min_profit_to_lock)
+    if payload.reversal_giveback_dollar is not None:
+        updates["reversal_giveback_dollar"] = str(payload.reversal_giveback_dollar)
+    if payload.trailing_lock_enabled is not None:
+        updates["trailing_lock_enabled"] = "true" if payload.trailing_lock_enabled else "false"
+    if payload.reversal_lock_enabled is not None:
+        updates["reversal_lock_enabled"] = "true" if payload.reversal_lock_enabled else "false"
     if payload.min_time_remaining is not None:
         updates["min_time_remaining"] = str(payload.min_time_remaining)
     if payload.max_time_remaining is not None:

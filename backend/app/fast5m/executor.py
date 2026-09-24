@@ -25,13 +25,18 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
     "auto_trading_enabled": "true",
-    "confidence_threshold": "70.0",
+    "total_balance_usd": "300.0",
+    "confidence_threshold": "60.0",
     "position_size_usd": "10.0",
-    "take_profit_dollar": "1.00",
-    "stop_loss_dollar": "1.00",
-    "max_spread": "0.05",
-    "min_time_remaining": "30.0",
-    "max_time_remaining": "260.0",
+    "take_profit_dollar": "0.40",         # Quick scalp profit target ($0.40 / 40 cents)
+    "stop_loss_dollar": "0.60",           # Strict stop loss ($0.60 / 60 cents)
+    "trailing_lock_enabled": "true",      # Dynamic micro-profit lock
+    "min_profit_to_lock": "0.15",         # Lock as soon as +$0.15 (15 cents) profit is touched
+    "reversal_giveback_dollar": "0.06",   # If profit dips 6 cents from peak, book profit immediately before reverse!
+    "reversal_lock_enabled": "true",      # Technical momentum reversal exit
+    "max_spread": "0.08",
+    "min_time_remaining": "25.0",
+    "max_time_remaining": "275.0",
 }
 
 
@@ -71,9 +76,27 @@ class FastExecutor:
                 record = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
                 if not record:
                     db.add(Fast5MSetting(key=k, value=str(default_val)))
-                    self.settings[k] = default_val
+                    self.settings[k] = str(default_val)
                 else:
                     self.settings[k] = record.value
+
+            # Guarantee active auto-trading and $300 balance
+            self.settings["auto_trading_enabled"] = "true"
+            self.settings["total_balance_usd"] = "300.0"
+            for k in ("auto_trading_enabled", "total_balance_usd"):
+                rec = db.query(Fast5MSetting).filter(Fast5MSetting.key == k).first()
+                if rec:
+                    rec.value = self.settings[k]
+                else:
+                    db.add(Fast5MSetting(key=k, value=self.settings[k]))
+
+            # If confidence threshold was higher than 60, lower to 60 for responsive execution
+            if float(self.settings.get("confidence_threshold", 70.0)) > 60.0:
+                self.settings["confidence_threshold"] = "60.0"
+                rec_c = db.query(Fast5MSetting).filter(Fast5MSetting.key == "confidence_threshold").first()
+                if rec_c:
+                    rec_c.value = "60.0"
+
             db.commit()
         except Exception as e:
             logger.warning(f"[Fast5M Executor] Error loading settings: {e}")
@@ -239,6 +262,9 @@ class FastExecutor:
                 "prediction_rationale": trade_record.prediction_rationale,
                 "asset_rank": 1,
                 "latency_ms": trade_record.latency_ms,
+                "peak_pnl": 0.0,
+                "current_pnl": 0.0,
+                "current_share_price": trade_record.entry_price,
                 "created_at": trade_record.created_at.isoformat() if trade_record.created_at else "",
             }
             self._traded_epochs.add(epoch_key)
@@ -253,7 +279,7 @@ class FastExecutor:
             db.close()
 
     async def _exit_monitor_loop(self):
-        """Monitors active trade at high frequency (250ms) for TP/SL or Round Expiration."""
+        """Monitors active trade at high frequency (250ms) for micro-profit lock, TP/SL, or Round Expiration."""
         while self.running:
             try:
                 if self.active_trade:
@@ -285,36 +311,75 @@ class FastExecutor:
         live_oracle_price = oracle.live_price
         time_rem = market.time_remaining_sec
 
-        # Current share value estimation
-        if outcome == "UP":
-            current_share_price = market.up_bid if market.up_bid > 0 else entry_price
+        # 1. Use Polymarket CLOB bid if available
+        clob_bid = market.up_bid if outcome == "UP" else market.down_bid
+        
+        # 2. Also calculate real-time theoretical fair price from sub-second oracle price shift
+        entry_oracle = trade.get("entry_oracle_price", strike_price)
+        if entry_oracle > 0:
+            oracle_delta_pct = ((live_oracle_price - entry_oracle) / entry_oracle) * 100.0
+            directional_shift = oracle_delta_pct if outcome == "UP" else -oracle_delta_pct
+            oracle_fair_price = entry_price + (directional_shift * 1.2)
         else:
-            current_share_price = market.down_bid if market.down_bid > 0 else entry_price
+            oracle_fair_price = entry_price
+
+        if clob_bid > 0.01:
+            current_share_price = clob_bid
+        else:
+            current_share_price = min(0.98, max(0.02, oracle_fair_price))
 
         current_value = shares * current_share_price
         unrealized_pnl = current_value - cost
-        
-        tp_target = float(self.settings.get("take_profit_dollar", 1.00))
-        sl_limit = float(self.settings.get("stop_loss_dollar", 1.00))
+
+        # Live tracking in memory for real-time UI broadcast
+        trade_peak_pnl = max(trade.get("peak_pnl", 0.0), unrealized_pnl)
+        trade["peak_pnl"] = round(trade_peak_pnl, 2)
+        trade["current_pnl"] = round(unrealized_pnl, 2)
+        trade["current_share_price"] = round(current_share_price, 4)
+        trade["live_oracle_price"] = live_oracle_price
+
+        tp_target = float(self.settings.get("take_profit_dollar", 0.40))
+        sl_limit = float(self.settings.get("stop_loss_dollar", 0.60))
+        min_profit_to_lock = float(self.settings.get("min_profit_to_lock", 0.15))
+        giveback_limit = float(self.settings.get("reversal_giveback_dollar", 0.06))
+        trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
+        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
 
         should_close = False
         resolution = "HOLD"
         exit_price = current_share_price
 
-        # Condition 1: Take Profit Hit ($1.00 fixed profit)
+        # Rule 1: Take Profit Hit (Micro-Scalp target reached, e.g. +$0.40 / 40 cents)
         if unrealized_pnl >= tp_target:
             should_close = True
             resolution = "TAKE_PROFIT"
 
-        # Condition 2: Stop Loss Hit ($1.00 fixed loss)
+        # Rule 2: Dynamic Trailing Micro-Profit Lock (Cents Gain Locked Before Reversal)
+        # If profit touched at least min_profit_to_lock ($0.15), and has pulled back by >= giveback_limit ($0.06) from peak,
+        # while still retaining positive profit (unrealized_pnl >= $0.05) -> Immediately sell and lock in the profit!
+        elif trailing_enabled and trade_peak_pnl >= min_profit_to_lock and (trade_peak_pnl - unrealized_pnl) >= giveback_limit and unrealized_pnl >= 0.05:
+            should_close = True
+            resolution = "TRAILING_PROFIT_LOCK"
+
+        # Rule 3: Anti-Reversal Early Lock
+        # If trade is in profit (>= $0.10) and sub-second momentum velocity turns opposite to the trade:
+        elif reversal_enabled and unrealized_pnl >= 0.10:
+            v10 = getattr(oracle, 'velocity_10s', 0.0)
+            if outcome == "UP" and v10 < -0.01:
+                should_close = True
+                resolution = "REVERSAL_PROFIT_LOCK"
+            elif outcome == "DOWN" and v10 > 0.01:
+                should_close = True
+                resolution = "REVERSAL_PROFIT_LOCK"
+
+        # Rule 4: Stop Loss Hit ($0.60 or configured limit)
         elif unrealized_pnl <= -sl_limit:
             should_close = True
             resolution = "STOP_LOSS"
 
-        # Condition 3: Epoch Expired (< 3s remaining) -> Payout Resolution
+        # Rule 5: Epoch Expired (< 3s remaining) -> Binary Payout Resolution
         elif time_rem <= 3.0:
             should_close = True
-            # In Polymarket Up/Down fast markets, if Final Price >= Strike Price, Up wins ($1.00), else Down wins ($1.00)
             if outcome == "UP":
                 won = (live_oracle_price >= strike_price)
             else:

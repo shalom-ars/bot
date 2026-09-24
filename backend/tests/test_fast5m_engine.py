@@ -36,11 +36,21 @@ def test_fast_scorer_ranking():
     assert btc_scored.delta_score > 0
     assert btc_scored.momentum_score > 0
 
-def test_executor_1_to_1_risk_reward():
+def test_executor_balance_and_micro_profit_locking():
     executor = FastExecutor()
-    # Enforces 1:1 RR: Target Profit $1.00, Stop Loss $1.00
-    tp = float(executor.settings.get("take_profit_dollar", 1.00))
-    sl = float(executor.settings.get("stop_loss_dollar", 1.00))
-    assert tp == 1.00
-    assert sl == 1.00
-    assert tp == sl # Strict 1:1 Risk-to-Reward symmetry
+    # Check total balance setting
+    bal = float(executor.settings.get("total_balance_usd", 300.0))
+    assert bal == 300.0
+    
+    # Check micro-profit scalp target & trailing locking parameters
+    tp = float(executor.settings.get("take_profit_dollar", 0.40))
+    sl = float(executor.settings.get("stop_loss_dollar", 0.60))
+    min_lock = float(executor.settings.get("min_profit_to_lock", 0.15))
+    giveback = float(executor.settings.get("reversal_giveback_dollar", 0.06))
+    
+    assert tp == 0.40
+    assert sl == 0.60
+    assert min_lock == 0.15
+    assert giveback == 0.06
+    assert executor.settings.get("trailing_lock_enabled") == "true"
+    assert executor.settings.get("reversal_lock_enabled") == "true"

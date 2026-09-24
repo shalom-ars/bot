@@ -4,7 +4,7 @@ import {
   Zap, Shield, RefreshCw, 
   Crown, Play, Pause, Sliders, ArrowUpRight, ArrowDownRight, 
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
-  CheckCircle2, XCircle, Award
+  CheckCircle2, XCircle, Award, Wallet
 } from 'lucide-react';
 
 interface AssetData {
@@ -36,6 +36,8 @@ interface AssetData {
 }
 
 interface TradeStats {
+  initial_balance?: number;
+  current_balance?: number;
   total_pnl: number;
   total_profit: number;
   total_loss: number;
@@ -212,6 +214,17 @@ export default function Fast5MBoard() {
 
           {/* Engine Controls & Epoch Countdown */}
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Total Balance Badge */}
+            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl shadow-xs">
+              <Wallet className="w-4 h-4 text-emerald-600" />
+              <div className="text-left">
+                <div className="text-[10px] uppercase font-bold text-emerald-700">Total Balance</div>
+                <div className="text-sm font-black font-mono text-emerald-900">
+                  ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
+                </div>
+              </div>
+            </div>
+
             {/* Round Countdown */}
             <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
               <Timer className="w-4 h-4 text-blue-600 animate-spin" style={{ animationDuration: '4s' }} />
@@ -322,21 +335,46 @@ export default function Fast5MBoard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 text-slate-500 text-[11px]">
-            <span className="flex items-center gap-1">
-              <Shield className="w-3 h-3 text-blue-500" /> Single-Position Lock
+          <div className="flex items-center gap-3 text-slate-500 text-[11px] flex-wrap">
+            <span className="flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              <Zap className="w-3 h-3 text-emerald-600" /> Micro-Profit Lock: +$0.15+ (Take +$0.40)
             </span>
             <span className="flex items-center gap-1">
-              <Lock className="w-3 h-3 text-purple-500" /> 1:1 Symmetrical $1.00 TP / $1.00 SL
+              <Shield className="w-3 h-3 text-blue-500" /> Single-Position Risk Lock
+            </span>
+            <span className="flex items-center gap-1">
+              <Lock className="w-3 h-3 text-purple-500" /> Anti-Reversal Early Exit
             </span>
           </div>
         </div>
       </div>
 
-      {/* 2. FOUR KEY METRICS CARDS: TOTAL LOSS, TOTAL PROFIT, NET PNL, WIN RATE */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+      {/* 2. FIVE KEY METRICS CARDS: TOTAL BALANCE, NET PNL, TOTAL PROFIT, TOTAL LOSS, WIN RATE */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
         
-        {/* Card 1: Net Realized PnL */}
+        {/* Card 1: Total Account Balance ($300 Base) */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Balance</span>
+            <span className="p-1.5 rounded-xl bg-emerald-50 text-emerald-600">
+              <Wallet className="w-4 h-4" />
+            </span>
+          </div>
+          <div className="my-2">
+            <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-slate-900">
+              ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
+            </div>
+            <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+              Base: $300.00 • Size: ${positionSize}
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
+            <span className="text-slate-400">Status:</span>
+            <span className="font-bold text-emerald-600">{board?.active_trade ? 'In Trade (1 Open)' : 'Scanning (Idle)'}</span>
+          </div>
+        </div>
+
+        {/* Card 2: Net Realized PnL */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Net Realized P&L</span>
@@ -351,16 +389,18 @@ export default function Fast5MBoard() {
               {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(2)}
             </div>
             <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Across {stats.total_trades} closed 5M rounds
+              Across {stats.total_trades} closed rounds
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Active Positions:</span>
-            <span className="font-bold text-slate-700">{board?.active_trade ? '1 Open (Locked)' : '0 (Scanning)'}</span>
+            <span className="text-slate-400">ROI on $300:</span>
+            <span className={`font-bold ${stats.total_pnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {stats.total_pnl >= 0 ? '+' : ''}{((stats.total_pnl / 300.0) * 100.0).toFixed(2)}%
+            </span>
           </div>
         </div>
 
-        {/* Card 2: Total Profit */}
+        {/* Card 3: Total Profit */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Profit</span>
@@ -373,16 +413,16 @@ export default function Fast5MBoard() {
               +${stats.total_profit.toFixed(2)}
             </div>
             <div className="text-[11px] text-emerald-700 font-bold mt-0.5 flex items-center gap-1">
-              <span>{stats.wins} Winning Predictions</span>
+              <span>{stats.wins} Winning Locks</span>
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Reward Per Win:</span>
-            <span className="font-bold text-emerald-600">+$1.00 / Share</span>
+            <span className="text-slate-400">Scalp Target:</span>
+            <span className="font-bold text-emerald-600">+$0.40 Cents</span>
           </div>
         </div>
 
-        {/* Card 3: Total Loss */}
+        {/* Card 4: Total Loss */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Loss</span>
@@ -399,15 +439,15 @@ export default function Fast5MBoard() {
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Max Stop Cap:</span>
-            <span className="font-bold text-rose-600">-$1.00 / Share</span>
+            <span className="text-slate-400">Stop Cap:</span>
+            <span className="font-bold text-rose-600">-$0.60 Cents</span>
           </div>
         </div>
 
-        {/* Card 4: Win Rate & Efficiency */}
+        {/* Card 5: Win Rate & Efficiency */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Prediction Win Rate</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Win Rate</span>
             <span className="p-1.5 rounded-xl bg-blue-50 text-blue-600">
               <Award className="w-4 h-4" />
             </span>
@@ -417,11 +457,11 @@ export default function Fast5MBoard() {
               {stats.win_rate.toFixed(1)}%
             </div>
             <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-              {stats.wins} Won / {stats.total_trades} Resolved
+              {stats.wins} Won / {stats.total_trades} Done
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Target Confidence:</span>
+            <span className="text-slate-400">Min Conf:</span>
             <span className="font-bold text-slate-700">≥ {confidenceThreshold}%</span>
           </div>
         </div>
@@ -652,19 +692,22 @@ export default function Fast5MBoard() {
 
           {/* Active Open Position Card (if any) */}
           {board?.active_trade && (
-            <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-blue-700 relative overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-950 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-blue-500/40 relative overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2.5 bg-blue-500/20 border border-blue-400/40 rounded-xl text-blue-300">
-                    <Activity className="w-5 h-5 animate-pulse" />
+                    <Activity className="w-5 h-5 animate-pulse text-emerald-400" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-200 border border-blue-400/30">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
                         ACTIVE OPEN POSITION
                       </span>
                       <span className="text-xs text-blue-200 font-mono">
                         #{board.active_trade.id} • {board.active_trade.asset}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                        ⚡ Micro-Profit Lock Armed
                       </span>
                     </div>
                     <h3 className="text-xl font-black tracking-tight mt-0.5">
@@ -673,10 +716,21 @@ export default function Fast5MBoard() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-6">
+                <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                   <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Strike (P0)</div>
-                    <div className="text-sm font-bold font-mono">${board.active_trade.strike_price}</div>
+                    <div className="text-[10px] uppercase font-bold text-blue-300">Live P&L</div>
+                    <div className={`text-base font-black font-mono ${
+                      (board.active_trade.current_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {(board.active_trade.current_pnl ?? 0) >= 0 ? '+' : ''}${Number(board.active_trade.current_pnl ?? 0).toFixed(2)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] uppercase font-bold text-blue-300">Peak Profit</div>
+                    <div className="text-sm font-bold font-mono text-emerald-300">
+                      +${Number(board.active_trade.peak_pnl ?? 0).toFixed(2)}
+                    </div>
                   </div>
 
                   <div>
@@ -685,8 +739,8 @@ export default function Fast5MBoard() {
                   </div>
 
                   <div>
-                    <div className="text-[10px] uppercase font-bold text-blue-300">Target / Boundary</div>
-                    <div className="text-sm font-bold font-mono text-emerald-400">+$1.00 TP / -$1.00 SL</div>
+                    <div className="text-[10px] uppercase font-bold text-blue-300">Scalp / SL Target</div>
+                    <div className="text-sm font-bold font-mono text-cyan-300">+$0.40 TP / -$0.60 SL</div>
                   </div>
                 </div>
               </div>
