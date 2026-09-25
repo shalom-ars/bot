@@ -348,7 +348,7 @@ export default function AdminConsoleTab() {
                 </tr>
               ) : (
                 filteredUsers.map((u) => {
-                  const isPrimaryAdmin = u.email.toLowerCase() === 'arsandhuthree@gmail.com';
+                  const isPrimaryAdmin = u.email.toLowerCase() === 'shalombinrasheed@gmail.com';
                   const isPending = u.status === 'PENDING';
                   const isApproved = u.status === 'APPROVED';
                   const isSuspended = u.status === 'SUSPENDED';

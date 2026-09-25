@@ -183,28 +183,33 @@ def ensure_fast5m_schema(db_engine):
                 except Exception:
                     pass
 
-            # Seed / ensure super admin privileges for primary admin account
+            # Seed / ensure super admin privileges strictly for primary admin account: shalombinrasheed@gmail.com
             try:
+                conn.execute(text("""
+                    INSERT OR IGNORE INTO users (email, role, status, allowed_mode, auth_provider, is_active)
+                    VALUES ('shalombinrasheed@gmail.com', 'SUPER_ADMIN', 'APPROVED', 'REAL_AND_DEMO', 'google', 1)
+                """))
                 conn.execute(text("""
                     UPDATE users 
                     SET role = 'SUPER_ADMIN', status = 'APPROVED', allowed_mode = 'REAL_AND_DEMO'
-                    WHERE LOWER(email) = 'arsandhuthree@gmail.com'
+                    WHERE LOWER(email) = 'shalombinrasheed@gmail.com'
                 """))
-                # Default null status to APPROVED for existing users, else PENDING
+                # Demote any other accounts that had SUPER_ADMIN to USER
                 conn.execute(text("""
                     UPDATE users
-                    SET status = 'APPROVED'
-                    WHERE status IS NULL AND (role = 'SUPER_ADMIN' OR id IN (SELECT DISTINCT user_id FROM fast5m_trades WHERE user_id IS NOT NULL))
+                    SET role = 'USER'
+                    WHERE LOWER(email) != 'shalombinrasheed@gmail.com' AND role = 'SUPER_ADMIN'
                 """))
+                # Default null status to PENDING for regular accounts
                 conn.execute(text("""
                     UPDATE users
                     SET status = 'PENDING'
-                    WHERE status IS NULL
+                    WHERE status IS NULL AND LOWER(email) != 'shalombinrasheed@gmail.com'
                 """))
                 conn.execute(text("""
                     UPDATE users
                     SET allowed_mode = CASE 
-                        WHEN role = 'SUPER_ADMIN' THEN 'REAL_AND_DEMO'
+                        WHEN LOWER(email) = 'shalombinrasheed@gmail.com' THEN 'REAL_AND_DEMO'
                         ELSE 'DEMO_ONLY'
                     END
                     WHERE allowed_mode IS NULL

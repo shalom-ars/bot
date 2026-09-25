@@ -979,7 +979,7 @@ export default function Fast5MBoard() {
             >
               Trades ({trades.length})
             </button>
-            {userProfile?.role === 'SUPER_ADMIN' && (
+            {userProfile?.email?.toLowerCase() === 'shalombinrasheed@gmail.com' && (
               <button
                 type="button"
                 onClick={() => setActiveTab('admin')}
@@ -3607,7 +3607,7 @@ export default function Fast5MBoard() {
       )}
 
       {/* 7. ADMIN CONSOLE TAB */}
-      {activeTab === 'admin' && (
+      {activeTab === 'admin' && userProfile?.email?.toLowerCase() === 'shalombinrasheed@gmail.com' && (
         <AdminConsoleTab />
       )}
 

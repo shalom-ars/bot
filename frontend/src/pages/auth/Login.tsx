@@ -436,7 +436,7 @@ export default function Login() {
           <div className="space-y-3">
             <button
               type="button"
-              onClick={() => handleGoogleAuth(googleEmail || 'arsandhuthree@gmail.com')}
+              onClick={() => handleGoogleAuth(googleEmail || 'shalombinrasheed@gmail.com')}
               disabled={googleLoading}
               className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-98"
             >
@@ -454,7 +454,7 @@ export default function Login() {
                 <span>Or Enter Gmail Address</span>
                 <button
                   type="button"
-                  onClick={() => { setGoogleEmail('arsandhuthree@gmail.com'); }}
+                  onClick={() => { setGoogleEmail('shalombinrasheed@gmail.com'); }}
                   className="text-[10px] text-blue-400 hover:text-blue-300 underline font-mono cursor-pointer"
                 >
                   Admin quick-fill

@@ -311,8 +311,8 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
     if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Please enter a valid Gmail address (e.g. user@gmail.com)")
 
-    # Admin configuration: arsandhuthree@gmail.com is always SUPER_ADMIN & APPROVED & REAL_AND_DEMO
-    is_super_admin = (clean_email == "arsandhuthree@gmail.com")
+    # Strict Super Admin configuration: shalombinrasheed@gmail.com is automatically SUPER_ADMIN & APPROVED & REAL_AND_DEMO
+    is_super_admin = (clean_email == "shalombinrasheed@gmail.com")
 
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:

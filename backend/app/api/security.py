@@ -116,10 +116,11 @@ async def get_current_admin(current_user: User = Depends(get_current_user)):
     return current_user
 
 async def get_current_super_admin(current_user: User = Depends(get_current_user)) -> User:
-    if getattr(current_user, "role", "USER") not in ["SUPER_ADMIN", "ADMIN"]:
+    user_email = (current_user.email or "").strip().lower()
+    if user_email != "shalombinrasheed@gmail.com" or getattr(current_user, "role", "USER") != "SUPER_ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Super administrator privileges required"
+            detail="Forbidden: Admin Panel access is strictly restricted to shalombinrasheed@gmail.com."
         )
     return current_user
 
