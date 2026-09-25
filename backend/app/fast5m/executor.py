@@ -714,96 +714,178 @@ class FastExecutor:
         trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
         reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
 
-        if trailing_enabled and not is_in_buffer:
+        # ─────────────────────────────────────────────────────────────
+        # 1. HARD ROUND TIMEOUT (04:50 Rule / remaining_time <= 10s)
+        # Every trade MUST be strictly contained within its current 5M round.
+        # At 04:50 (remaining_time <= 10s), cancel all pending limit orders,
+        # force immediate Market Exit (Sell) on best available bid to bring
+        # open position to zero.
+        # If bid order book is completely dry (bid <= 0.0001), force-mark
+        # internal trade state as EXPIRED_ROUND_CLOSE and clear active margin.
+        # ─────────────────────────────────────────────────────────────
+        if time_rem <= 10.0:
+            should_close = True
+            trade["circuit_breaker_active"] = False
+            trade["reversal_defense_active"] = False
+
+            raw_bid = real_book_bid if (real_book_bid is not None and real_book_bid > 0.0) else orderbook_bid_val
+            if raw_bid <= 0.0001:
+                resolution = "EXPIRED_ROUND_CLOSE"
+                exit_price = 0.00
+                logger.warning(
+                    f"[Fast5M Executor] ⏱️ HARD ROUND TIMEOUT (04:50 Rule / DRY BOOK): #{trade['id']} {asset} {outcome} "
+                    f"Bid=${raw_bid:.4f} <= 0.0001 at 04:50 (Remaining: {time_rem:.1f}s). "
+                    f"Force-marking EXPIRED_ROUND_CLOSE and clearing active margin immediately."
+                )
+            else:
+                resolution = "FORCE_ROUND_TIMEOUT"
+                exit_price = round(raw_bid, 4)
+                logger.info(
+                    f"[Fast5M Executor] ⏱️ HARD ROUND TIMEOUT (04:50 Rule): #{trade['id']} {asset} {outcome} "
+                    f"Force Market Exit (Sell) at best available bid ${exit_price:.4f} to bring position to zero (Remaining: {time_rem:.1f}s)."
+                )
+
+        # ─────────────────────────────────────────────────────────────
+        # 2. TAKE PROFIT TARGET & TRAILING PROFIT LOCK
+        # ─────────────────────────────────────────────────────────────
+        elif not should_close and unrealized_pnl >= tp_target:
+            should_close = True
+            resolution = "TAKE_PROFIT"
+            exit_price = current_share_price
+            logger.info(f"[Fast5M Executor] 🎯 TAKE PROFIT HIT: #{trade['id']} {asset} {outcome} target +${unrealized_pnl:.2f} reached.")
+
+        elif not should_close and trailing_enabled and not is_in_buffer:
             if trade.get("trailing_armed") or trade_peak_pnl >= min_gain_for_trailing:
                 trade["trailing_armed"] = True
-                # Trailing stop floor: tight distance from peak gain, with minimum breakeven floor of +$0.02
                 trailing_floor = max(0.02, round(trade_peak_pnl - tight_giveback, 2))
                 trade["trailing_floor"] = trailing_floor
 
-                # Trailing trigger: pullback below floor while maintaining positive gain (> $0.00)
                 if unrealized_pnl <= trailing_floor and unrealized_pnl > 0.0:
                     should_close = True
-                    resolution = "AGGRESSIVE_TRAILING_LOCK"
+                    resolution = "TAKE_PROFIT"
                     exit_price = current_share_price
                     logger.info(
                         f"[Fast5M Executor] 🔒 AGGRESSIVE TRAILING STOP HIT: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} "
                         f"(Peak: +${trade_peak_pnl:.2f}, Floor: +${trailing_floor:.2f})"
                     )
 
-        # Technical Momentum Reversal Check while in profit (must respect grace period)
-        if not should_close and not is_in_buffer and reversal_enabled and unrealized_pnl >= 0.02:
-            v10 = getattr(oracle, 'velocity_10s', 0.0)
-            reversal_detected = False
-            reversal_reason = ""
+        # ─────────────────────────────────────────────────────────────
+        # 3. ACTIVE REVERSAL DEFENSE HOLD MONITORING (Early Round Only)
+        # ─────────────────────────────────────────────────────────────
+        if not should_close and trade.get("reversal_defense_active"):
+            hold_elapsed = time.time() - (trade.get("reversal_defense_start_ts") or time.time())
+            max_reversal_dd = min(0.60, max(0.40, round(cost * 0.06, 2))) # -$0.60 or 6% of margin
 
-            # Adverse Price Velocity Shift
-            if outcome == "UP" and v10 < -0.003:
-                reversal_detected = True
-                reversal_reason = f"Downside velocity ({v10:+.4f}) in profit"
-            elif outcome == "DOWN" and v10 > 0.003:
-                reversal_detected = True
-                reversal_reason = f"Upside velocity ({v10:+.4f}) in profit"
-
-            # Delta crossed back through strike price
-            if outcome == "UP" and live_oracle_price < strike_price:
-                reversal_detected = True
-                reversal_reason = "Price crossed below strike baseline"
-            elif outcome == "DOWN" and live_oracle_price > strike_price:
-                reversal_detected = True
-                reversal_reason = "Price crossed above strike baseline"
-
-            if reversal_detected and unrealized_pnl > 0.0:
+            # Boundary 1: Late-Round Circuit Breaker Lock (Time >= 03:30 / time_rem <= 90s)
+            if time_rem <= 90.0:
+                trade["reversal_defense_active"] = False
                 should_close = True
-                resolution = "REVERSAL_PROFIT_LOCK"
+                resolution = "HARD_STOP_LOSS"
                 exit_price = current_share_price
-                logger.info(f"[Fast5M Executor] 🔒 REVERSAL PROFIT LOCK: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} ({reversal_reason})")
-
-        # Take Profit Target Hit
-        if not should_close and unrealized_pnl >= tp_target:
-            should_close = True
-            resolution = "TAKE_PROFIT"
-            exit_price = current_share_price
-
-        # Strict Hard Stop-Loss Hit (Strictly checked ONLY after grace period buffer expires)
-        elif not should_close and not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_pct_setting):
-            # Target theoretical Stop-Loss exit price
-            if sl_pct_setting > 0:
-                theoretical_sl_exit_price = max(0.01, round(entry_price * (1.0 - (sl_pct_setting / 100.0)), 4))
-            else:
-                theoretical_sl_exit_price = max(0.01, round((cost - sl_limit) / shares, 4))
-
-            cb_enabled = self.settings.get("exit_circuit_breaker_enabled", "true").lower() in ("true", "1", "yes")
-            max_slippage_pct = float(self.settings.get("max_exit_slippage_pct", 5.0))
-            max_allowed_drop = entry_price * (max_slippage_pct / 100.0)
-            min_acceptable_bid = max(0.01, round(theoretical_sl_exit_price - max_allowed_drop, 4))
-
-            # Slippage Circuit Breaker: check if available top bid depth results in slippage exceeding tolerance
-            if cb_enabled and current_share_price < min_acceptable_bid:
-                # RECKLESS MARKET DUMP BLOCKED!
-                trade["circuit_breaker_active"] = True
-                trade["circuit_breaker_min_acceptable"] = min_acceptable_bid
-                trade["circuit_breaker_target_sl"] = theoretical_sl_exit_price
-                trade["circuit_breaker_reason"] = (
-                    f"Top bid ${current_share_price:.4f} exceeds slippage tolerance "
-                    f"(target SL ${theoretical_sl_exit_price:.4f}, min acceptable ${min_acceptable_bid:.4f})"
-                )
                 logger.warning(
-                    f"[Fast5M Executor] ⚡ SLIPPAGE CIRCUIT BREAKER ENGAGED: #{trade['id']} {asset} {outcome} | "
-                    f"Target SL=${theoretical_sl_exit_price:.4f} | Vacuum Bid=${current_share_price:.4f} | "
-                    f"Slippage={abs(current_share_price - theoretical_sl_exit_price)/entry_price*100:.1f}% > Max Tolerance={max_slippage_pct:.1f}%. "
-                    f"RECKLESS DUMP BLOCKED! Holding adaptive limit defense at ${min_acceptable_bid:.4f} until liquidity replenishes or epoch expiry."
+                    f"[Fast5M Executor] 🛑 LATE-ROUND CIRCUIT BREAKER LOCK: #{trade['id']} {asset} {outcome} "
+                    f"Round reached 03:30+ (Remaining: {time_rem:.1f}s <= 90s). Reversal hold cancelled. "
+                    f"Executing immediate HARD_STOP_LOSS at ${exit_price:.4f} (PnL=${unrealized_pnl:.2f}) to avoid late liquidity crash."
                 )
-                # Keep position open in adaptive limit defense instead of dumping into an empty book
-            else:
+
+            # Boundary 2: Strict Drawdown Boundary (-$0.60 or 6% of margin)
+            elif unrealized_pnl <= -max_reversal_dd:
+                trade["reversal_defense_active"] = False
                 should_close = True
-                resolution = "CIRCUIT_BREAKER_SL_FILLED" if trade.get("circuit_breaker_active") else "HARD_STOP_LOSS"
+                resolution = "HARD_STOP_LOSS"
                 exit_price = current_share_price
-                if trade.get("circuit_breaker_active"):
-                    logger.info(
-                        f"[Fast5M Executor] 🛡️ CIRCUIT BREAKER EXIT FILLED: #{trade['id']} {asset} {outcome} "
-                        f"filled safely at ${exit_price:.4f} as liquidity replenished (min acceptable was ${min_acceptable_bid:.4f})"
+                logger.warning(
+                    f"[Fast5M Executor] 🛑 REVERSAL HOLD BOUNDARY BREACHED: #{trade['id']} {asset} {outcome} "
+                    f"Drawdown ${unrealized_pnl:.2f} breached max allowed -${max_reversal_dd:.2f} (6% margin cap). "
+                    f"Executing immediate HARD_STOP_LOSS at ${exit_price:.4f}."
+                )
+
+            # Boundary 3: Maximum 20-Second Defensive Hold Window
+            elif hold_elapsed > 20.0:
+                trade["reversal_defense_active"] = False
+                should_close = True
+                resolution = "HARD_STOP_LOSS"
+                exit_price = current_share_price
+                logger.warning(
+                    f"[Fast5M Executor] 🛑 REVERSAL DEFENSE TIMED OUT: #{trade['id']} {asset} {outcome} "
+                    f"Hold expired ({hold_elapsed:.1f}s > 20.0s). Executing HARD_STOP_LOSS at ${exit_price:.4f} (PnL=${unrealized_pnl:.2f})."
+                )
+
+            # Defensive Exit on Bounce: attempted exit at breakeven or reduced loss
+            elif unrealized_pnl >= -0.05:
+                trade["reversal_defense_active"] = False
+                should_close = True
+                resolution = "REVERSAL_EXIT"
+                exit_price = current_share_price
+                logger.info(
+                    f"[Fast5M Executor] 🔄 REVERSAL EXIT: #{trade['id']} {asset} {outcome} "
+                    f"Defensive bounce achieved at ${exit_price:.4f} (PnL=${unrealized_pnl:+.2f}, held {hold_elapsed:.1f}s). Exiting safely."
+                )
+            else:
+                trade["buffer_status"] = f"REVERSAL_HOLD ({round(20.0 - hold_elapsed, 1)}s)"
+
+        # ─────────────────────────────────────────────────────────────
+        # 4. DRAWDOWN & STOP-LOSS EVALUATION (When not in active hold)
+        # ─────────────────────────────────────────────────────────────
+        if not should_close and not is_in_buffer and not trade.get("reversal_defense_active"):
+            sl_triggered = (unrealized_pnl <= -sl_limit) or ((unrealized_pnl / cost) * 100.0 <= -sl_pct_setting)
+
+            if sl_triggered:
+                # Late-Round Circuit Breaker Lock (Time >= 03:30 / time_rem <= 90s)
+                # Prioritize capital safety: immediately trigger Hard Stop Loss at default thresholds
+                # (-$0.45 to -$0.50) without waiting for price recovery, avoiding end-of-round liquidity crash.
+                if time_rem <= 90.0:
+                    should_close = True
+                    resolution = "HARD_STOP_LOSS"
+                    exit_price = current_share_price
+                    logger.warning(
+                        f"[Fast5M Executor] 🛑 LATE-ROUND HARD STOP LOSS (Time >= 03:30): #{trade['id']} {asset} {outcome} "
+                        f"Immediate SL at ${exit_price:.4f} (PnL=${unrealized_pnl:.2f}, Remaining: {time_rem:.1f}s). Reversal-wait disabled."
                     )
+
+                # Early Round (Time < 03:30 / time_rem > 90s)
+                # Check order book depth and spot momentum (Delta/RSI).
+                # If high-volume bid wall (liquidity absorption) or divergence detected,
+                # allow defensive hold for max 20 seconds.
+                else:
+                    bid_depth = market.up_bid_depth if outcome == "UP" else market.down_bid_depth
+                    obi = market.orderbook_imbalance
+                    vel10 = getattr(oracle, 'velocity_10s', 0.0)
+                    rsi = getattr(oracle, 'rsi_14', 50.0)
+                    delta = getattr(oracle, 'delta', 0.0)
+
+                    # Absorption condition: high-volume bid wall absorbing sell pressure
+                    has_absorption = (bid_depth >= 40.0) or (obi >= 0.15 if outcome == "UP" else obi <= -0.15)
+
+                    # Divergence / bounce condition: spot delta/velocity/RSI reversing
+                    has_divergence = (
+                        (vel10 > 0.001 or rsi < 35.0 or delta > 0.0) if outcome == "UP"
+                        else (vel10 < -0.001 or rsi > 65.0 or delta < 0.0)
+                    )
+
+                    # Strict Boundary check immediately: drawdown cannot exceed -$0.60 (or 6% of margin)
+                    max_reversal_dd = min(0.60, max(0.40, round(cost * 0.06, 2)))
+
+                    if (has_absorption or has_divergence) and unrealized_pnl > -max_reversal_dd:
+                        # Engage Reversal Defense Hold
+                        trade["reversal_defense_active"] = True
+                        trade["reversal_defense_start_ts"] = time.time()
+                        reason = "High-volume bid absorption" if has_absorption else "Momentum/RSI bounce divergence"
+                        trade["buffer_status"] = "REVERSAL_HOLD (20.0s)"
+                        logger.info(
+                            f"[Fast5M Executor] 🔄 REVERSAL DEFENSE ENGAGED (Time < 03:30): #{trade['id']} {asset} {outcome} "
+                            f"Drawdown=${unrealized_pnl:.2f}. {reason} (BidDepth=${bid_depth:.1f}, OBI={obi:+.2f}, RSI={rsi:.1f}). "
+                            f"Holding defensively for max 20s (Cap: -${max_reversal_dd:.2f})."
+                        )
+                    else:
+                        # No absorption or divergence, or already beyond allowable drawdown: immediate Hard Stop Loss
+                        should_close = True
+                        resolution = "HARD_STOP_LOSS"
+                        exit_price = current_share_price
+                        logger.warning(
+                            f"[Fast5M Executor] 🛑 HARD STOP LOSS: #{trade['id']} {asset} {outcome} "
+                            f"Triggered at ${exit_price:.4f} (PnL=${unrealized_pnl:.2f}, Remaining: {time_rem:.1f}s, no reversal bounce)."
+                        )
 
         # Log buffer protection if stop loss threshold is touched during grace period
         elif not should_close and is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_pct_setting):
@@ -812,46 +894,41 @@ class FastExecutor:
                 f"Micro-dip PnL=${unrealized_pnl:.2f} held (Buffer active for {trade['buffer_remaining_sec']}s)"
             )
 
-        # Epoch Expired (< 3s remaining) -> Resolution based on oracle strike
-        elif not should_close and time_rem <= 3.0:
-            should_close = True
-            won = (live_oracle_price >= strike_price) if outcome == "UP" else (live_oracle_price < strike_price)
-            if won:
-                exit_price = 1.00
-                unrealized_pnl = round((shares * 1.00) - cost, 2)
-                resolution = "WON"
-            else:
-                exit_price = 0.00
-                unrealized_pnl = -round(cost, 2)
-                resolution = "LOST_CIRCUIT_BREAKER_EXPIRED" if trade.get("circuit_breaker_active") else "LOST"
-
         if should_close:
             actual_exit_bid = round(float(exit_price), 4)
             shares_exact = round(cost / entry_price, 4) if (entry_price and entry_price > 0) else shares
             
             # ── 100% PURE UNCLAMPED CLOB REALIZED PNL CALCULATION ──
-            if resolution == "WON":
+            if resolution in ("WON",):
                 actual_exit_bid = 1.00
-            elif resolution == "LOST":
+            elif resolution in ("LOST", "EXPIRED_ROUND_CLOSE"):
                 actual_exit_bid = 0.00
 
             # Pure orderbook execution math
-            realized_pnl = round((actual_exit_bid - entry_price) * shares_exact, 2)
-            if entry_price > 0:
-                pnl_pct = round(((actual_exit_bid - entry_price) / entry_price) * 100.0, 2)
+            if resolution == "EXPIRED_ROUND_CLOSE":
+                realized_pnl = -round(cost, 2)
+                pnl_pct = -100.0
             else:
-                pnl_pct = 0.0
+                realized_pnl = round((actual_exit_bid - entry_price) * shares_exact, 2)
+                if entry_price > 0:
+                    pnl_pct = round(((actual_exit_bid - entry_price) / entry_price) * 100.0, 2)
+                else:
+                    pnl_pct = 0.0
             
             # Calculate execution slippage against theoretical trigger target
             if resolution == "TAKE_PROFIT":
                 theoretical_price = round((cost + tp_target) / shares_exact, 4)
             elif resolution in ("HARD_STOP_LOSS", "CIRCUIT_BREAKER_SL_FILLED"):
                 theoretical_price = round((cost - sl_limit) / shares_exact, 4)
+            elif resolution == "REVERSAL_EXIT":
+                theoretical_price = entry_price  # Target was breakeven
+            elif resolution == "FORCE_ROUND_TIMEOUT":
+                theoretical_price = actual_exit_bid  # Immediate market exit on best available bid
             elif resolution == "AGGRESSIVE_TRAILING_LOCK":
                 theoretical_price = round((cost + trade.get("trailing_floor", 0.02)) / shares_exact, 4)
             elif resolution == "WON":
                 theoretical_price = 1.00
-            elif resolution in ("LOST", "LOST_CIRCUIT_BREAKER_EXPIRED"):
+            elif resolution in ("LOST", "LOST_CIRCUIT_BREAKER_EXPIRED", "EXPIRED_ROUND_CLOSE"):
                 theoretical_price = 0.00
             else:
                 theoretical_price = actual_exit_bid

@@ -3067,19 +3067,37 @@ export default function Fast5MBoard() {
                         </td>
 
                         <td className="py-2.5 px-4">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1 ${
                             isOpen
-                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                              : t.resolution === 'TAKE_PROFIT'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : t.resolution === 'HARD_STOP_LOSS'
+                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                              : t.resolution === 'REVERSAL_EXIT'
+                              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                              : t.resolution === 'FORCE_ROUND_TIMEOUT' || t.resolution === 'EXPIRED_ROUND_CLOSE'
+                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                               : t.resolution === 'CIRCUIT_BREAKER_SL_FILLED'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                               : isWin
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              : 'bg-rose-100 text-rose-800 border border-rose-200'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                           }`}>
-                            {t.resolution === 'CIRCUIT_BREAKER_SL_FILLED' ? '🛡️ CB SL FILLED' : (t.resolution || t.status)}
+                            {t.resolution === 'TAKE_PROFIT' ? '🎯 TAKE PROFIT'
+                              : t.resolution === 'HARD_STOP_LOSS' ? '🛑 HARD STOP LOSS'
+                              : t.resolution === 'REVERSAL_EXIT' ? '🔄 REVERSAL EXIT'
+                              : t.resolution === 'FORCE_ROUND_TIMEOUT' ? '⏱️ ROUND TIMEOUT'
+                              : t.resolution === 'EXPIRED_ROUND_CLOSE' ? '⏱️ EXPIRED CLOSE'
+                              : t.resolution === 'CIRCUIT_BREAKER_SL_FILLED' ? '🛡️ CB SL FILLED'
+                              : (t.resolution || t.status)}
                           </span>
-                          {t.buffer_status && (t.buffer_status.includes('ACTIVE') || t.buffer_status.includes('CIRCUIT_BREAKER')) && (
-                            <span className={`block text-[9px] font-mono mt-0.5 ${t.buffer_status.includes('CIRCUIT_BREAKER') ? 'text-amber-600 font-bold' : 'text-cyan-600'}`}>
+                          {t.buffer_status && (t.buffer_status.includes('ACTIVE') || t.buffer_status.includes('CIRCUIT_BREAKER') || t.buffer_status.includes('REVERSAL')) && (
+                            <span className={`block text-[9px] font-mono mt-0.5 ${
+                              t.buffer_status.includes('REVERSAL') ? 'text-purple-400 font-bold'
+                              : t.buffer_status.includes('CIRCUIT_BREAKER') ? 'text-amber-400 font-bold' 
+                              : 'text-cyan-400'
+                            }`}>
                               {t.buffer_status}
                             </span>
                           )}
