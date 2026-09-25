@@ -845,7 +845,9 @@ export default function Fast5MBoard() {
     ? (walletInfo?.usdc_total ?? 753.45)
     : ((stats.initial_balance ?? 300) + stats.total_pnl);
   const currentVaultAllocated = vaultInfo?.allocated_balance ?? 250.00;
-  const roiPct = stats.initial_balance ? ((stats.total_pnl / (stats.initial_balance || 300)) * 100) : 101.15;
+  const roiPct = (stats.initial_balance && stats.initial_balance > 0)
+    ? ((stats.total_pnl / stats.initial_balance) * 100)
+    : (stats.total_pnl !== 0 ? ((stats.total_pnl / 300) * 100) : 0);
   const displayAddress = userProfile?.wallet_address 
     ? `${userProfile.wallet_address.slice(0, 4)}...${userProfile.wallet_address.slice(-4)}`
     : (walletInfo?.wallet_address ? `${walletInfo.wallet_address.slice(0, 4)}...${walletInfo.wallet_address.slice(-4)}` : '0x1f...f704');

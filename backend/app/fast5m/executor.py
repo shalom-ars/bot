@@ -529,9 +529,13 @@ class FastExecutor:
                     if matched_user:
                         user_id = matched_user.id
                 if not user_id:
-                    first_user = db.query(User).first()
-                    if first_user:
-                        user_id = first_user.id
+                    real_user = db.query(User).filter(~User.email.like("perf_%"), ~User.email.like("test_%"), ~User.email.like("user_%")).first()
+                    if real_user:
+                        user_id = real_user.id
+                    else:
+                        first_user = db.query(User).first()
+                        if first_user:
+                            user_id = first_user.id
             except Exception:
                 pass
 

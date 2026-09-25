@@ -121,28 +121,35 @@ def get_fast5m_trades(
     and dynamic timeframe filtering (today, week, month, all-time) separated by account mode (demo vs live).
     Guarantees strict user isolation so that users only see their own trades.
     """
-    now = datetime.now(timezone.utc)
+    now_naive = datetime.utcnow()
     base_query = db.query(Fast5MTrade)
 
-    if current_user:
-        base_query = base_query.filter((Fast5MTrade.user_id == current_user.id) | (Fast5MTrade.user_id.is_(None)))
-    elif account_mode == "live":
-        # Unauthenticated live mode request returns empty list
-        base_query = base_query.filter(Fast5MTrade.id == -1)
-
-    if account_mode == "demo":
-        base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
-    elif account_mode == "live":
+    if account_mode == "live":
         base_query = base_query.filter(Fast5MTrade.account_mode == "live")
+        if current_user:
+            base_query = base_query.filter(Fast5MTrade.user_id == current_user.id)
+        else:
+            base_query = base_query.filter(Fast5MTrade.id == -1)
+    elif account_mode == "demo":
+        base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
+    else: # "all"
+        if current_user:
+            base_query = base_query.filter(
+                (Fast5MTrade.account_mode == "demo") | 
+                (Fast5MTrade.account_mode.is_(None)) | 
+                (Fast5MTrade.user_id == current_user.id)
+            )
+        else:
+            base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
 
     if timeframe == "today":
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = now_naive.replace(hour=0, minute=0, second=0, microsecond=0)
         filtered_query = base_query.filter(Fast5MTrade.created_at >= today_start)
     elif timeframe == "week":
-        week_start = now - timedelta(days=7)
+        week_start = now_naive - timedelta(days=7)
         filtered_query = base_query.filter(Fast5MTrade.created_at >= week_start)
     elif timeframe == "month":
-        month_start = now - timedelta(days=30)
+        month_start = now_naive - timedelta(days=30)
         filtered_query = base_query.filter(Fast5MTrade.created_at >= month_start)
     else: # "all"
         filtered_query = base_query
@@ -215,15 +222,23 @@ def get_fast5m_trades(
 
     # Also compute all-time lifetime stats across closed records matching mode and user
     lifetime_q = db.query(Fast5MTrade).filter(Fast5MTrade.status == "CLOSED")
-    if current_user:
-        lifetime_q = lifetime_q.filter((Fast5MTrade.user_id == current_user.id) | (Fast5MTrade.user_id.is_(None)))
-    elif account_mode == "live":
-        lifetime_q = lifetime_q.filter(Fast5MTrade.id == -1)
-
-    if account_mode == "demo":
-        lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
-    elif account_mode == "live":
+    if account_mode == "live":
         lifetime_q = lifetime_q.filter(Fast5MTrade.account_mode == "live")
+        if current_user:
+            lifetime_q = lifetime_q.filter(Fast5MTrade.user_id == current_user.id)
+        else:
+            lifetime_q = lifetime_q.filter(Fast5MTrade.id == -1)
+    elif account_mode == "demo":
+        lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
+    else: # "all"
+        if current_user:
+            lifetime_q = lifetime_q.filter(
+                (Fast5MTrade.account_mode == "demo") | 
+                (Fast5MTrade.account_mode.is_(None)) | 
+                (Fast5MTrade.user_id == current_user.id)
+            )
+        else:
+            lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
 
     all_closed_records = lifetime_q.all()
     all_wins = sum(1 for t in all_closed_records if (t.pnl or 0) > 0)
@@ -245,7 +260,7 @@ def get_fast5m_trades(
     else:
         initial_balance = float(user_vault.allocated_balance if user_vault else fast_executor.settings.get("total_balance_usd", 300.0))
         current_balance = round(initial_balance + all_pnl, 2)
-        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode", "demo") == "demo" and (not current_user or t.get("user_id") == current_user.id)])
+        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode", "demo") == "demo"])
 
 
     return {
