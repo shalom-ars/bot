@@ -936,17 +936,26 @@ export default function Fast5MBoard() {
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5 pb-12 font-sans text-slate-100">
       
       {/* 1. TOP NAVIGATION BAR */}
-      <header className="bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-3 sm:px-5 sm:py-3.5 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        {/* Left: Platform brand "⚡ Fast5M" with bright blue badge "ENGINE" and clean navigation links */}
-        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-black tracking-tight text-white flex items-center gap-1.5 font-sans">
-              <Zap className="w-5 h-5 text-amber-400 fill-amber-400" />
-              <span>Fast5M</span>
-            </span>
-            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-600 text-white shadow-xs">
-              ENGINE
-            </span>
+      <header className="bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-2.5 sm:px-5 sm:py-3 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        {/* Left: User's Name "Shalom Bin Rasheed" followed by navigation links */}
+        <div className="flex items-center gap-3 sm:gap-5 flex-wrap">
+          <div className="flex items-center gap-2.5 pr-2 sm:pr-4 border-r border-[#30363d]">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center font-black text-xs text-white shadow-md shadow-blue-500/20">
+              SR
+            </div>
+            <div>
+              <div className="text-sm font-black text-white tracking-tight flex items-center gap-1.5">
+                <span>Shalom Bin Rasheed</span>
+                {isAdmin && (
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+                    Admin
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono -mt-0.5">
+                Fast5M Platform
+              </div>
+            </div>
           </div>
 
           <nav className="flex items-center gap-1 sm:gap-1.5 text-xs font-bold">
@@ -1022,34 +1031,9 @@ export default function Fast5MBoard() {
           </nav>
         </div>
 
-        {/* Center: Dark rounded status pill featuring green pulsing indicator for "CLOB LIVE | Polygon | Round: 4:31" */}
-        <div className="hidden xl:flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-[#0d1117] border border-[#30363d] text-xs font-mono text-slate-300 shadow-inner">
-          <span className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-emerald-400 font-bold tracking-wide">CLOB LIVE</span>
-          </span>
-          <span className="text-slate-600">|</span>
-          <span className="text-slate-300 font-medium">Polygon</span>
-          <span className="text-slate-600">|</span>
-          <span className="text-slate-200 font-bold">Round: {board ? formatSec(board.epoch_remaining_sec) : '4:31'}</span>
-        </div>
-
-        {/* Right: Vault badge, solid green + Deposit button, and solid red EMERGENCY STOP button */}
+        {/* Right: "Deposit", "Emergency Stop", and "Wallet" */}
         <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
-          <button
-            type="button"
-            onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer"
-            title="Open Trading Capital Vault"
-          >
-            <Lock className="w-3.5 h-3.5 text-blue-400" />
-            <span className="font-bold">Vault: ${currentVaultAllocated.toFixed(2)}</span>
-            <span className="text-slate-400 text-[11px]">({displayAddress})</span>
-          </button>
-
+          {/* 1. Deposit Button */}
           <button
             type="button"
             onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
@@ -1060,6 +1044,7 @@ export default function Fast5MBoard() {
             <span>Deposit</span>
           </button>
 
+          {/* 2. Emergency Stop Button */}
           {isAdmin ? (
             board?.auto_trading_active ? (
               <button
@@ -1070,7 +1055,7 @@ export default function Fast5MBoard() {
                 title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-white" />
-                <span>EMERGENCY STOP</span>
+                <span>Emergency Stop</span>
               </button>
             ) : (
               <button
@@ -1078,10 +1063,10 @@ export default function Fast5MBoard() {
                 onClick={handleEmergencyStart}
                 disabled={toggling}
                 className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-900/30 transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Start / Resume Engine: Re-arm automated execution"
+                title="Resume Engine: Re-arm automated execution"
               >
                 <Play className="w-3.5 h-3.5 text-white" />
-                <span>RESUME ENGINE</span>
+                <span>Resume Engine</span>
               </button>
             )
           ) : (
@@ -1091,80 +1076,122 @@ export default function Fast5MBoard() {
             </div>
           )}
 
-          {/* User Profile Pill */}
-          <div className="flex items-center gap-2 pl-2 border-l border-[#30363d]">
-            <div className="flex items-center gap-2 px-2.5 py-1 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs">
-              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-[10px] font-black text-white shrink-0">
-                {userProfile?.email ? userProfile.email[0].toUpperCase() : 'U'}
-              </div>
-              <span className="font-mono text-slate-300 max-w-[110px] truncate" title={userProfile?.email || 'User'}>
-                {userProfile?.email ? userProfile.email.split('@')[0] : 'User'}
-              </span>
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                userProfile?.role === 'SUPER_ADMIN'
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                  : 'bg-slate-800 text-slate-400 border border-slate-700'
-              }`}>
-                {userProfile?.role === 'SUPER_ADMIN' ? 'Admin' : 'User'}
-              </span>
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                userProfile?.status === 'APPROVED'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-              }`}>
-                {userProfile?.status === 'APPROVED' ? 'Approved' : 'Pending'}
-              </span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                {userProfile?.allowed_mode === 'REAL_AND_DEMO' ? 'Real+Demo' : 'Demo'}
-              </span>
-            </div>
+          {/* 3. Wallet Button */}
+          <button
+            type="button"
+            onClick={() => setWalletModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer"
+            title="Open Web3 Wallet Controls & Vault"
+          >
+            <Wallet className="w-3.5 h-3.5 text-blue-400" />
+            <span className="font-bold">Wallet</span>
+            <span className="text-slate-400 text-[11px]">(${currentVaultAllocated.toFixed(0)})</span>
+          </button>
 
-            <button
-              type="button"
-              onClick={handleLogout}
-              title="Log Out / Disconnect Session"
-              className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+          {/* User Logout */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            title="Log Out / Disconnect Session"
+            className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
-      {/* 2. SECONDARY CONTROL BAR */}
-      <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-3 sm:px-4 sm:py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs shadow-sm">
-        {/* Left: Mode Toggle */}
-        <div className="flex items-center gap-2">
-          <div className="inline-flex p-1 bg-[#0d1117] rounded-xl border border-[#30363d]">
-            <button
-              type="button"
-              onClick={() => handleToggleWalletMode('demo')}
-              disabled={togglingMode}
-              className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                accountMode === 'demo'
-                  ? 'bg-[#21262d] text-white border border-slate-600 shadow-xs'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Demo ($300)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleToggleWalletMode('live')}
-              disabled={togglingMode}
-              className={`px-3 py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
-                accountMode === 'live'
-                  ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Real Vault</span>
-            </button>
+      {/* 2. PROMINENT LARGER ROUND TIMER (CENTERED UNDER NAVIGATION BAR) */}
+      <div className="flex justify-center my-1 sm:my-2">
+        <div className="bg-[#161b22] border-2 border-[#30363d] hover:border-blue-500/50 rounded-3xl p-3.5 sm:p-4 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-8 w-full max-w-2xl relative overflow-hidden transition-all group">
+          {/* Subtle glowing ambient backdrops */}
+          <div className="absolute -top-12 -left-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+          <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+
+          {/* Left: Round Status and Meta */}
+          <div className="text-center sm:text-left space-y-1">
+            <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#0d1117] border border-[#30363d] text-[11px] font-mono text-slate-300">
+              <span className={`w-2 h-2 rounded-full ${
+                (board?.epoch_remaining_sec ?? 300) <= 10
+                  ? 'bg-rose-500 animate-ping'
+                  : 'bg-emerald-400 animate-pulse'
+              }`} />
+              <span className="font-bold uppercase tracking-wider text-slate-200">
+                {(board?.epoch_remaining_sec ?? 300) <= 10 ? '🚨 HARD AUTO-EXIT (04:50)' : '⚡ 5M PREDICTION ROUND'}
+              </span>
+            </div>
+            <h3 className="text-sm font-black text-white tracking-tight">
+              Hyperliquid Oracle & Polymarket Epoch
+            </h3>
+            <p className="text-[10px] text-slate-400 font-mono">
+              Strict 04:50 Rule • Independent 7-Pair Streams
+            </p>
+          </div>
+
+          {/* Center: Prominent Large Circular Countdown Timer */}
+          <div className="relative flex items-center justify-center shrink-0">
+            <svg className="w-24 h-24 sm:w-28 sm:h-28 transform -rotate-90">
+              <circle
+                cx="56"
+                cy="56"
+                r="46"
+                stroke="#21262d"
+                strokeWidth="7"
+                fill="transparent"
+              />
+              <circle
+                cx="56"
+                cy="56"
+                r="46"
+                stroke={(board?.epoch_remaining_sec ?? 300) <= 10 ? '#ef4444' : (board?.epoch_remaining_sec ?? 300) <= 60 ? '#f59e0b' : '#3b82f6'}
+                strokeWidth="7"
+                strokeDasharray={2 * Math.PI * 46}
+                strokeDashoffset={
+                  2 * Math.PI * 46 * (1 - Math.max(0, Math.min(300, (board?.epoch_remaining_sec ?? 300))) / 300)
+                }
+                strokeLinecap="round"
+                fill="transparent"
+                className="transition-all duration-1000 ease-linear"
+              />
+            </svg>
+
+            {/* Inner Round Countdown Display */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+              <span className={`text-2xl sm:text-3xl font-black font-mono tracking-tight ${
+                (board?.epoch_remaining_sec ?? 300) <= 10 ? 'text-rose-400 animate-pulse' : 'text-white'
+              }`}>
+                {board ? formatSec(board.epoch_remaining_sec) : '04:31'}
+              </span>
+              <span className="text-[9px] uppercase font-bold text-slate-400 font-mono tracking-wider -mt-0.5">
+                Round Timer
+              </span>
+            </div>
+          </div>
+
+          {/* Right: Round Indicators */}
+          <div className="text-center sm:text-right font-mono text-xs space-y-1">
+            <div className="text-slate-400 text-[11px]">
+              Strike Set: <strong className="text-white">:00 Min</strong>
+            </div>
+            <div className="text-slate-400 text-[11px]">
+              Hard Stop: <strong className="text-amber-400">:04:50</strong>
+            </div>
+            <div className="text-slate-400 text-[11px]">
+              CLOB Feed: <strong className="text-emerald-400">Live (0ms)</strong>
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Right: Telemetry & Risk Readouts in a single row */}
+      {/* COMPACT TELEMETRY STRIP (NO SIZING BUTTONS OR MODE TOGGLE CLUTTER) */}
+      <div className="bg-[#161b22] border border-[#30363d] rounded-xl px-3.5 py-1.5 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs shadow-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Active Vault:</span>
+          <span className="font-mono font-bold text-xs text-white px-2 py-0.5 rounded-lg bg-[#0d1117] border border-[#30363d]">
+            {accountMode === 'live' ? '⚡ Real Vault (Polygon)' : '🎮 Demo Vault ($300 Paper)'}
+          </span>
+          <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">(Controls inside Settings)</span>
+        </div>
+
         <div className="flex items-center gap-2.5 font-mono text-xs text-slate-300 flex-wrap">
           <span>Target Size: <strong className="text-white font-bold">${positionSize}</strong></span>
           <span className="text-slate-600">|</span>
@@ -1184,129 +1211,129 @@ export default function Fast5MBoard() {
         </div>
       </div>
 
-      {/* 3. FIVE KEY METRICS CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
+      {/* 3. SHRUNK FIVE KEY METRICS CARDS (COMPACT HEIGHT) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-2.5">
         {/* Card 1: Total Balance */}
-        <div className="bg-[#161b22] rounded-2xl border border-[#30363d] p-4 sm:p-5 flex flex-col justify-between shadow-sm hover:border-slate-500 transition-colors">
+        <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-2.5 sm:p-3 flex flex-col justify-between shadow-xs hover:border-slate-500 transition-colors">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Balance</span>
-            <span className="p-1.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              <Wallet className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Balance</span>
+            <span className="p-1 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              <DollarSign className="w-3.5 h-3.5" />
             </span>
           </div>
-          <div className="my-2">
-            <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-white">
+          <div className="my-1">
+            <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-white">
               ${currentTotalBalance.toFixed(2)}
             </div>
-            <div className="text-xs text-slate-400 font-mono mt-0.5">
-              Vault Allocated: <strong className="text-blue-400">${currentVaultAllocated.toFixed(2)}</strong>
+            <div className="text-[10px] text-slate-400 font-mono">
+              Vault: <strong className="text-blue-400">${currentVaultAllocated.toFixed(2)}</strong>
             </div>
           </div>
-          <div className="pt-2 border-t border-[#30363d] flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div className="pt-1.5 border-t border-[#30363d] flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>Active Margin:</span>
             <span className="font-bold text-slate-300">${activeExposure.toFixed(2)}</span>
           </div>
         </div>
 
         {/* Card 2: Net Realized PnL */}
-        <div className="bg-[#161b22] rounded-2xl border border-[#30363d] p-4 sm:p-5 flex flex-col justify-between shadow-sm hover:border-slate-500 transition-colors">
+        <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-2.5 sm:p-3 flex flex-col justify-between shadow-xs hover:border-slate-500 transition-colors">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Net Realized PnL</span>
-            <span className={`p-1.5 rounded-xl ${stats.total_pnl >= 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
-              {stats.total_pnl >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Net Realized PnL</span>
+            <span className={`p-1 rounded-lg ${stats.total_pnl >= 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+              {stats.total_pnl >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
             </span>
           </div>
-          <div className="my-2">
-            <div className={`text-2xl sm:text-3xl font-black font-mono tracking-tight ${
+          <div className="my-1">
+            <div className={`text-lg sm:text-xl font-black font-mono tracking-tight ${
               stats.total_pnl >= 0 ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]' : 'text-rose-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.3)]'
             }`}>
               {stats.total_pnl >= 0 ? '+' : '-'}${Math.abs(stats.total_pnl).toFixed(2)}
             </div>
-            <div className={`text-xs font-mono font-bold mt-0.5 ${stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <div className={`text-[10px] font-mono font-bold ${stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               {roiPct >= 0 ? '+' : ''}{roiPct.toFixed(2)}% ROI
             </div>
           </div>
-          <div className="pt-2 border-t border-[#30363d] flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div className="pt-1.5 border-t border-[#30363d] flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>Period:</span>
             <span className="font-bold uppercase text-slate-300">{selectedTimeframe}</span>
           </div>
         </div>
 
         {/* Card 3: Total Profit */}
-        <div className="bg-[#161b22] rounded-2xl border border-[#30363d] p-4 sm:p-5 flex flex-col justify-between shadow-sm hover:border-slate-500 transition-colors">
+        <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-2.5 sm:p-3 flex flex-col justify-between shadow-xs hover:border-slate-500 transition-colors">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Profit</span>
-            <span className="p-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <CheckCircle2 className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Profit</span>
+            <span className="p-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <CheckCircle2 className="w-3.5 h-3.5" />
             </span>
           </div>
-          <div className="my-2">
-            <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-400 tracking-tight">
+          <div className="my-1">
+            <div className="text-lg sm:text-xl font-black font-mono text-emerald-400 tracking-tight">
               +${stats.total_profit.toFixed(2)}
             </div>
-            <div className="text-xs text-emerald-400 font-bold mt-0.5">
+            <div className="text-[10px] text-emerald-400 font-bold">
               {stats.wins} Winning Trades
             </div>
           </div>
-          <div className="pt-2 border-t border-[#30363d] flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div className="pt-1.5 border-t border-[#30363d] flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>Target R:R:</span>
             <span className="font-bold text-emerald-400">{riskRewardRatio}:1 (+{takeProfitPct}%)</span>
           </div>
         </div>
 
         {/* Card 4: Total Loss */}
-        <div className="bg-[#161b22] rounded-2xl border border-[#30363d] p-4 sm:p-5 flex flex-col justify-between shadow-sm hover:border-slate-500 transition-colors">
+        <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-2.5 sm:p-3 flex flex-col justify-between shadow-xs hover:border-slate-500 transition-colors">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Loss</span>
-            <span className="p-1.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20">
-              <XCircle className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Loss</span>
+            <span className="p-1 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20">
+              <XCircle className="w-3.5 h-3.5" />
             </span>
           </div>
-          <div className="my-2">
-            <div className="text-2xl sm:text-3xl font-black font-mono text-rose-400 tracking-tight">
+          <div className="my-1">
+            <div className="text-lg sm:text-xl font-black font-mono text-rose-400 tracking-tight">
               -${stats.total_loss.toFixed(2)}
             </div>
-            <div className="text-xs text-rose-400 font-bold mt-0.5">
+            <div className="text-[10px] text-rose-400 font-bold">
               {stats.losses} Stopped Trades
             </div>
           </div>
-          <div className="pt-2 border-t border-[#30363d] flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div className="pt-1.5 border-t border-[#30363d] flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>Hard Cap:</span>
             <span className="font-bold text-rose-400">Max -{stopLossPct}% Stop</span>
           </div>
         </div>
 
         {/* Card 5: Win Rate */}
-        <div className="bg-[#161b22] rounded-2xl border border-[#30363d] p-4 sm:p-5 flex flex-col justify-between shadow-sm hover:border-slate-500 transition-colors">
+        <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-2.5 sm:p-3 flex flex-col justify-between shadow-xs hover:border-slate-500 transition-colors">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Win Rate</span>
-            <span className="p-1.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-              <Award className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Win Rate</span>
+            <span className="p-1 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+              <Award className="w-3.5 h-3.5" />
             </span>
           </div>
-          <div className="my-2">
-            <div className="text-2xl sm:text-3xl font-black font-mono text-white tracking-tight">
+          <div className="my-1">
+            <div className="text-lg sm:text-xl font-black font-mono text-white tracking-tight">
               {stats.win_rate.toFixed(1)}%
             </div>
-            <div className="text-xs text-slate-400 font-medium mt-0.5">
+            <div className="text-[10px] text-slate-400 font-medium">
               {stats.total_trades} Closed Rounds
             </div>
           </div>
-          <div className="pt-2 border-t border-[#30363d] flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div className="pt-1.5 border-t border-[#30363d] flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>Multi-Threshold:</span>
             <span className="font-bold text-slate-300">≥{multiPairMinScore}%</span>
           </div>
         </div>
       </div>
 
-      {/* 4. #1 RANKED EXECUTION SIGNAL BANNER */}
-      <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-4 sm:p-5 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <span className="px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+      {/* 4. SHRUNK #1 RANKED EXECUTION SIGNAL BANNER (COMPACT HEIGHT) */}
+      <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-2.5 sm:px-4 sm:py-2.5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-2.5 relative overflow-hidden">
+        <div className="flex items-center gap-3">
+          <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
             #1 RANKED
           </span>
           <div>
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-black text-white tracking-tight flex items-center gap-2">
               <span>{bannerAsset}</span>
               <span className={bannerDirection === 'UP' ? 'text-emerald-400' : 'text-rose-400'}>
                 {bannerDirection === 'UP' ? '▲' : '▼'}
@@ -1316,22 +1343,22 @@ export default function Fast5MBoard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-5 sm:gap-7 flex-wrap text-xs font-mono">
+        <div className="flex items-center gap-4 sm:gap-6 flex-wrap text-xs font-mono">
           <div className="text-left sm:text-right">
-            <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Score</span>
-            <span className="text-white font-black text-sm">{bannerScore}%</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold tracking-wider">Score</span>
+            <span className="text-white font-black text-xs sm:text-sm">{bannerScore}%</span>
           </div>
           <div className="text-left sm:text-right">
-            <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Oracle Delta</span>
-            <span className="text-emerald-400 font-black text-sm">{bannerDelta}</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold tracking-wider">Oracle Delta</span>
+            <span className="text-emerald-400 font-black text-xs sm:text-sm">{bannerDelta}</span>
           </div>
           <div className="text-left sm:text-right">
-            <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Latency</span>
-            <span className="text-emerald-400 font-bold text-sm">⚡ {bannerLatency}ms</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold tracking-wider">Latency</span>
+            <span className="text-emerald-400 font-bold text-xs sm:text-sm">⚡ {bannerLatency}ms</span>
           </div>
           <div className="text-left sm:text-right">
-            <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Status</span>
-            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider border ${
+            <span className="text-slate-400 block text-[9px] uppercase font-bold tracking-wider">Status</span>
+            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
               bannerStatus === 'ARMED & READY'
                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                 : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
@@ -1446,6 +1473,151 @@ export default function Fast5MBoard() {
                   </button>
                 </>
               )}
+            </div>
+          </div>
+
+          {/* ACCOUNT MODE & WALLET GOVERNANCE (INTERNAL SETTINGS ACCESS) */}
+          <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                  <Wallet className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                    <span>Account Execution Mode & Web3 Wallet</span>
+                    <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-bold">
+                      Isolated States
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Toggle your account execution environment between risk-free virtual paper trading and live Polygon CLOB on-chain trading.
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick Wallet Actions */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRefreshWalletBalance}
+                  disabled={refreshingWalletBal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  title="Sync on-chain Polygon balance"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshingWalletBal ? 'animate-spin' : ''}`} />
+                  <span>{refreshingWalletBal ? 'Syncing...' : 'Sync Balance'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWalletModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                >
+                  <Wallet className="w-3.5 h-3.5" />
+                  <span>Configure Wallet</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Mode Selectors Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Option A: Virtual Demo Account */}
+              <button
+                type="button"
+                onClick={() => handleToggleWalletMode('demo')}
+                disabled={togglingMode}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                  accountMode === 'demo' || walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
+                    ? 'border-blue-500 bg-blue-50/60 shadow-sm ring-2 ring-blue-500/20'
+                    : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                      🎮 Virtual Demo ($300 Base)
+                    </span>
+                    {(accountMode === 'demo' || walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected) && (
+                      <span className="p-1 rounded-full bg-blue-600 text-white">
+                        <Check className="w-3 h-3" />
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm font-black text-slate-900">Paper Trading Simulation</div>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    Zero financial risk. Dedicated virtual ledger isolated from live funds. Test algorithmic signals and verify execution.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between font-mono text-xs">
+                  <span className="text-slate-500">Virtual Equity:</span>
+                  <span className="font-bold text-blue-700">${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}</span>
+                </div>
+              </button>
+
+              {/* Option B: Real Money Polygon CLOB */}
+              <button
+                type="button"
+                onClick={() => handleToggleWalletMode('live')}
+                disabled={togglingMode}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                  accountMode === 'live' && walletInfo?.account_mode === 'live' && walletInfo?.is_connected
+                    ? 'border-emerald-500 bg-emerald-50/60 shadow-sm ring-2 ring-emerald-500/20'
+                    : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      ⚡ Real Vault (Polygon Mainnet)
+                    </span>
+                    {accountMode === 'live' && walletInfo?.account_mode === 'live' && walletInfo?.is_connected && (
+                      <span className="p-1 rounded-full bg-emerald-600 text-white">
+                        <Check className="w-3 h-3" />
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm font-black text-slate-900">Live Polymarket CLOB Execution</div>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    Real Web3 Polygon on-chain order placement with non-custodial wallet signing and authentic CLOB fills.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between font-mono text-xs">
+                  <span className="text-slate-500">Connected Wallet:</span>
+                  <span className="font-bold text-slate-800">{displayAddress}</span>
+                </div>
+              </button>
+            </div>
+
+            {/* Wallet Info Summary Bar */}
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3">
+                <span className={`w-2.5 h-2.5 rounded-full ${walletInfo?.is_connected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+                <div>
+                  <span className="font-bold text-slate-800">
+                    {walletInfo?.is_connected ? 'Web3 Wallet Connected' : 'Web3 Wallet Not Connected'}
+                  </span>
+                  <span className="text-slate-500 font-mono ml-2 text-[11px]">
+                    ({walletInfo?.masked_address || displayAddress})
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 font-mono text-[11px] text-slate-600 flex-wrap">
+                <span>USDC: <strong className="text-slate-900 font-bold">${walletInfo?.usdc_total != null ? walletInfo.usdc_total.toFixed(2) : '0.00'}</strong></span>
+                <span>•</span>
+                <span>POL Gas: <strong className="text-slate-900 font-bold">{walletInfo?.pol_gas_balance != null ? walletInfo.pol_gas_balance.toFixed(4) : '0.0000'}</strong></span>
+                {walletInfo?.is_connected && (
+                  <>
+                    <span>•</span>
+                    <button
+                      type="button"
+                      onClick={handleDisconnectWallet}
+                      className="text-rose-600 hover:text-rose-800 underline font-sans font-bold cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2833,8 +3005,8 @@ export default function Fast5MBoard() {
             </div>
           )}
 
-          {/* 7 Fast Markets Grid — 4-Column Responsive Layout ("اس کو چار پہ بنائیں") */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 7 Fast Markets Grid — 4-Column Responsive Layout Shrunk to Fit Cleanly */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
             {board?.assets.map((asset) => {
               const meta = ASSET_META[asset.asset] || {
                 name: asset.asset,
@@ -2849,67 +3021,67 @@ export default function Fast5MBoard() {
               return (
                 <div
                   key={asset.asset}
-                  className={`bg-[#161b22] rounded-2xl border transition-all duration-200 relative overflow-hidden flex flex-col justify-between ${
-                    isTop ? 'border-amber-500/80 shadow-md ring-2 ring-amber-500/20' : 'border-[#30363d] hover:border-slate-600'
+                  className={`bg-[#161b22] rounded-xl border transition-all duration-200 relative overflow-hidden flex flex-col justify-between ${
+                    isTop ? 'border-amber-500/80 shadow-md ring-1 ring-amber-500/20' : 'border-[#30363d] hover:border-slate-600'
                   }`}
                 >
                   {/* Card Header */}
-                  <div className="p-4 border-b border-[#30363d]">
+                  <div className="p-2.5 sm:p-3 border-b border-[#30363d]">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         {isTop ? (
-                          <span className="p-1 bg-amber-500 text-white rounded-lg shadow-xs">
-                            <Crown className="w-3.5 h-3.5" />
+                          <span className="p-0.5 bg-amber-500 text-white rounded shadow-xs">
+                            <Crown className="w-3 h-3" />
                           </span>
                         ) : (
-                          <span className="text-[11px] font-black font-mono px-1.5 py-0.5 rounded bg-[#0d1117] border border-[#30363d] text-slate-400">
+                          <span className="text-[10px] font-black font-mono px-1 py-0.2 rounded bg-[#0d1117] border border-[#30363d] text-slate-400">
                             #{asset.rank}
                           </span>
                         )}
                         <div>
-                          <span className="text-base font-black text-white">{asset.asset}</span>
-                          <span className="text-xs text-slate-400 font-medium ml-1.5">{meta.name}</span>
+                          <span className="text-sm font-black text-white">{asset.asset}</span>
+                          <span className="text-[10px] text-slate-400 font-medium ml-1">{meta.name}</span>
                         </div>
                       </div>
 
                       {/* Live Latency Badge */}
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#0d1117] text-emerald-400 border border-[#30363d]">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-[#0d1117] text-emerald-400 border border-[#30363d]">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
                         {asset.latency_ms}ms
                       </span>
                     </div>
 
                     {/* Live Oracle Price and Flash */}
-                    <div className="mt-2.5 flex items-baseline justify-between">
-                      <div className={`text-xl sm:text-2xl font-black font-mono transition-colors duration-300 ${
+                    <div className="mt-1.5 flex items-baseline justify-between">
+                      <div className={`text-base sm:text-lg font-black font-mono transition-colors duration-300 ${
                         flash === 'up' ? 'text-emerald-400' : flash === 'down' ? 'text-rose-400' : 'text-white'
                       }`}>
                         ${asset.live_price.toLocaleString()}
                       </div>
                       
                       {/* Delta Indicator */}
-                      <div className={`text-xs font-black font-mono px-2 py-0.5 rounded-lg flex items-center gap-0.5 ${
+                      <div className={`text-[10px] font-black font-mono px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
                         asset.delta >= 0 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                       }`}>
-                        {asset.delta >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                        {asset.delta >= 0 ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
                         {asset.delta >= 0 ? '+' : ''}{asset.delta_pct}%
                       </div>
                     </div>
 
-                    <div className="text-[11px] text-slate-400 font-mono mt-0.5 flex justify-between">
+                    <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex justify-between">
                       <span>P0 Strike: ${asset.strike_price.toLocaleString()}</span>
                       <span>Δ {asset.delta >= 0 ? '+' : ''}${asset.delta}</span>
                     </div>
                   </div>
 
                   {/* Confluence & Order Book Body */}
-                  <div className="p-4 space-y-3 flex-1 flex flex-col justify-between text-xs">
+                  <div className="p-2.5 sm:p-3 space-y-2 flex-1 flex flex-col justify-between text-xs">
                     
                     {/* Score Bar & Sub-Scores */}
                     <div>
-                      <div className="flex items-center justify-between text-[11px] font-bold mb-1">
+                      <div className="flex items-center justify-between text-[10px] font-bold mb-0.5">
                         <span className="flex items-center gap-1 text-slate-400">
-                          Direction:
+                          Dir:
                           <strong className={
                             asset.direction === 'UP' ? 'text-emerald-400' : asset.direction === 'DOWN' ? 'text-rose-400' : 'text-slate-400'
                           }>
@@ -2918,7 +3090,7 @@ export default function Fast5MBoard() {
                         </span>
                         <span className="font-mono text-white font-black">{asset.confidence}%</span>
                       </div>
-                      <div className="w-full bg-[#0d1117] border border-[#30363d] h-2 rounded-full overflow-hidden">
+                      <div className="w-full bg-[#0d1117] border border-[#30363d] h-1.5 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all duration-500 rounded-full ${
                             asset.direction === 'UP' ? 'bg-emerald-500' : asset.direction === 'DOWN' ? 'bg-rose-500' : 'bg-slate-500'
@@ -2928,7 +3100,7 @@ export default function Fast5MBoard() {
                       </div>
 
                       {/* 3 Sub-Score Mini Pills */}
-                      <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-slate-400">
+                      <div className="flex items-center justify-between mt-1 text-[9px] font-mono text-slate-400">
                         <span>Δ: {asset.delta_score ?? 20}/40</span>
                         <span>OBI: {asset.obi_score ?? 15}/30</span>
                         <span>Mom: {asset.momentum_score ?? 15}/30</span>
@@ -2936,27 +3108,23 @@ export default function Fast5MBoard() {
                     </div>
 
                     {/* Polymarket CLOB Book Stats */}
-                    <div className="bg-[#0d1117] rounded-xl p-2.5 border border-[#30363d] space-y-1 font-mono text-[11px]">
+                    <div className="bg-[#0d1117] rounded-lg p-1.5 border border-[#30363d] space-y-0.5 font-mono text-[10px]">
                       <div className="flex justify-between text-slate-400">
-                        <span>UP Share Ask:</span>
-                        <span className="font-bold text-slate-200">${asset.up_share_price.toFixed(2)}</span>
+                        <span>UP / DOWN:</span>
+                        <span className="font-bold text-slate-200">${asset.up_share_price.toFixed(2)} / ${asset.down_share_price.toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between text-slate-400">
-                        <span>DOWN Share Ask:</span>
-                        <span className="font-bold text-slate-200">${asset.down_share_price.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-500 text-[10px]">
+                      <div className="flex justify-between text-slate-500 text-[9px]">
                         <span>Spread: {(asset.spread * 100).toFixed(1)}%</span>
                         <span>Depth: ${asset.liquidity.toFixed(0)}</span>
                       </div>
                     </div>
 
                     {/* Countdown and Tradability Badge */}
-                    <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                       <span className="flex items-center gap-1 font-mono font-bold text-blue-400">
-                        <Timer className="w-3.5 h-3.5" /> {formatSec(asset.time_remaining_sec)}
+                        <Timer className="w-3 h-3" /> {formatSec(asset.time_remaining_sec)}
                       </span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
                         asset.is_tradable ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-[#0d1117] text-slate-400 border border-[#30363d]'
                       }`}>
                         {asset.is_tradable ? 'ELIGIBLE' : asset.rejection_reason || 'FILTERED'}
