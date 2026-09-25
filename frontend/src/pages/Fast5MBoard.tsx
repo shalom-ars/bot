@@ -3582,12 +3582,12 @@ export default function Fast5MBoard() {
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                               : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                           }`}>
-                            {t.resolution === 'TAKE_PROFIT' ? '🎯 TAKE PROFIT'
-                              : t.resolution === 'HARD_STOP_LOSS' ? '🛑 HARD STOP LOSS'
-                              : t.resolution === 'REVERSAL_EXIT' ? '🔄 REVERSAL EXIT'
-                              : t.resolution === 'FORCE_ROUND_TIMEOUT' ? '⏱️ ROUND TIMEOUT'
-                              : t.resolution === 'EXPIRED_ROUND_CLOSE' ? '⏱️ EXPIRED CLOSE'
-                              : t.resolution === 'CIRCUIT_BREAKER_SL_FILLED' ? '🛡️ CB SL FILLED'
+                            {t.resolution === 'TAKE_PROFIT' ? 'TAKE PROFIT'
+                              : t.resolution === 'HARD_STOP_LOSS' ? 'HARD STOP LOSS'
+                              : t.resolution === 'REVERSAL_EXIT' ? 'REVERSAL EXIT'
+                              : t.resolution === 'FORCE_ROUND_TIMEOUT' ? 'ROUND TIMEOUT'
+                              : t.resolution === 'EXPIRED_ROUND_CLOSE' ? 'EXPIRED CLOSE'
+                              : t.resolution === 'CIRCUIT_BREAKER_SL_FILLED' ? 'CB SL FILLED'
                               : (t.resolution || t.status)}
                           </span>
                           {t.buffer_status && (t.buffer_status.includes('ACTIVE') || t.buffer_status.includes('CIRCUIT_BREAKER') || t.buffer_status.includes('REVERSAL')) && (
