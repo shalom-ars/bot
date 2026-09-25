@@ -728,36 +728,98 @@ export default function Fast5MBoard() {
     setTimeout(() => setCopiedAddress(false), 2000);
   };
 
-  const connectBrowserWallet = async () => {
+  interface SupportedWallet {
+    id: string;
+    name: string;
+    icon: string;
+    description: string;
+    detected: boolean;
+    getProvider: () => any;
+  }
+
+  const getSupportedWallets = (): SupportedWallet[] => {
+    if (typeof window === 'undefined') return [];
+    const eth = (window as any).ethereum;
+    const phantom = (window as any).phantom?.ethereum;
+    const coinbase = (window as any).coinbaseWalletExtension;
+    const rabby = (window as any).rabby || (eth && eth.isRabby);
+
+    return [
+      {
+        id: 'metamask',
+        name: 'MetaMask',
+        icon: '🦊',
+        description: 'Popular Polygon & Ethereum browser extension',
+        detected: Boolean(eth && eth.isMetaMask && !eth.isRabby),
+        getProvider: () => eth,
+      },
+      {
+        id: 'coinbase',
+        name: 'Coinbase Wallet',
+        icon: '🔵',
+        description: 'Coinbase Wallet extension & mobile dApp',
+        detected: Boolean(coinbase || (eth && eth.isCoinbaseWallet)),
+        getProvider: () => coinbase || eth,
+      },
+      {
+        id: 'phantom',
+        name: 'Phantom (EVM)',
+        icon: '👻',
+        description: 'Multi-chain Phantom wallet in EVM mode',
+        detected: Boolean(phantom),
+        getProvider: () => phantom || eth,
+      },
+      {
+        id: 'rabby',
+        name: 'Rabby Wallet',
+        icon: '🐰',
+        description: 'Game-changing Web3 wallet for DeFi & Polygon',
+        detected: Boolean(rabby),
+        getProvider: () => (window as any).rabby || eth,
+      },
+      {
+        id: 'walletconnect',
+        name: 'WalletConnect',
+        icon: '🌐',
+        description: 'Universal Web3 provider & mobile wallet connect',
+        detected: Boolean(eth),
+        getProvider: () => eth,
+      },
+    ];
+  };
+
+  const connectSpecificWallet = async (walletOpt: SupportedWallet) => {
     setConnectingBrowserWallet(true);
     setWalletError('');
     setWalletMsg('');
+    const provider = walletOpt.getProvider();
+    if (!provider) {
+      setWalletError(`${walletOpt.name} not detected in your browser. Please install the ${walletOpt.name} extension or open inside its dApp browser.`);
+      setConnectingBrowserWallet(false);
+      return;
+    }
+
     try {
-      if (typeof window === 'undefined' || !(window as any).ethereum) {
-        setWalletError('No Web3 wallet extension detected in browser. Please install MetaMask or Rabby, or enter your address & signer key manually below.');
-        return;
-      }
-      const eth = (window as any).ethereum;
-      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      setWalletMsg(`Connecting to ${walletOpt.name}... Please approve connection.`);
+      const accounts = await provider.request({ method: 'eth_requestAccounts' });
       if (!accounts || accounts.length === 0) {
-        setWalletError('No account selected in wallet.');
-        return;
+        throw new Error(`No account selected in ${walletOpt.name}.`);
       }
-      const addr = accounts[0];
+      const addr = accounts[0].toLowerCase();
       setWalletAddressInput(addr);
 
-      // Check Polygon Mainnet Chain ID (137 = 0x89)
+      // Ensure Polygon network (137 = 0x89)
       try {
-        const chainId = await eth.request({ method: 'eth_chainId' });
-        if (chainId !== '0x89' && chainId !== '137') {
+        const chainId = await provider.request({ method: 'eth_chainId' });
+        if (chainId !== '0x89' && chainId !== '137' && parseInt(chainId, 16) !== 137) {
           try {
-            await eth.request({
+            await provider.request({
               method: 'wallet_switchEthereumChain',
               params: [{ chainId: '0x89' }],
             });
           } catch (switchError: any) {
             if (switchError.code === 4902) {
-              await eth.request({
+              await provider.request({
                 method: 'wallet_addEthereumChain',
                 params: [
                   {
@@ -776,21 +838,64 @@ export default function Fast5MBoard() {
         console.warn('Chain switch warning:', chainErr);
       }
 
-      // Connect via backend API
+      // Connect via backend API - connecting a Web3 wallet automatically switches to 'live' real mode
+      const token = localStorage.getItem('token');
       const res = await axios.post('/api/fast5m/wallet/connect', {
         address: addr,
         proxy_address: proxyAddressInput.trim() || undefined,
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
 
-      if (res.data?.wallet) {
-        setWalletInfo(res.data.wallet);
-        setWalletMsg('Browser wallet connected to Polygon Mainnet successfully!');
+      // Link wallet to user record on backend
+      try {
+        await axios.post('/api/auth/link-wallet', { wallet_address: addr }, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+      } catch (linkErr) {
+        console.debug('Link wallet note:', linkErr);
       }
+
+      // Automatically arm REAL mode upon Web3 wallet connection
+      try {
+        await axios.post('/api/fast5m/wallet/mode', { mode: 'live' }, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+      } catch (modeErr) {
+        console.debug('Mode set note:', modeErr);
+      }
+
+      if (res.data?.wallet) {
+        setWalletInfo({ ...res.data.wallet, account_mode: 'live', is_connected: true });
+        setAccountMode('live');
+        localStorage.setItem('account_mode', 'live');
+        localStorage.setItem('wallet_address', addr);
+        localStorage.removeItem('demo_access');
+        setWalletMsg(`Successfully linked ${walletOpt.name} (${addr.slice(0, 6)}...${addr.slice(-4)}) to Real Account!`);
+      }
+
+      await fetchUserProfile();
+      await fetchBoard();
+      await fetchTrades(selectedTimeframe, 'live');
     } catch (e: any) {
       console.error('Wallet connect error:', e);
-      setWalletError(e.response?.data?.detail || e.message || 'Failed to connect browser wallet.');
+      if (e?.code === 4001 || e?.message?.includes('User rejected') || e?.message?.includes('denied')) {
+        setWalletError(`Connection request was rejected in ${walletOpt.name}.`);
+      } else {
+        setWalletError(e.response?.data?.detail || e.message || `Failed to connect ${walletOpt.name}.`);
+      }
     } finally {
       setConnectingBrowserWallet(false);
+    }
+  };
+
+  const connectBrowserWallet = async () => {
+    const wallets = getSupportedWallets();
+    const detected = wallets.filter(w => w.detected);
+    if (detected.length === 1) {
+      await connectSpecificWallet(detected[0]);
+    } else {
+      setWalletModalOpen(true);
     }
   };
 
@@ -803,6 +908,7 @@ export default function Fast5MBoard() {
     setWalletError('');
     setWalletMsg('');
     try {
+      const token = localStorage.getItem('token');
       const res = await axios.post('/api/fast5m/wallet/connect', {
         address: walletAddressInput.trim(),
         private_key: privateKeyInput.trim() || undefined,
@@ -810,12 +916,19 @@ export default function Fast5MBoard() {
         api_key: apiKeyInput.trim() || undefined,
         api_secret: apiSecretInput.trim() || undefined,
         api_passphrase: apiPassphraseInput.trim() || undefined,
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       if (res.data?.wallet) {
-        setWalletInfo(res.data.wallet);
-        setWalletMsg('Polygon Wallet and Polymarket CLOB configuration verified & saved!');
+        setWalletInfo({ ...res.data.wallet, account_mode: 'live', is_connected: true });
+        setAccountMode('live');
+        localStorage.setItem('account_mode', 'live');
+        localStorage.setItem('wallet_address', walletAddressInput.trim());
+        setWalletMsg('Polygon Wallet and Polymarket CLOB configuration verified & saved to Real Account!');
         setPrivateKeyInput(''); // Clear plain private key from input after saving
       }
+      await fetchBoard();
+      await fetchTrades(selectedTimeframe, 'live');
     } catch (e: any) {
       setWalletError(e.response?.data?.detail || e.message || 'Failed to save credentials.');
     } finally {
@@ -884,16 +997,28 @@ export default function Fast5MBoard() {
 
   const handleDisconnectWallet = async () => {
     try {
-      const res = await axios.post('/api/fast5m/wallet/disconnect');
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/wallet/disconnect', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (res.data?.wallet) {
         setWalletInfo(res.data.wallet);
-        setWalletAddressInput('');
-        setPrivateKeyInput('');
-        setProxyAddressInput('');
-        setWalletMsg('Wallet disconnected safely. Reverted to Demo mode.');
+      } else {
+        setWalletInfo(null);
       }
-    } catch (e) {
+      setWalletAddressInput('');
+      setPrivateKeyInput('');
+      setProxyAddressInput('');
+      setAccountMode('demo');
+      localStorage.setItem('account_mode', 'demo');
+      localStorage.removeItem('wallet_address');
+      setWalletMsg('Personal Web3 wallet disconnected safely.');
+      await fetchUserProfile();
+      await fetchBoard();
+      await fetchTrades(selectedTimeframe, 'demo');
+    } catch (e: any) {
       console.error('Disconnect error', e);
+      setWalletError('Failed to disconnect wallet.');
     }
   };
 
@@ -919,9 +1044,19 @@ export default function Fast5MBoard() {
     ? 'ARMED & READY'
     : (activeList.some((t: any) => t.asset === bannerAsset) ? 'EXECUTING' : 'WAITING EDGE');
 
+  // Web3 wallet connects exclusively to Real Account for all users.
+  // Upon real wallet connection, automatically hide all demo account details from view.
+  const isRealAccount = Boolean(
+    walletInfo?.is_connected ||
+    walletInfo?.account_mode === 'live' ||
+    accountMode === 'live' ||
+    userProfile?.auth_provider === 'wallet' ||
+    Boolean(userProfile?.wallet_address)
+  );
+
   // Balances & Display Formatting
-  const currentTotalBalance = walletInfo?.account_mode === 'live' && walletInfo?.is_connected
-    ? (walletInfo?.usdc_total ?? 753.45)
+  const currentTotalBalance = isRealAccount
+    ? (walletInfo?.usdc_total ?? 0.00)
     : ((stats.initial_balance ?? 300) + stats.total_pnl);
   const currentVaultAllocated = vaultInfo?.allocated_balance ?? 250.00;
   const roiPct = (stats.initial_balance && stats.initial_balance > 0)
@@ -1084,10 +1219,27 @@ export default function Fast5MBoard() {
             className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer"
             title="Open Web3 Wallet Controls & Vault"
           >
-            <Wallet className="w-3.5 h-3.5 text-blue-400" />
-            <span className="font-bold">Wallet</span>
-            <span className="text-slate-400 text-[11px]">(${currentVaultAllocated.toFixed(0)})</span>
+            <Wallet className={`w-3.5 h-3.5 ${isRealAccount ? 'text-emerald-400' : 'text-blue-400'}`} />
+            <span className="font-bold">{isRealAccount ? 'Real Wallet' : 'Wallet'}</span>
+            <span className="text-slate-400 text-[11px]">
+              {isRealAccount
+                ? `($${(walletInfo?.usdc_total ?? 0).toFixed(0)})`
+                : `($${currentVaultAllocated.toFixed(0)})`}
+            </span>
           </button>
+
+          {/* 4. Disconnect Button (Prominent disconnect option for connected Web3 personal wallets) */}
+          {(isRealAccount || walletInfo?.is_connected) && (
+            <button
+              type="button"
+              onClick={handleDisconnectWallet}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              title="Disconnect Web3 Wallet (Switch back to Safe Demo)"
+            >
+              <Unlink className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden sm:inline">Disconnect</span>
+            </button>
+          )}
 
           {/* User Logout */}
           <button
@@ -1127,7 +1279,9 @@ export default function Fast5MBoard() {
             <span>Active Exposure:</span>
             <strong className="text-slate-200">${activeExposure.toFixed(2)}</strong>
             <span className="text-slate-600">/</span>
-            <span className="text-slate-400">${(300 * (maxPortfolioMarginPct / 100)).toFixed(0)} Cap</span>
+            <span className="text-slate-400">
+              ${((isRealAccount ? (walletInfo?.usdc_total ?? 250) : 300) * (maxPortfolioMarginPct / 100)).toFixed(0)} Cap
+            </span>
           </div>
         </div>
 
@@ -1227,25 +1381,37 @@ export default function Fast5MBoard() {
 
       {/* 3. SHRUNK FIVE KEY METRICS CARDS (COMPACT HEIGHT) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-2.5">
-        {/* Card 1: Total Balance */}
+        {/* Card 1: Total Balance / Real Account Balance */}
         <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-2.5 sm:p-3 flex flex-col justify-between shadow-xs hover:border-slate-500 transition-colors">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Balance</span>
-            <span className="p-1 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              {isRealAccount ? 'Real Account Balance' : 'Total Balance'}
+            </span>
+            <span className={`p-1 rounded-lg ${isRealAccount ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
               <DollarSign className="w-3.5 h-3.5" />
             </span>
           </div>
           <div className="my-1">
-            <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-white">
-              ${currentTotalBalance.toFixed(2)}
+            <div className={`text-lg sm:text-xl font-black font-mono tracking-tight ${isRealAccount ? 'text-emerald-400' : 'text-white'}`}>
+              ${(isRealAccount ? (walletInfo?.usdc_total ?? 0) : currentTotalBalance).toFixed(2)}
             </div>
             <div className="text-[10px] text-slate-400 font-mono">
-              Vault: <strong className="text-blue-400">${currentVaultAllocated.toFixed(2)}</strong>
+              {isRealAccount ? (
+                <>
+                  POL Gas: <strong className="text-purple-400">{walletInfo?.pol_gas_balance != null ? walletInfo.pol_gas_balance.toFixed(4) : '0.0000'} POL</strong>
+                </>
+              ) : (
+                <>
+                  Vault: <strong className="text-blue-400">${currentVaultAllocated.toFixed(2)}</strong>
+                </>
+              )}
             </div>
           </div>
           <div className="pt-1.5 border-t border-[#30363d] flex items-center justify-between text-[10px] font-mono text-slate-400">
-            <span>Active Margin:</span>
-            <span className="font-bold text-slate-300">${activeExposure.toFixed(2)}</span>
+            <span>{isRealAccount ? 'Spendable USDC:' : 'Active Margin:'}</span>
+            <span className={`font-bold ${isRealAccount ? 'text-emerald-400 font-mono' : 'text-slate-300'}`}>
+              ${(isRealAccount ? (walletInfo?.usdc_total ?? 0) : activeExposure).toFixed(2)}
+            </span>
           </div>
         </div>
 
@@ -1430,17 +1596,19 @@ export default function Fast5MBoard() {
                 </div>
               )}
 
-              {/* Reset Demo Account Button (available to all users to reset their own virtual demo balance) */}
-              <button
-                type="button"
-                onClick={() => setResetModalOpen(true)}
-                disabled={resettingDemo || savingSettings}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
-                title="Reset Demo Account: wipe paper trades and reset virtual balance to $300.00 base"
-              >
-                <RotateCcw className={`w-3.5 h-3.5 ${resettingDemo ? 'animate-spin' : ''}`} />
-                <span>{resettingDemo ? 'Resetting...' : 'Reset Demo ($300)'}</span>
-              </button>
+              {/* Reset Demo Account Button (available only when NOT connected to Real Account) */}
+              {!isRealAccount && (
+                <button
+                  type="button"
+                  onClick={() => setResetModalOpen(true)}
+                  disabled={resettingDemo || savingSettings}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                  title="Reset Demo Account: wipe paper trades and reset virtual balance to $300.00 base"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${resettingDemo ? 'animate-spin' : ''}`} />
+                  <span>{resettingDemo ? 'Resetting...' : 'Reset Demo ($300)'}</span>
+                </button>
+              )}
 
               {isAdmin && (
                 <>
@@ -1534,39 +1702,41 @@ export default function Fast5MBoard() {
             </div>
 
             {/* Mode Selectors Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Option A: Virtual Demo Account */}
-              <button
-                type="button"
-                onClick={() => handleToggleWalletMode('demo')}
-                disabled={togglingMode}
-                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
-                  accountMode === 'demo' || walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
-                    ? 'border-blue-500 bg-blue-50/60 shadow-sm ring-2 ring-blue-500/20'
-                    : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
-                      🎮 Virtual Demo ($300 Base)
-                    </span>
-                    {(accountMode === 'demo' || walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected) && (
-                      <span className="p-1 rounded-full bg-blue-600 text-white">
-                        <Check className="w-3 h-3" />
+            <div className={`grid grid-cols-1 ${isRealAccount ? 'md:grid-cols-1' : 'md:grid-cols-2'} gap-4`}>
+              {/* Option A: Virtual Demo Account (Automatically hidden when Real Wallet is connected) */}
+              {!isRealAccount && (
+                <button
+                  type="button"
+                  onClick={() => handleToggleWalletMode('demo')}
+                  disabled={togglingMode}
+                  className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                    accountMode === 'demo' || walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
+                      ? 'border-blue-500 bg-blue-50/60 shadow-sm ring-2 ring-blue-500/20'
+                      : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                        🎮 Virtual Demo ($300 Base)
                       </span>
-                    )}
+                      {(accountMode === 'demo' || walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected) && (
+                        <span className="p-1 rounded-full bg-blue-600 text-white">
+                          <Check className="w-3 h-3" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm font-black text-slate-900">Paper Trading Simulation</div>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      Zero financial risk. Dedicated virtual ledger isolated from live funds. Test algorithmic signals and verify execution.
+                    </p>
                   </div>
-                  <div className="text-sm font-black text-slate-900">Paper Trading Simulation</div>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Zero financial risk. Dedicated virtual ledger isolated from live funds. Test algorithmic signals and verify execution.
-                  </p>
-                </div>
-                <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between font-mono text-xs">
-                  <span className="text-slate-500">Virtual Equity:</span>
-                  <span className="font-bold text-blue-700">${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}</span>
-                </div>
-              </button>
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between font-mono text-xs">
+                    <span className="text-slate-500">Virtual Equity:</span>
+                    <span className="font-bold text-blue-700">${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}</span>
+                  </div>
+                </button>
+              )}
 
               {/* Option B: Real Money Polygon CLOB */}
               <button
@@ -1574,7 +1744,7 @@ export default function Fast5MBoard() {
                 onClick={() => handleToggleWalletMode('live')}
                 disabled={togglingMode}
                 className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
-                  accountMode === 'live' && walletInfo?.account_mode === 'live' && walletInfo?.is_connected
+                  isRealAccount
                     ? 'border-emerald-500 bg-emerald-50/60 shadow-sm ring-2 ring-emerald-500/20'
                     : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
                 }`}
@@ -1584,7 +1754,7 @@ export default function Fast5MBoard() {
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                       ⚡ Real Vault (Polygon Mainnet)
                     </span>
-                    {accountMode === 'live' && walletInfo?.account_mode === 'live' && walletInfo?.is_connected && (
+                    {isRealAccount && (
                       <span className="p-1 rounded-full bg-emerald-600 text-white">
                         <Check className="w-3 h-3" />
                       </span>
@@ -3172,26 +3342,33 @@ export default function Fast5MBoard() {
             {/* Account Mode Filter & Timeframe Filter */}
             <div className="flex items-center gap-2 flex-wrap">
               {/* Account Mode Filter */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
-                {[
-                  { id: 'demo' as const, label: '🎮 Demo History' },
-                  { id: 'live' as const, label: '⚡ Real History' },
-                  { id: 'all' as const, label: 'All Accounts' },
-                ].map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleSelectAccountMode(m.id)}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                      accountMode === m.id
-                        ? 'bg-white text-indigo-700 shadow-xs font-black'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
+              {isRealAccount ? (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-black">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>⚡ Real Account History (Live)</span>
+                </div>
+              ) : (
+                <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                  {[
+                    { id: 'demo' as const, label: '🎮 Demo History' },
+                    { id: 'live' as const, label: '⚡ Real History' },
+                    { id: 'all' as const, label: 'All Accounts' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleSelectAccountMode(m.id)}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        accountMode === m.id
+                          ? 'bg-white text-indigo-700 shadow-xs font-black'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Timeframe Filter Buttons */}
               <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
@@ -3216,8 +3393,8 @@ export default function Fast5MBoard() {
                 ))}
               </div>
 
-              {/* Reset Demo button if in Demo mode */}
-              {(accountMode === 'demo' || accountMode === 'all') && (
+              {/* Reset Demo button if in Demo mode and not in Real Account */}
+              {!isRealAccount && (accountMode === 'demo' || accountMode === 'all') && (
                 <button
                   type="button"
                   onClick={() => setResetModalOpen(true)}
@@ -3230,7 +3407,7 @@ export default function Fast5MBoard() {
               )}
 
               <button
-                onClick={() => fetchTrades(selectedTimeframe, accountMode)}
+                onClick={() => fetchTrades(selectedTimeframe, isRealAccount ? 'live' : accountMode)}
                 className="p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer border border-slate-200"
                 title="Refresh trade log"
               >
@@ -3243,7 +3420,7 @@ export default function Fast5MBoard() {
           <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
             <div className="flex items-center gap-4 flex-wrap">
               <span className="text-slate-500 font-sans font-bold">
-                Filtered: <span className="uppercase text-slate-800">{selectedTimeframe}</span> ({accountMode.toUpperCase()})
+                Filtered: <span className="uppercase text-slate-800">{selectedTimeframe}</span> ({isRealAccount ? 'REAL' : accountMode.toUpperCase()})
               </span>
               <span>
                 Trades: <strong className="text-slate-800">{stats.total_trades}</strong>
@@ -3287,7 +3464,7 @@ export default function Fast5MBoard() {
                 {trades.length === 0 ? (
                   <tr>
                     <td colSpan={11} className="py-8 text-center text-slate-400 font-sans text-xs">
-                      No {accountMode !== 'all' ? accountMode : ''} 5-minute fast trades recorded yet. Engine will automatically execute when the #1 ranked pair reaches score ≥ {confidenceThreshold}%.
+                      No {isRealAccount ? 'real' : (accountMode !== 'all' ? accountMode : '')} 5-minute fast trades recorded yet. Engine will automatically execute when the #1 ranked pair reaches score ≥ {confidenceThreshold}%.
                     </td>
                   </tr>
                 ) : (
@@ -3496,41 +3673,43 @@ export default function Fast5MBoard() {
             {/* TRADING MODE SELECTOR: DEMO VS REAL MONEY */}
             <div>
               <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-2">
-                1. Select Account Execution Mode
+                1. Account Execution Mode
               </label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className={`grid grid-cols-1 ${isRealAccount ? 'md:grid-cols-1' : 'md:grid-cols-2'} gap-4`}>
                 
-                {/* Option A: Virtual Demo */}
-                <button
-                  type="button"
-                  onClick={() => handleToggleWalletMode('demo')}
-                  disabled={togglingMode}
-                  className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
-                    walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
-                      ? 'border-blue-500 bg-blue-50/50 shadow-md ring-2 ring-blue-500/20'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
-                        VIRTUAL DEMO ($300 BASE)
-                      </span>
-                      {(walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected) && (
-                        <span className="p-1 rounded-full bg-blue-600 text-white">
-                          <Check className="w-3.5 h-3.5" />
+                {/* Option A: Virtual Demo (Automatically hidden when Real Account is connected) */}
+                {!isRealAccount && (
+                  <button
+                    type="button"
+                    onClick={() => handleToggleWalletMode('demo')}
+                    disabled={togglingMode}
+                    className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                      walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
+                        ? 'border-blue-500 bg-blue-50/50 shadow-md ring-2 ring-blue-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                          VIRTUAL DEMO ($300 BASE)
                         </span>
-                      )}
+                        {(walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected) && (
+                          <span className="p-1 rounded-full bg-blue-600 text-white">
+                            <Check className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-base font-black text-slate-900 mt-1">Paper Trading Simulation</div>
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                        Zero financial risk. Simulates all 5-minute round predictions with high-fidelity fill models, live oracle tracking, and virtual balance.
+                      </p>
                     </div>
-                    <div className="text-base font-black text-slate-900 mt-1">Paper Trading Simulation</div>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                      Zero financial risk. Simulates all 5-minute round predictions with high-fidelity fill models, live oracle tracking, and virtual balance.
-                    </p>
-                  </div>
-                  <div className="mt-3 pt-2.5 border-t border-slate-200/60 font-mono text-xs text-blue-700 font-bold">
-                    Virtual Equity: ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
-                  </div>
-                </button>
+                    <div className="mt-3 pt-2.5 border-t border-slate-200/60 font-mono text-xs text-blue-700 font-bold">
+                      Virtual Equity: ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)}
+                    </div>
+                  </button>
+                )}
 
                 {/* Option B: Real Money Live Trading */}
                 <button
@@ -3538,7 +3717,7 @@ export default function Fast5MBoard() {
                   onClick={() => handleToggleWalletMode('live')}
                   disabled={togglingMode}
                   className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
-                    walletInfo?.account_mode === 'live'
+                    isRealAccount
                       ? 'border-emerald-500 bg-emerald-50/50 shadow-md ring-2 ring-emerald-500/20'
                       : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
@@ -3548,7 +3727,7 @@ export default function Fast5MBoard() {
                       <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                         REAL MONEY (POLYMARKET CLOB)
                       </span>
-                      {walletInfo?.account_mode === 'live' && (
+                      {isRealAccount && (
                         <span className="p-1 rounded-full bg-emerald-600 text-white animate-pulse">
                           <Check className="w-3.5 h-3.5" />
                         </span>
@@ -3610,20 +3789,20 @@ export default function Fast5MBoard() {
             {/* TWO METHODS TO CONNECT WALLET */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-              {/* METHOD 1: 1-CLICK BROWSER WALLET */}
+              {/* METHOD 1: CONNECT PERSONAL WEB3 WALLET (5 SUPPORTED OPTIONS) */}
               <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <span className="p-1.5 rounded-lg bg-indigo-100 text-indigo-700">
                       <Link2 className="w-4 h-4" />
                     </span>
-                    <h3 className="text-sm font-black text-slate-900">Method 1: Connect Browser Wallet</h3>
+                    <h3 className="text-sm font-black text-slate-900">Method 1: Connect Supported Personal Wallet</h3>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Connect directly via MetaMask, Rabby, Coinbase Wallet, or Phantom with 1-click account and network detection.
+                    Connect your personal Web3 wallet exclusively to the Real Account. Supported: MetaMask, Coinbase Wallet, Phantom, Rabby, or WalletConnect.
                   </p>
 
-                  <div className="my-4 bg-white p-4 rounded-xl border border-slate-200 space-y-3">
+                  <div className="my-3 bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-slate-500">Connected Address:</span>
                       <div className="flex items-center gap-1 font-mono font-bold text-slate-900">
@@ -3654,17 +3833,62 @@ export default function Fast5MBoard() {
                       </div>
                     )}
                   </div>
+
+                  {/* 5 Supported Wallets Grid */}
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                      Select Personal Wallet:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {getSupportedWallets().map((w) => (
+                        <button
+                          key={w.id}
+                          type="button"
+                          onClick={() => connectSpecificWallet(w)}
+                          disabled={connectingBrowserWallet}
+                          className="p-2.5 bg-white hover:bg-indigo-50/70 border border-slate-200 hover:border-indigo-300 rounded-xl flex items-center justify-between text-left transition-all cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg shrink-0 group-hover:scale-110 transition-transform">{w.icon}</span>
+                            <div>
+                              <div className="text-xs font-black text-slate-800">{w.name}</div>
+                              <div className="text-[9px] text-slate-400 line-clamp-1">{w.description}</div>
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                            w.detected
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                              : 'bg-slate-100 text-slate-500 border-slate-200'
+                          }`}>
+                            {w.detected ? 'Ready' : 'Link'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={connectBrowserWallet}
-                  disabled={connectingBrowserWallet}
-                  className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
-                >
-                  <Wallet className="w-4 h-4" />
-                  <span>{connectingBrowserWallet ? 'Connecting Web3 Wallet...' : 'Connect MetaMask / Browser Extension'}</span>
-                </button>
+                {/* Disconnect Button if connected */}
+                {walletInfo?.is_connected ? (
+                  <button
+                    type="button"
+                    onClick={handleDisconnectWallet}
+                    className="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs mt-3"
+                  >
+                    <Unlink className="w-4 h-4 text-rose-600" />
+                    <span>Disconnect Personal Wallet</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={connectBrowserWallet}
+                    disabled={connectingBrowserWallet}
+                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2 mt-3"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    <span>{connectingBrowserWallet ? 'Connecting Web3 Wallet...' : 'Connect Auto-Detected Wallet'}</span>
+                  </button>
+                )}
               </div>
 
               {/* METHOD 2: AUTOMATED 5M BOT SIGNER KEY */}
@@ -3873,20 +4097,49 @@ export default function Fast5MBoard() {
                   <span className="text-slate-400 text-[10px] block">POL Gas</span>
                   <span className="font-bold text-purple-700">{walletInfo.pol_gas_balance.toFixed(3)} POL</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleDisconnectWallet}
+                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 font-sans"
+                  title="Disconnect Personal Wallet"
+                >
+                  <Unlink className="w-3 h-3 text-rose-600" />
+                  <span>Disconnect</span>
+                </button>
               </div>
             )}
 
-            {/* 1-Click Connect Button */}
+            {/* 5 Supported Personal Wallets Grid */}
             <div className="space-y-2">
-              <button
-                type="button"
-                onClick={connectBrowserWallet}
-                disabled={connectingBrowserWallet}
-                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
-              >
-                <Wallet className="w-4 h-4" />
-                <span>{connectingBrowserWallet ? 'Connecting Web3 Wallet...' : '1-Click Connect MetaMask / Rabby'}</span>
-              </button>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
+                Link Supported Personal Wallet (Exclusively Real Account):
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {getSupportedWallets().map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    onClick={() => connectSpecificWallet(w)}
+                    disabled={connectingBrowserWallet}
+                    className="p-2.5 bg-slate-50 hover:bg-indigo-50/70 border border-slate-200 hover:border-indigo-300 rounded-xl flex items-center justify-between text-left transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xl shrink-0 group-hover:scale-110 transition-transform">{w.icon}</span>
+                      <div>
+                        <div className="text-xs font-black text-slate-800">{w.name}</div>
+                        <div className="text-[10px] text-slate-400 line-clamp-1">{w.description}</div>
+                      </div>
+                    </div>
+                    <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                      w.detected
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                        : 'bg-slate-100 text-slate-500 border-slate-200'
+                    }`}>
+                      {w.detected ? 'Ready' : 'Link'}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Divider */}
@@ -3941,32 +4194,51 @@ export default function Fast5MBoard() {
               </button>
             </div>
 
-            {/* Mode Toggle inside Modal */}
+            {/* Mode Toggle / Status inside Modal */}
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Active Trading Mode:</span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleToggleWalletMode('demo')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
-                      ? 'bg-blue-600 text-white font-black shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  Demo ($300)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleToggleWalletMode('live')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    walletInfo?.account_mode === 'live'
-                      ? 'bg-emerald-600 text-white font-black shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  Live (CLOB)
-                </button>
+              <span className="text-xs font-bold text-slate-600">Trading Mode:</span>
+              <div className="flex items-center gap-2">
+                {isRealAccount ? (
+                  <>
+                    <span className="px-3 py-1 rounded-lg text-xs font-black bg-emerald-600 text-white shadow-xs flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      ⚡ Real Account Exclusive (Live CLOB)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleDisconnectWallet}
+                      className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 font-sans"
+                    >
+                      <Unlink className="w-3 h-3 text-rose-600" />
+                      <span>Disconnect</span>
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleWalletMode('demo')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
+                          ? 'bg-blue-600 text-white font-black shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Demo ($300)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleWalletMode('live')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        walletInfo?.account_mode === 'live'
+                          ? 'bg-emerald-600 text-white font-black shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Live (CLOB)
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
