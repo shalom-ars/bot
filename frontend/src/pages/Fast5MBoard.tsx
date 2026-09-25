@@ -1067,17 +1067,17 @@ export default function Fast5MBoard() {
     : (walletInfo?.wallet_address ? `${walletInfo.wallet_address.slice(0, 4)}...${walletInfo.wallet_address.slice(-4)}` : '0x1f...f704');
 
   return (
-    <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5 pb-12 font-sans text-slate-100">
+    <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-5 pb-12 font-sans text-slate-100 px-2 sm:px-4">
       
       {/* 1. TOP NAVIGATION BAR */}
-      <header className="bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-2.5 sm:px-5 sm:py-3 shadow-md flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+      <header className="w-full max-w-full bg-[#161b22] border border-[#30363d] rounded-2xl px-3 py-2 sm:py-2.5 shadow-md flex items-center justify-between gap-2 overflow-x-hidden">
         {/* Left: Brand Logo + "Jonanda Bot" + All Tabs in a Single Horizontal Line */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-nowrap shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-2 flex-nowrap shrink min-w-0">
           {/* Brand Logo & Name */}
-          <div className="flex items-center gap-2.5 pr-2 sm:pr-3 border-r border-[#30363d] shrink-0">
-            <BrandLogo size={34} glow={true} />
+          <div className="flex items-center gap-2 pr-2 border-r border-[#30363d] shrink-0">
+            <BrandLogo size={32} glow={true} />
             <div>
-              <div className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 whitespace-nowrap">
+              <div className="text-xs sm:text-sm font-black text-white tracking-tight flex items-center gap-1.5 whitespace-nowrap">
                 <span className="bg-gradient-to-r from-blue-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent font-black tracking-wide">
                   Jonanda Bot
                 </span>
@@ -1087,7 +1087,7 @@ export default function Fast5MBoard() {
                   </span>
                 )}
               </div>
-              <div className="text-[10px] text-slate-400 font-mono -mt-0.5 flex items-center gap-1 whitespace-nowrap">
+              <div className="text-[9px] sm:text-[10px] text-slate-400 font-mono -mt-0.5 flex items-center gap-1 whitespace-nowrap">
                 <span>Shalom Bin Rasheed</span>
                 <span className="text-slate-600">•</span>
                 <span className="text-emerald-400 font-semibold">5M Engine</span>
@@ -1096,11 +1096,11 @@ export default function Fast5MBoard() {
           </div>
 
           {/* Navigation Tabs in Single Continuous Line */}
-          <nav className="flex items-center gap-1 sm:gap-1.5 text-xs font-bold shrink-0">
+          <nav className="flex items-center gap-2 text-xs font-bold shrink min-w-0">
             <button
               type="button"
               onClick={() => setActiveTab('board')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'board'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1115,14 +1115,14 @@ export default function Fast5MBoard() {
                 const el = document.getElementById('fast5m-markets-grid');
                 if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50 transition-all cursor-pointer whitespace-nowrap"
+              className="px-2 py-1 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50 transition-all cursor-pointer whitespace-nowrap"
             >
               Markets
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('scoring')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'scoring'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1133,7 +1133,7 @@ export default function Fast5MBoard() {
             <button
               type="button"
               onClick={() => setActiveTab('settings')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'settings'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1144,7 +1144,7 @@ export default function Fast5MBoard() {
             <button
               type="button"
               onClick={() => setActiveTab('trades')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'trades'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1156,7 +1156,7 @@ export default function Fast5MBoard() {
               <button
                 type="button"
                 onClick={() => setActiveTab('admin')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap ${
                   activeTab === 'admin'
                     ? 'bg-purple-600/30 text-purple-200 border border-purple-500/50 shadow-xs'
                     : 'text-purple-400 hover:text-purple-200 hover:bg-purple-950/40 border border-purple-900/30'
@@ -1170,26 +1170,26 @@ export default function Fast5MBoard() {
         </div>
 
         {/* Right: Unified Deposit/Withdraw, Compact Emergency Stop next to Wallet, Corner Logout */}
-        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* 1. Unified Deposit / Withdraw Button */}
           <button
             type="button"
             onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
-            className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+            className="px-2.5 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
             title="Deposit or Withdraw Capital to/from Trading Vault"
           >
             <ArrowDownToLine className="w-3.5 h-3.5" />
             <span>Deposit / Withdraw</span>
           </button>
 
-          {/* 2. Compact Emergency Stop Button (Shrunk size, aligned right next to Wallet) */}
+          {/* 2. Compact Emergency Stop Button */}
           {isAdmin ? (
             board?.auto_trading_active ? (
               <button
                 type="button"
                 onClick={handleEmergencyStop}
                 disabled={toggling}
-                className="px-2.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 animate-pulse border border-rose-500/40"
+                className="px-2.5 py-1 bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 animate-pulse border border-rose-500/40"
                 title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-white" />
@@ -1201,7 +1201,7 @@ export default function Fast5MBoard() {
                 type="button"
                 onClick={handleEmergencyStart}
                 disabled={toggling}
-                className="px-2.5 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 border border-emerald-500/40"
+                className="px-2.5 py-1 bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 border border-emerald-500/40"
                 title="Resume Engine: Re-arm automated execution"
               >
                 <Play className="w-3.5 h-3.5 text-white" />
@@ -1210,17 +1210,17 @@ export default function Fast5MBoard() {
               </button>
             )
           ) : (
-            <div className="px-2.5 py-1.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-300 flex items-center gap-1.5 shrink-0">
+            <div className="px-2.5 py-1 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs font-mono text-slate-300 flex items-center gap-1.5 shrink-0">
               <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
               <span>{board?.auto_trading_active ? 'Armed' : 'Paused'}</span>
             </div>
           )}
 
-          {/* 3. Wallet Button (Immediately next to Emergency Stop) with Real-Time Balance Display */}
+          {/* 3. Wallet Button */}
           <button
             type="button"
             onClick={() => setWalletModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer shrink-0"
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer shrink-0"
             title="Open Web3 Wallet Controls & Balance"
           >
             <Wallet className={`w-3.5 h-3.5 ${isRealAccount ? 'text-emerald-400' : 'text-blue-400'}`} />
@@ -1237,12 +1237,12 @@ export default function Fast5MBoard() {
             )}
           </button>
 
-          {/* 4. Disconnect Button (Prominent disconnect option for connected Web3 personal wallets) */}
+          {/* 4. Disconnect Button */}
           {(isRealAccount || walletInfo?.is_connected) && (
             <button
               type="button"
               onClick={handleDisconnectWallet}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-[11px] font-bold transition-all cursor-pointer shrink-0"
+              className="flex items-center gap-1 px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-[11px] font-bold transition-all cursor-pointer shrink-0"
               title="Disconnect Web3 Wallet (Switch back to Safe Demo)"
             >
               <Unlink className="w-3 h-3 text-rose-400" />
@@ -1251,12 +1251,12 @@ export default function Fast5MBoard() {
           )}
 
           {/* 5. User Logout placed at the absolute far corner */}
-          <div className="pl-1 sm:pl-2 border-l border-[#30363d] shrink-0">
+          <div className="pl-1 sm:pl-1.5 border-l border-[#30363d] flex-shrink-0 mr-1">
             <button
               type="button"
               onClick={handleLogout}
               title="Log Out / Disconnect Session"
-              className="p-2 bg-[#0d1117] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/50 text-slate-400 hover:text-rose-300 rounded-xl transition-all cursor-pointer flex items-center justify-center"
+              className="p-1.5 bg-[#0d1117] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/50 text-slate-400 hover:text-rose-300 rounded-xl transition-all cursor-pointer flex items-center justify-center flex-shrink-0"
             >
               <LogOut className="w-4 h-4" />
             </button>
