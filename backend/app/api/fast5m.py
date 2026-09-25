@@ -295,8 +295,8 @@ def get_fast5m_trades(
 
 
 @router.get("/settings")
-def get_fast5m_settings():
-    """Get active Fast 5M settings and saved custom default baseline."""
+def get_fast5m_settings(admin_user: User = Depends(get_current_super_admin)):
+    """Get active Fast 5M settings and saved custom default baseline (Admin only)."""
     return {
         **fast_executor.settings,
         "_defaults": fast_executor.get_default_settings()
@@ -490,6 +490,23 @@ def emergency_start_trading(
     return fast_executor.emergency_start()
 
 
+@router.post("/trades/{trade_id}/exit")
+def manual_exit_position(
+    trade_id: int,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """
+    Manually close an open position at market price with user authorization.
+    """
+    user_id = current_user.id if current_user else None
+    res = fast_executor.manual_exit_trade(trade_id, user_id=user_id)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+
+@router.post("/demo/reset")
+@router.post("/trades/demo/reset")
 @router.post("/reset-demo")
 def reset_demo_trading(
     current_user: Optional[User] = Depends(get_current_user_optional),

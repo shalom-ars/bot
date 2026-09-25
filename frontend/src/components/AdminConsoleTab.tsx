@@ -40,6 +40,7 @@ export default function AdminConsoleTab() {
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
   const [userToDelete, setUserToDelete] = useState<UserRecord | null>(null);
   const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
+  const [deleteConfirmChecked, setDeleteConfirmChecked] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   
   // Filters
@@ -555,7 +556,10 @@ export default function AdminConsoleTab() {
                             <button
                               type="button"
                               disabled={isLoading || deleteLoading}
-                              onClick={() => setUserToDelete(u)}
+                              onClick={() => {
+                                setUserToDelete(u);
+                                setDeleteConfirmChecked(false);
+                              }}
                               className="px-2 py-1 bg-red-950/60 hover:bg-red-900 border border-red-700/60 text-red-300 font-bold text-[10px] rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
                               title="Permanently delete user and cascade all associated records"
                             >
@@ -574,10 +578,13 @@ export default function AdminConsoleTab() {
         </div>
       </div>
 
-      {/* CONFIRMATION DIALOG FOR USER DELETION */}
+      {/* CONFIRMATION DIALOG FOR USER DELETION (DOUBLE CONFIRMATION) */}
       {userToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#161b22] border-2 border-red-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+        <div 
+          onClick={(e) => { if (e.target === e.currentTarget) setUserToDelete(null); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border-2 border-red-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
             <div className="flex items-center gap-3">
               <div className="p-2.5 bg-red-500/20 text-red-400 rounded-xl">
                 <Trash2 className="w-6 h-6" />
@@ -597,6 +604,21 @@ export default function AdminConsoleTab() {
               </p>
             </div>
 
+            {/* Double Confirmation Checkbox */}
+            <div className="pt-1">
+              <label className="flex items-start gap-2.5 cursor-pointer text-xs text-red-200 select-none bg-red-950/20 p-2.5 rounded-xl border border-red-900/40 hover:border-red-700/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={deleteConfirmChecked}
+                  onChange={(e) => setDeleteConfirmChecked(e.target.checked)}
+                  className="rounded text-red-600 focus:ring-red-500 w-4 h-4 mt-0.5 cursor-pointer shrink-0"
+                />
+                <span className="leading-snug">
+                  I understand and double-confirm permanent deletion of user account <strong className="font-mono text-white underline">{userToDelete.email}</strong>.
+                </span>
+              </label>
+            </div>
+
             <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
                 type="button"
@@ -608,9 +630,9 @@ export default function AdminConsoleTab() {
               </button>
               <button
                 type="button"
-                disabled={deleteLoading}
+                disabled={deleteLoading || !deleteConfirmChecked}
                 onClick={() => handleDeleteUser(userToDelete.id, userToDelete.email)}
-                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl shadow-md shadow-red-600/30 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:bg-red-900/50 disabled:text-red-400 text-white text-xs font-bold rounded-xl shadow-md shadow-red-600/30 transition-all flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
               >
                 {deleteLoading ? (
                   <>

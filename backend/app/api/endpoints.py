@@ -234,3 +234,11 @@ def get_pnl(db: Session = Depends(get_db)):
     positions = db.query(Position).all()
     unrealized = sum(p.unrealized_pnl for p in positions if p.unrealized_pnl)
     return {"realized": realized, "unrealized": unrealized, "total": realized + unrealized}
+
+@router.post("/demo/reset")
+@router.post("/trades/demo/reset")
+def reset_demo_router_alias(
+    db: Session = Depends(get_db)
+):
+    from app.fast5m.executor import fast_executor
+    return fast_executor.reset_demo_account(user_id=None)

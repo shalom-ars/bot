@@ -7,7 +7,7 @@ import {
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
   BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
-  Eye, EyeOff, Key, AlertTriangle, Check, Copy, Link2, Unlink, X,
+  Eye, EyeOff, Key, AlertTriangle, AlertCircle, Check, Copy, Link2, Unlink, X,
   LogOut, ArrowDownToLine, ArrowUpFromLine
 } from 'lucide-react';
 import AdminConsoleTab from '../components/AdminConsoleTab';
@@ -210,8 +210,6 @@ export default function Fast5MBoard() {
   const [walletMsg, setWalletMsg] = useState<string>('');
   const [walletError, setWalletError] = useState<string>('');
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
-  const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
-  const [resettingDemo, setResettingDemo] = useState<boolean>(false);
   const [accountMode, setAccountMode] = useState<'demo' | 'live' | 'all'>('demo');
   const [vaultInfo, setVaultInfo] = useState<any | null>(null);
   const [vaultModalOpen, setVaultModalOpen] = useState<boolean>(false);
@@ -220,6 +218,22 @@ export default function Fast5MBoard() {
   const [vaultLoading, setVaultLoading] = useState<boolean>(false);
   const [vaultMsg, setVaultMsg] = useState<string>('');
   const [vaultError, setVaultError] = useState<string>('');
+
+  // Confirmation Modals & Dialogs
+  const [isEmergencyStopModalOpen, setIsEmergencyStopModalOpen] = useState<boolean>(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState<boolean>(false);
+  const [tradeToExit, setTradeToExit] = useState<any | null>(null);
+  const [exitingTrade, setExitingTrade] = useState<boolean>(false);
+  const [pendingTransfer, setPendingTransfer] = useState<{ type: 'deposit' | 'withdraw'; amount: number } | null>(null);
+  const [isDemoResetModalOpen, setIsDemoResetModalOpen] = useState<boolean>(false);
+  const [resettingDemo, setResettingDemo] = useState<boolean>(false);
+  const [isSwitchToRealModalOpen, setIsSwitchToRealModalOpen] = useState<boolean>(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 4000);
+  };
 
   // Multi-User Profile & Session
   const navigate = useNavigate();
@@ -306,6 +320,72 @@ export default function Fast5MBoard() {
     } finally {
       setVaultLoading(false);
     }
+  };
+
+  const handleResetDemoAccount = async () => {
+    setResettingDemo(true);
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post('/api/demo/reset', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      setTrades([]);
+      setStats({
+        total_trades: 0,
+        wins: 0,
+        losses: 0,
+        win_rate: 0,
+        total_pnl: 0,
+        total_profit: 0,
+        total_loss: 0,
+        open_trades: 0,
+        initial_balance: 300,
+        current_balance: 300,
+      });
+      setIsDemoResetModalOpen(false);
+      showToast('Demo account successfully reset to fresh state!');
+      await fetchVault();
+      await fetchBoard();
+      await fetchTrades(selectedTimeframe, 'demo');
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'Failed to reset demo account.');
+    } finally {
+      setResettingDemo(false);
+    }
+  };
+
+  const handleManualExitTrade = async () => {
+    if (!tradeToExit) return;
+    setExitingTrade(true);
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post(`/api/fast5m/trades/${tradeToExit.id || tradeToExit.asset}/exit`, {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      showToast(`Position #${tradeToExit.id || ''} for ${tradeToExit.asset} closed successfully.`);
+      setTradeToExit(null);
+      await fetchBoard();
+      await fetchTrades(selectedTimeframe, isRealAccount ? 'live' : 'demo');
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'Failed to exit position.');
+    } finally {
+      setExitingTrade(false);
+    }
+  };
+
+  const handleConfirmSwitchToReal = async () => {
+    setIsSwitchToRealModalOpen(false);
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post('/api/demo/reset', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      setTrades([]);
+      showToast('Demo trade history wiped. Switching to Real Account...');
+    } catch (e) {
+      console.error('Failed to wipe demo before switching to real:', e);
+    }
+    await handleToggleWalletMode('live', true);
   };
 
   const prevPrices = useRef<Record<string, number>>({});
@@ -516,26 +596,6 @@ export default function Fast5MBoard() {
     }
   };
 
-  const handleResetDemoAccount = async () => {
-    setResettingDemo(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await axios.post('/api/fast5m/reset-demo', {}, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-      if (res.data) {
-        setResetModalOpen(false);
-        setSaveSuccessMsg('Demo account reset successfully! Virtual paper history wiped and $300.00 baseline restored.');
-        setTimeout(() => setSaveSuccessMsg(''), 5000);
-        await fetchBoard();
-        await fetchTrades(selectedTimeframe, 'demo');
-      }
-    } catch (e) {
-      console.error('Reset demo error', e);
-    } finally {
-      setResettingDemo(false);
-    }
-  };
 
   const handleSaveAllSettings = async () => {
     if (!isAdmin) {
@@ -936,7 +996,11 @@ export default function Fast5MBoard() {
     }
   };
 
-  const handleToggleWalletMode = async (targetMode: 'demo' | 'live') => {
+  const handleToggleWalletMode = async (targetMode: 'demo' | 'live', skipConfirm = false) => {
+    if (targetMode === 'live' && !skipConfirm) {
+      setIsSwitchToRealModalOpen(true);
+      return;
+    }
     if (targetMode === 'live') {
       if (userProfile?.status && userProfile.status !== 'APPROVED') {
         setWalletError('Account under review: Your account must be approved by an administrator before switching to Real Vault mode.');
@@ -1130,17 +1194,19 @@ export default function Fast5MBoard() {
             >
               Signals
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('settings')}
-              className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap ${
-                activeTab === 'settings'
-                  ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
-              }`}
-            >
-              Settings
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className={`px-2 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap ${
+                  activeTab === 'settings'
+                    ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
+                }`}
+              >
+                Settings
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setActiveTab('trades')}
@@ -1163,7 +1229,7 @@ export default function Fast5MBoard() {
                 }`}
               >
                 <span>🛡️</span>
-                <span>Admin Console</span>
+                <span>Control</span>
               </button>
             )}
           </nav>
@@ -1187,7 +1253,7 @@ export default function Fast5MBoard() {
             board?.auto_trading_active ? (
               <button
                 type="button"
-                onClick={handleEmergencyStop}
+                onClick={() => setIsEmergencyStopModalOpen(true)}
                 disabled={toggling}
                 className="px-2.5 py-1 bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 animate-pulse border border-rose-500/40"
                 title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
@@ -1216,7 +1282,20 @@ export default function Fast5MBoard() {
             </div>
           )}
 
-          {/* 3. Wallet Button */}
+          {/* 3. Demo Reset Button (visible only in Demo mode) */}
+          {!isRealAccount && (
+            <button
+              type="button"
+              onClick={() => setIsDemoResetModalOpen(true)}
+              className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+              title="Reset Demo Account: Wipe paper history and restore initial $300 balance"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Reset Demo</span>
+            </button>
+          )}
+
+          {/* 4. Wallet Button */}
           <button
             type="button"
             onClick={() => setWalletModalOpen(true)}
@@ -1237,7 +1316,7 @@ export default function Fast5MBoard() {
             )}
           </button>
 
-          {/* 4. Disconnect Button */}
+          {/* 5. Disconnect Button */}
           {(isRealAccount || walletInfo?.is_connected) && (
             <button
               type="button"
@@ -1250,11 +1329,11 @@ export default function Fast5MBoard() {
             </button>
           )}
 
-          {/* 5. User Logout placed at the absolute far corner */}
+          {/* 6. User Logout placed at the absolute far corner */}
           <div className="pl-1 sm:pl-1.5 border-l border-[#30363d] flex-shrink-0 mr-1">
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={() => setIsLogoutModalOpen(true)}
               title="Log Out / Disconnect Session"
               className="p-1.5 bg-[#0d1117] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/50 text-slate-400 hover:text-rose-300 rounded-xl transition-all cursor-pointer flex items-center justify-center flex-shrink-0"
             >
@@ -1560,8 +1639,30 @@ export default function Fast5MBoard() {
         </div>
       </div>
 
-      {/* SETTINGS & RISK CONFIGURATION TAB */}
-      {activeTab === 'settings' && (
+      {/* ACCESS DENIED FOR NON-ADMIN ATTEMPTING TO ACCESS SETTINGS */}
+      {activeTab === 'settings' && !isAdmin && (
+        <div className="bg-[#161b22] rounded-2xl border border-rose-500/30 p-8 shadow-xl text-center max-w-lg mx-auto my-8 space-y-4">
+          <div className="w-14 h-14 mx-auto rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+            <Lock className="w-7 h-7" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-white tracking-tight">Access Denied: Administrator Only</h2>
+            <p className="text-xs text-slate-400 mt-2">
+              Platform trading configurations, risk limits, and quantitative filters can only be managed by platform administrators.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('board')}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow-md cursor-pointer"
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      )}
+
+      {/* SETTINGS & RISK CONFIGURATION TAB (ADMIN ONLY) */}
+      {activeTab === 'settings' && isAdmin && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-6">
           {/* Header Bar with Action Controls */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-5">
@@ -1611,7 +1712,7 @@ export default function Fast5MBoard() {
               {!isRealAccount && (
                 <button
                   type="button"
-                  onClick={() => setResetModalOpen(true)}
+                  onClick={() => setIsDemoResetModalOpen(true)}
                   disabled={resettingDemo || savingSettings}
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
                   title="Reset Demo Account: wipe paper trades and reset virtual balance to $300.00 base"
@@ -3179,19 +3280,25 @@ export default function Fast5MBoard() {
                         </div>
                       </div>
 
-                      <div className="pt-2.5 mt-2.5 border-t border-blue-900/60 grid grid-cols-2 gap-2 text-[10px] font-mono">
+                      <div className="pt-2.5 mt-2.5 border-t border-blue-900/60 flex items-center justify-between text-[10px] font-mono">
                         <div>
-                          <span className="text-blue-300">Peak Gain:</span>
+                          <span className="text-blue-300">Peak:</span>
                           <span className="font-bold text-emerald-300 ml-1">
                             +${Number(tr.peak_pnl ?? 0).toFixed(2)}
                           </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-blue-300">Trailing Stop:</span>
+                          <span className="text-blue-300 ml-2">Trail:</span>
                           <span className="font-bold text-cyan-300 ml-1">
-                            {tr.trailing_stop_floor != null ? `Floor +$${Number(tr.trailing_stop_floor).toFixed(2)}` : 'Armed (≥+1%)'}
+                            {tr.trailing_stop_floor != null ? `+$${Number(tr.trailing_stop_floor).toFixed(2)}` : '≥+1%'}
                           </span>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setTradeToExit(tr)}
+                          className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-rose-100 border border-rose-500/40 rounded text-[10px] font-bold transition-all cursor-pointer"
+                          title="Manually exit this position at current market price"
+                        >
+                          Exit Trade
+                        </button>
                       </div>
                     </div>
                   );
@@ -3408,12 +3515,12 @@ export default function Fast5MBoard() {
               {!isRealAccount && (accountMode === 'demo' || accountMode === 'all') && (
                 <button
                   type="button"
-                  onClick={() => setResetModalOpen(true)}
+                  onClick={() => setIsDemoResetModalOpen(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
                   title="Wipe demo history and restore initial $300 balance"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Clear Demo History ($300)</span>
+                  <span>🔄 Reset Demo Data</span>
                 </button>
               )}
 
@@ -3469,12 +3576,13 @@ export default function Fast5MBoard() {
                   <th className="py-2.5 px-4">Realized PnL</th>
                   <th className="py-2.5 px-4">Status</th>
                   <th className="py-2.5 px-4">Time</th>
+                  <th className="py-2.5 px-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs font-mono">
                 {trades.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-8 text-center text-slate-400 font-sans text-xs">
+                    <td colSpan={12} className="py-8 text-center text-slate-400 font-sans text-xs">
                       No {isRealAccount ? 'real' : (accountMode !== 'all' ? accountMode : '')} 5-minute fast trades recorded yet. Engine will automatically execute when the #1 ranked pair reaches score ≥ {confidenceThreshold}%.
                     </td>
                   </tr>
@@ -3603,6 +3711,21 @@ export default function Fast5MBoard() {
 
                         <td className="py-2.5 px-4 text-slate-400 text-[11px]">
                           {t.created_at ? new Date(t.created_at).toLocaleTimeString() : '—'}
+                        </td>
+
+                        <td className="py-2.5 px-4 text-right">
+                          {isOpen ? (
+                            <button
+                              type="button"
+                              onClick={() => setTradeToExit(t)}
+                              className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-300 hover:border-rose-500 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+                              title="Force exit this open trade"
+                            >
+                              Close
+                            </button>
+                          ) : (
+                            <span className="text-slate-300 text-xs">—</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -4257,46 +4380,6 @@ export default function Fast5MBoard() {
         </div>
       )}
 
-      {/* 8. RESET DEMO ACCOUNT CONFIRMATION MODAL */}
-      {resetModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-5 sm:p-6 space-y-4 relative overflow-hidden">
-            <div className="flex items-center gap-3">
-              <span className="p-2.5 rounded-2xl bg-rose-100 text-rose-700 shrink-0">
-                <RotateCcw className="w-6 h-6" />
-              </span>
-              <div>
-                <h3 className="text-base font-black text-slate-900">Reset Demo Account to $300.00?</h3>
-                <p className="text-xs text-slate-500">Virtual Paper Trading Balance & History Reset</p>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-600 leading-relaxed bg-rose-50/60 p-3 rounded-xl border border-rose-200 text-rose-900">
-              ⚠️ This action will permanently wipe all paper trade records, reset your virtual realized P&L to $0.00, and restore your initial starting balance to exactly <strong>$300.00</strong>.
-            </p>
-
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setResetModalOpen(false)}
-                disabled={resettingDemo}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleResetDemoAccount}
-                disabled={resettingDemo}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white rounded-xl text-xs font-black shadow-md shadow-rose-600/20 transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                <RotateCcw className={`w-3.5 h-3.5 ${resettingDemo ? 'animate-spin' : ''}`} />
-                <span>{resettingDemo ? 'Resetting Demo...' : 'Confirm Reset to $300.00'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 9. ISOLATED TRADING VAULT ALLOCATION MODAL (DEPOSIT / WITHDRAW) */}
       {vaultModalOpen && (
@@ -4446,12 +4529,12 @@ export default function Fast5MBoard() {
 
                 <button
                   type="button"
-                  onClick={() => handleVaultDeposit(parseFloat(vaultAmountInput) || 0)}
+                  onClick={() => setPendingTransfer({ type: 'deposit', amount: parseFloat(vaultAmountInput) || 0 })}
                   disabled={vaultLoading || !(parseFloat(vaultAmountInput) > 0)}
                   className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
                 >
                   <ArrowDownToLine className="w-4 h-4" />
-                  <span>{vaultLoading ? 'Allocating Funds...' : `Confirm Deposit of $${parseFloat(vaultAmountInput) || 0} USDC into Dashboard`}</span>
+                  <span>{vaultLoading ? 'Allocating Funds...' : `Deposit $${parseFloat(vaultAmountInput) || 0} USDC into Dashboard`}</span>
                 </button>
               </div>
             )}
@@ -4548,7 +4631,7 @@ export default function Fast5MBoard() {
 
                 <button
                   type="button"
-                  onClick={() => handleVaultWithdraw(parseFloat(vaultAmountInput) || 0)}
+                  onClick={() => setPendingTransfer({ type: 'withdraw', amount: parseFloat(vaultAmountInput) || 0 })}
                   disabled={
                     vaultLoading || 
                     !(parseFloat(vaultAmountInput) > 0) || 
@@ -4562,6 +4645,336 @@ export default function Fast5MBoard() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* MODAL 1: EMERGENCY STOP CONFIRMATION */}
+      {isEmergencyStopModalOpen && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setIsEmergencyStopModalOpen(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border-2 border-rose-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-rose-500/20 text-rose-400 rounded-xl">
+                <AlertTriangle className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Trigger Emergency Stop?</h3>
+                <p className="text-xs text-rose-300/80 font-mono">Immediate Kill Switch</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-[#161b22] p-3.5 rounded-xl border border-rose-500/30">
+              Are you sure you want to trigger Emergency Stop? This will cancel all active orders and halt bot execution immediately.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsEmergencyStopModalOpen(false)}
+                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsEmergencyStopModalOpen(false);
+                  await handleEmergencyStop();
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span>Confirm Emergency Stop</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: LOGOUT CONFIRMATION */}
+      {isLogoutModalOpen && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setIsLogoutModalOpen(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border border-[#30363d] rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-blue-500/20 text-blue-400 rounded-xl">
+                <LogOut className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Sign Out?</h3>
+                <p className="text-xs text-slate-400 font-mono">End Active Session</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-[#161b22] p-3.5 rounded-xl border border-[#30363d]">
+              Are you sure you want to sign out? You will need to log back in to access live dashboards and controls.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsLogoutModalOpen(false)}
+                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Stay Logged In
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLogoutModalOpen(false);
+                  handleLogout();
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: MANUAL POSITION EXIT CONFIRMATION */}
+      {tradeToExit && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !exitingTrade) setTradeToExit(null); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border-2 border-amber-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Manual Position Exit</h3>
+                <p className="text-xs text-amber-300/80 font-mono">Trade #{tradeToExit.id || ''} • {tradeToExit.asset}</p>
+              </div>
+            </div>
+
+            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-3.5 space-y-2 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Direction:</span>
+                <span className={`font-bold ${tradeToExit.outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {tradeToExit.outcome === 'UP' ? '▲ UP' : '▼ DOWN'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Shares / Entry:</span>
+                <span className="text-white font-bold">{tradeToExit.shares} shares @ ${tradeToExit.entry_price}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Current PnL:</span>
+                <span className={`font-bold ${(tradeToExit.current_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {(tradeToExit.current_pnl ?? 0) >= 0 ? '+' : ''}${Number(tradeToExit.current_pnl ?? tradeToExit.pnl ?? 0).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Are you sure you want to close this position now at current market price? This order will be executed immediately.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={exitingTrade}
+                onClick={() => setTradeToExit(null)}
+                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={exitingTrade}
+                onClick={handleManualExitTrade}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-rose-800 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {exitingTrade ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Closing...</span>
+                  </>
+                ) : (
+                  <span>Confirm Exit Now</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: DEPOSIT / WITHDRAW CONFIRMATION */}
+      {pendingTransfer && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !vaultLoading) setPendingTransfer(null); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border-2 border-indigo-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl">
+                {pendingTransfer.type === 'deposit' ? <ArrowDownToLine className="w-6 h-6" /> : <ArrowUpFromLine className="w-6 h-6" />}
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">
+                  Confirm {pendingTransfer.type === 'deposit' ? 'Vault Deposit' : 'Vault Withdrawal'}
+                </h3>
+                <p className="text-xs text-indigo-300/80 font-mono">Polygon Mainnet (Chain ID 137)</p>
+              </div>
+            </div>
+
+            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-3.5 space-y-2 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Transfer Amount:</span>
+                <span className="text-emerald-400 font-black text-sm">${pendingTransfer.amount.toFixed(2)} USDC</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Network:</span>
+                <span className="text-purple-300 font-bold">Polygon Mainnet (137)</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Connected Wallet:</span>
+                <span className="text-white font-mono text-[11px] truncate max-w-[200px]" title={walletInfo?.wallet_address || displayAddress}>
+                  {isRealAccount ? (walletInfo?.wallet_address || displayAddress) : 'Demo Simulation Reserve'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Destination:</span>
+                <span className="text-blue-300 font-bold">
+                  {pendingTransfer.type === 'deposit' ? 'Dashboard Trading Vault' : 'External Web3 Wallet'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Please verify transfer details before proceeding with execution.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={vaultLoading}
+                onClick={() => setPendingTransfer(null)}
+                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={vaultLoading}
+                onClick={async () => {
+                  const amt = pendingTransfer.amount;
+                  const type = pendingTransfer.type;
+                  setPendingTransfer(null);
+                  if (type === 'deposit') {
+                    await handleVaultDeposit(amt);
+                  } else {
+                    await handleVaultWithdraw(amt);
+                  }
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md shadow-indigo-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <span>Confirm Transfer</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: DEMO ACCOUNT RESET CONFIRMATION */}
+      {isDemoResetModalOpen && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !resettingDemo) setIsDemoResetModalOpen(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border-2 border-rose-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-rose-500/20 text-rose-400 rounded-xl">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Reset Demo Account?</h3>
+                <p className="text-xs text-rose-300/80 font-mono">Restore $300.00 Base Balance</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-200 leading-relaxed bg-rose-950/20 p-3.5 rounded-xl border border-rose-900/40">
+              Kya aap apna demo balance aur purani trading history delete karke account fresh karna chahte hain? Sabhi simulated trades permanently clear ho jayengi.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={resettingDemo}
+                onClick={() => setIsDemoResetModalOpen(false)}
+                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={resettingDemo}
+                onClick={handleResetDemoAccount}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${resettingDemo ? 'animate-spin' : ''}`} />
+                <span>{resettingDemo ? 'Resetting...' : 'Yes, Reset Everything'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: SWITCH TO REAL ACCOUNT & WIPE DEMO DATA */}
+      {isSwitchToRealModalOpen && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setIsSwitchToRealModalOpen(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#12161f] border-2 border-emerald-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                <Shield className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Switch to Real Account?</h3>
+                <p className="text-xs text-emerald-300/80 font-mono">Live Polymarket CLOB Execution</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-200 leading-relaxed bg-[#161b22] p-3.5 rounded-xl border border-emerald-500/30">
+              Switching to Real Account will permanently delete all your demo trade history and reset paper stats. Do you want to proceed?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsSwitchToRealModalOpen(false)}
+                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSwitchToReal}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Switch to Real & Wipe Demo</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING TOAST NOTIFICATION */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#12161f] border border-emerald-500/50 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-bounce text-xs font-bold">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMsg}</span>
         </div>
       )}
 

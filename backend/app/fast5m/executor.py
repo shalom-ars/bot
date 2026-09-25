@@ -311,6 +311,45 @@ class FastExecutor:
             "auto_trading_enabled": True
         }
 
+    def manual_exit_trade(self, trade_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Manually exit a specific active trade at market price.
+        """
+        trade = self.active_trades.get(trade_id)
+        db: Session = SessionLocal()
+        try:
+            db_trade = db.query(Fast5MTrade).filter(Fast5MTrade.id == trade_id).first()
+            if not db_trade:
+                return {"status": "error", "message": f"Trade #{trade_id} not found."}
+            if user_id and db_trade.user_id and db_trade.user_id != user_id:
+                return {"status": "error", "message": "Unauthorized to close this position."}
+            
+            current_pnl = trade.get("current_pnl", 0.0) if trade else (db_trade.pnl or 0.0)
+            cost = trade.get("cost", 10.0) if trade else (db_trade.cost or 10.0)
+            
+            db_trade.status = "CLOSED"
+            db_trade.resolution = "MANUAL_EXIT"
+            db_trade.pnl = round(current_pnl, 2)
+            db_trade.pnl_percent = round((current_pnl / cost) * 100.0, 2) if cost > 0 else 0.0
+            db_trade.closed_at = datetime.now(timezone.utc)
+            db.commit()
+            
+            if trade_id in self.active_trades:
+                del self.active_trades[trade_id]
+                
+            return {
+                "status": "success",
+                "message": f"Position #{trade_id} manually closed at market price.",
+                "trade_id": trade_id,
+                "pnl": db_trade.pnl
+            }
+        except Exception as e:
+            logger.error(f"[Fast5M Executor] Error during manual trade exit: {e}")
+            db.rollback()
+            return {"status": "error", "message": str(e)}
+        finally:
+            db.close()
+
     def reset_demo_account(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Wipes demo paper trading history for the user and resets virtual balance to $300.00.

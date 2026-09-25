@@ -8,6 +8,7 @@ from app.api.security import create_access_token
 client = TestClient(app)
 
 def test_admin_delete_user_cascade_and_protections():
+    app.dependency_overrides.clear()
     db = SessionLocal()
     try:
         # Create an admin user

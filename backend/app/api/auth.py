@@ -500,7 +500,7 @@ def get_google_oauth_url(redirect_uri: Optional[str] = None):
     import secrets
     from app.config import settings
     client_id = getattr(settings, "google_client_id", "249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com")
-    final_redirect_uri = redirect_uri or getattr(settings, "google_redirect_uri", "http://localhost:5173/login")
+    final_redirect_uri = redirect_uri or getattr(settings, "google_redirect_uri", "http://localhost:8000/api/auth/google/callback")
     params = {
         "client_id": client_id,
         "redirect_uri": final_redirect_uri,
@@ -510,8 +510,9 @@ def get_google_oauth_url(redirect_uri: Optional[str] = None):
         "access_type": "offline",
         "state": secrets.token_hex(8),
     }
+    encoded_query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     return {
-        "auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}",
+        "auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{encoded_query}",
         "prompt": "select_account",
         "client_id": client_id,
         "redirect_uri": final_redirect_uri,
@@ -571,7 +572,13 @@ def google_callback_get(
     from app.config import settings
     import urllib.parse
     
-    frontend_base = getattr(settings, "google_redirect_uri", "http://localhost:5173/login").rsplit("/login", 1)[0]
+    raw_redirect = getattr(settings, "google_redirect_uri", "http://localhost:8000/api/auth/google/callback")
+    if "/api/" in raw_redirect:
+        frontend_base = raw_redirect.split("/api/")[0]
+    elif "/login" in raw_redirect:
+        frontend_base = raw_redirect.rsplit("/login", 1)[0]
+    else:
+        frontend_base = "http://localhost:8000"
     
     if error:
         return RedirectResponse(url=f"{frontend_base}/login?error={urllib.parse.quote(error)}")
@@ -579,7 +586,7 @@ def google_callback_get(
     if not code:
         return RedirectResponse(url=f"{frontend_base}/login?error={urllib.parse.quote('Missing Google authorization code')}")
         
-    redirect_uri = getattr(settings, "google_redirect_uri", "http://localhost:5173/login")
+    redirect_uri = raw_redirect
     token_res = _exchange_google_code(code, redirect_uri)
     
     if "error" in token_res and "email" not in token_res:
