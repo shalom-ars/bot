@@ -264,10 +264,13 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
+    google_sub = Column(String(128), unique=True, nullable=True, index=True)
+    hashed_password = Column(String, nullable=True)
     wallet_address = Column(String(66), nullable=True, index=True)
     auth_provider = Column(String(32), default="email") # "email", "google", "wallet"
-    role = Column(String, default="USER")
+    role = Column(String, default="USER") # "SUPER_ADMIN", "USER"
+    status = Column(String(32), default="PENDING", index=True) # "PENDING", "APPROVED", "SUSPENDED"
+    allowed_mode = Column(String(32), default="DEMO_ONLY", index=True) # "DEMO_ONLY", "REAL_AND_DEMO", "NONE"
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

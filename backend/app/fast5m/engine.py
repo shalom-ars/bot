@@ -65,8 +65,8 @@ class Fast5MEngine:
                 logger.debug(f"[Fast5M Engine] Broadcast error: {e}")
             await asyncio.sleep(1.0)
 
-    def get_board_state(self) -> Dict[str, Any]:
-        """Generate comprehensive live dashboard state for UI board."""
+    def get_board_state(self, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """Generate comprehensive live dashboard state for UI board, partitioned by user if specified."""
         conf_threshold = float(fast_executor.settings.get("confidence_threshold", 70.0))
         scored = fast_scorer.score_all_assets(conf_threshold)
         
@@ -98,6 +98,13 @@ class Fast5MEngine:
             }
         )
 
+        if user_id is not None:
+            user_trades = fast_executor.get_active_trades_for_user(user_id=user_id, account_mode="all")
+            user_active_trade = sorted(user_trades, key=lambda t: t.get("id", 0), reverse=True)[0] if user_trades else None
+        else:
+            user_trades = fast_executor.get_active_trades()
+            user_active_trade = fast_executor.active_trade
+
         return {
             "timestamp": now,
             "epoch_bucket": epoch_bucket,
@@ -105,8 +112,8 @@ class Fast5MEngine:
             "epoch_progress_pct": round(((300 - global_remaining_sec) / 300.0) * 100.0, 1),
             "assets": assets_data,
             "top_ranked_pair": top_pick,
-            "active_trade": fast_executor.active_trade,
-            "active_trades": fast_executor.get_active_trades(),
+            "active_trade": user_active_trade,
+            "active_trades": user_trades,
             "settings": fast_executor.settings,
             "auto_trading_active": fast_executor.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes"),
             "system_health": fast_squad.get_system_health(),

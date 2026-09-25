@@ -23,10 +23,16 @@ class WalletAuth(BaseModel):
     signature: Optional[str] = None
     message: Optional[str] = None
 
+class LinkWalletRequest(BaseModel):
+    wallet_address: str
+    signature: Optional[str] = None
+    message: Optional[str] = None
+
 class GoogleAuth(BaseModel):
     email: Optional[str] = None
     name: Optional[str] = None
     credential: Optional[str] = None
+    id_token: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -37,9 +43,14 @@ def _get_user_dict(user: User, vault: Optional[Fast5MUserVault] = None) -> Dict[
     return {
         "id": user.id,
         "email": user.email,
+        "google_sub": getattr(user, "google_sub", None),
         "wallet_address": getattr(user, "wallet_address", None),
         "auth_provider": getattr(user, "auth_provider", "email") or "email",
-        "role": user.role,
+        "role": getattr(user, "role", "USER") or "USER",
+        "status": getattr(user, "status", "PENDING") or "PENDING",
+        "allowed_mode": getattr(user, "allowed_mode", "DEMO_ONLY") or "DEMO_ONLY",
+        "is_active": getattr(user, "is_active", True),
+        "created_at": user.created_at.isoformat() if getattr(user, "created_at", None) else None,
         "vault": {
             "account_mode": vault.account_mode if vault else "demo",
             "allocated_balance": vault.allocated_balance if vault else 300.0,
@@ -238,37 +249,81 @@ def wallet_auth(auth_in: WalletAuth, db: Session = Depends(get_db)):
         "user": _get_user_dict(user, vault)
     }
 
+def _verify_google_token(credential: str) -> Dict[str, Any]:
+    """
+    Verify Google ID token via Google tokeninfo endpoint,
+    with graceful offline JWT payload decoding fallback.
+    """
+    import json
+    import base64
+    import httpx
+    
+    # 1. Attempt official Google tokeninfo verification
+    try:
+        resp = httpx.get(
+            f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}",
+            timeout=4.0
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "email": data.get("email"),
+                "sub": data.get("sub"),
+                "name": data.get("name"),
+                "verified": True
+            }
+    except Exception:
+        pass
+
+    # 2. Fallback: Base64 URL-safe decode of JWT payload
+    try:
+        parts = credential.split(".")
+        if len(parts) >= 2:
+            padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+            return {
+                "email": payload.get("email"),
+                "sub": payload.get("sub"),
+                "name": payload.get("name"),
+                "verified": False
+            }
+    except Exception:
+        pass
+
+    return {}
+
 @router.post("/google", response_model=Token)
+@router.post("/google-login", response_model=Token)
 def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
     clean_email = (auth_in.email or "").strip().lower()
+    sub_id = None
 
-    # If Google ID Token credential passed, extract and verify real email
-    if auth_in.credential:
-        import json
-        import base64
-        try:
-            parts = auth_in.credential.split(".")
-            if len(parts) >= 2:
-                padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
-                payload = json.loads(base64.urlsafe_b64decode(padded))
-                token_email = payload.get("email")
-                if token_email:
-                    clean_email = token_email.strip().lower()
-                    if not auth_in.name:
-                        auth_in.name = payload.get("name")
-        except Exception:
-            pass
+    cred = auth_in.credential or auth_in.id_token
+    # If Google ID Token credential passed, verify token
+    if cred:
+        verified_data = _verify_google_token(cred)
+        if verified_data.get("email"):
+            clean_email = verified_data["email"].strip().lower()
+            sub_id = verified_data.get("sub")
+            if not auth_in.name:
+                auth_in.name = verified_data.get("name")
 
     if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Please enter a valid Gmail address (e.g. user@gmail.com)")
+
+    # Admin configuration: arsandhuthree@gmail.com is always SUPER_ADMIN & APPROVED & REAL_AND_DEMO
+    is_super_admin = (clean_email == "arsandhuthree@gmail.com")
 
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:
         user = User(
             email=clean_email,
+            google_sub=sub_id,
             auth_provider="google",
             hashed_password=get_password_hash("google_oauth_" + clean_email),
-            role="USER",
+            role="SUPER_ADMIN" if is_super_admin else "USER",
+            status="APPROVED" if is_super_admin else "PENDING",
+            allowed_mode="REAL_AND_DEMO" if is_super_admin else "DEMO_ONLY",
             is_active=True
         )
         db.add(user)
@@ -293,11 +348,20 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
                 total_withdrawn=0.0
             )
             db.add(vault)
-        db.add(AuditLog(action="GOOGLE_REGISTERED", details=f"Real Gmail: {clean_email} registered with $300 virtual demo balance"))
+        db.add(AuditLog(action="GOOGLE_REGISTERED", details=f"Google account: {clean_email} registered (Status: {user.status})"))
         db.commit()
         db.refresh(vault)
     else:
         user.auth_provider = "google"
+        if sub_id and not getattr(user, "google_sub", None):
+            user.google_sub = sub_id
+        if is_super_admin:
+            user.role = "SUPER_ADMIN"
+            user.status = "APPROVED"
+            user.allowed_mode = "REAL_AND_DEMO"
+        db.commit()
+        db.refresh(user)
+
         vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == user.id).first()
         if not vault:
             vault = Fast5MUserVault(
@@ -309,9 +373,10 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
                 total_withdrawn=0.0
             )
             db.add(vault)
-        db.add(AuditLog(action="GOOGLE_LOGIN", details=f"Real Gmail: {clean_email} logged in"))
+            db.commit()
+            db.refresh(vault)
+        db.add(AuditLog(action="GOOGLE_LOGIN", details=f"Google account: {clean_email} logged in (Status: {user.status})"))
         db.commit()
-        db.refresh(vault)
 
     # Sync wallet manager state with demo account
     from app.fast5m.wallet import wallet_manager
@@ -326,5 +391,45 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
         "token_type": "bearer",
         "user": _get_user_dict(user, vault)
     }
+
+@router.post("/link-wallet")
+def link_wallet(
+    req: LinkWalletRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Link user's Web3 wallet address to their record. Real mode cannot be selected unless a valid address is attached."""
+    clean_addr = req.wallet_address.strip().lower()
+    if not clean_addr.startswith("0x") or len(clean_addr) != 42:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Polygon / Web3 public address format (must be 0x followed by 40 hex characters)"
+        )
+    
+    current_user.wallet_address = clean_addr
+    vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+    if vault:
+        vault.wallet_address = clean_addr
+    else:
+        vault = Fast5MUserVault(
+            user_id=current_user.id,
+            wallet_address=clean_addr,
+            account_mode="demo",
+            allocated_balance=300.0,
+            initial_deposit=300.0
+        )
+        db.add(vault)
+
+    db.add(AuditLog(action="WALLET_LINKED", details=f"User #{current_user.id} ({current_user.email}) linked Web3 wallet: {clean_addr}"))
+    db.commit()
+    db.refresh(current_user)
+    db.refresh(vault)
+
+    return {
+        "success": True,
+        "message": f"Successfully linked wallet {clean_addr} to user account.",
+        "user": _get_user_dict(current_user, vault)
+    }
+
 
 

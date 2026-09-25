@@ -92,11 +92,35 @@ async def get_current_user_optional(token: Optional[str] = Depends(oauth2_scheme
         return None
     return None
 
+async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user account")
+    if getattr(current_user, "status", "PENDING") == "SUSPENDED":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been suspended by an administrator"
+        )
+    if getattr(current_user, "status", "PENDING") != "APPROVED":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending administrator approval"
+        )
+    return current_user
+
 async def get_current_admin(current_user: User = Depends(get_current_user)):
-    if current_user.role not in ["ADMIN", "SUPER_ADMIN"]:
+    if getattr(current_user, "role", "USER") not in ["ADMIN", "SUPER_ADMIN"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The user doesn't have enough privileges"
         )
     return current_user
+
+async def get_current_super_admin(current_user: User = Depends(get_current_user)) -> User:
+    if getattr(current_user, "role", "USER") not in ["SUPER_ADMIN", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super administrator privileges required"
+        )
+    return current_user
+
 

@@ -164,6 +164,54 @@ def ensure_fast5m_schema(db_engine):
                     conn.commit()
                 except Exception:
                     pass
+            if "google_sub" not in user_cols:
+                try:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN google_sub VARCHAR(128)"))
+                    conn.commit()
+                except Exception:
+                    pass
+            if "status" not in user_cols:
+                try:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN status VARCHAR(32) DEFAULT 'PENDING'"))
+                    conn.commit()
+                except Exception:
+                    pass
+            if "allowed_mode" not in user_cols:
+                try:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN allowed_mode VARCHAR(32) DEFAULT 'DEMO_ONLY'"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+            # Seed / ensure super admin privileges for primary admin account
+            try:
+                conn.execute(text("""
+                    UPDATE users 
+                    SET role = 'SUPER_ADMIN', status = 'APPROVED', allowed_mode = 'REAL_AND_DEMO'
+                    WHERE LOWER(email) = 'arsandhuthree@gmail.com'
+                """))
+                # Default null status to APPROVED for existing users, else PENDING
+                conn.execute(text("""
+                    UPDATE users
+                    SET status = 'APPROVED'
+                    WHERE status IS NULL AND (role = 'SUPER_ADMIN' OR id IN (SELECT DISTINCT user_id FROM fast5m_trades WHERE user_id IS NOT NULL))
+                """))
+                conn.execute(text("""
+                    UPDATE users
+                    SET status = 'PENDING'
+                    WHERE status IS NULL
+                """))
+                conn.execute(text("""
+                    UPDATE users
+                    SET allowed_mode = CASE 
+                        WHEN role = 'SUPER_ADMIN' THEN 'REAL_AND_DEMO'
+                        ELSE 'DEMO_ONLY'
+                    END
+                    WHERE allowed_mode IS NULL
+                """))
+                conn.commit()
+            except Exception:
+                pass
 
     # 2. Migrate fast5m_trades columns
     if "fast5m_trades" in inspector.get_table_names():

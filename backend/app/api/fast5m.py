@@ -103,9 +103,9 @@ class WalletModeRequest(BaseModel):
 
 
 @router.get("/board")
-def get_fast5m_board():
-    """Retrieve full real-time board state for all 7 assets."""
-    return fast5m_engine.get_board_state()
+def get_fast5m_board(current_user: Optional[User] = Depends(get_current_user_optional)):
+    """Retrieve full real-time board state for all 7 assets partitioned by user."""
+    return fast5m_engine.get_board_state(user_id=current_user.id if current_user else None)
 
 
 @router.get("/trades")
@@ -132,13 +132,11 @@ def get_fast5m_trades(
             base_query = base_query.filter(Fast5MTrade.id == -1)
     elif account_mode == "demo":
         base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
+        if current_user:
+            base_query = base_query.filter(Fast5MTrade.user_id == current_user.id)
     else: # "all"
         if current_user:
-            base_query = base_query.filter(
-                (Fast5MTrade.account_mode == "demo") | 
-                (Fast5MTrade.account_mode.is_(None)) | 
-                (Fast5MTrade.user_id == current_user.id)
-            )
+            base_query = base_query.filter(Fast5MTrade.user_id == current_user.id)
         else:
             base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
 
@@ -230,13 +228,11 @@ def get_fast5m_trades(
             lifetime_q = lifetime_q.filter(Fast5MTrade.id == -1)
     elif account_mode == "demo":
         lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
+        if current_user:
+            lifetime_q = lifetime_q.filter(Fast5MTrade.user_id == current_user.id)
     else: # "all"
         if current_user:
-            lifetime_q = lifetime_q.filter(
-                (Fast5MTrade.account_mode == "demo") | 
-                (Fast5MTrade.account_mode.is_(None)) | 
-                (Fast5MTrade.user_id == current_user.id)
-            )
+            lifetime_q = lifetime_q.filter(Fast5MTrade.user_id == current_user.id)
         else:
             lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
 
@@ -252,15 +248,20 @@ def get_fast5m_trades(
     # Retrieve user's dedicated vault allocation if available
     user_vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first() if current_user else None
 
+    # Calculate partitioned active margin and dynamic hard cap: -(active_margin * 2.5)
+    user_active_trades = fast_executor.get_active_trades_for_user(current_user.id if current_user else None, account_mode)
+    active_margin = round(sum(t.get("cost", 0.0) for t in user_active_trades), 2)
+    dynamic_hard_cap = fast_executor.get_dynamic_hard_cap(active_margin)
+
     if account_mode == "live":
         from app.fast5m.wallet import wallet_manager
         current_balance = round(user_vault.allocated_balance, 2) if user_vault else round(wallet_manager.total_usdc_balance, 2)
         initial_balance = round(user_vault.initial_deposit, 2) if user_vault else (round(current_balance - all_pnl, 2) if wallet_manager.is_connected else 0.0)
-        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode") == "live" and (not current_user or t.get("user_id") == current_user.id)])
+        active_open_trades = len(user_active_trades)
     else:
         initial_balance = float(user_vault.allocated_balance if user_vault else fast_executor.settings.get("total_balance_usd", 300.0))
         current_balance = round(initial_balance + all_pnl, 2)
-        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode", "demo") == "demo"])
+        active_open_trades = len(user_active_trades)
 
 
     return {
@@ -277,6 +278,8 @@ def get_fast5m_trades(
             "losses": losses,
             "total_trades": closed_trades,
             "open_trades": active_open_trades,
+            "active_margin": active_margin,
+            "dynamic_hard_cap": dynamic_hard_cap,
         },
         "lifetime_stats": {
             "total_trades": all_closed_count,
@@ -447,8 +450,10 @@ def restore_settings_defaults():
 
 
 @router.post("/toggle")
-def toggle_auto_trading():
+def toggle_auto_trading(current_user: Optional[User] = Depends(get_current_user_optional)):
     """Toggle auto-trading ON / PAUSED."""
+    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
+        raise HTTPException(status_code=403, detail="Account pending administrator approval")
     curr = fast_executor.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes")
     new_val = not curr
     fast_executor.update_settings({"auto_trading_enabled": "true" if new_val else "false"})
@@ -456,30 +461,39 @@ def toggle_auto_trading():
 
 
 @router.post("/emergency-stop")
-def emergency_stop_trading():
+def emergency_stop_trading(current_user: Optional[User] = Depends(get_current_user_optional)):
     """
     Emergency Panic Button:
     Instantly kills auto-trading and force-closes any open active positions.
     """
+    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
+        raise HTTPException(status_code=403, detail="Account pending administrator approval")
     return fast_executor.emergency_stop()
 
 
 @router.post("/emergency-start")
-def emergency_start_trading():
+def emergency_start_trading(current_user: Optional[User] = Depends(get_current_user_optional)):
     """
     Emergency Start / Resume:
     Re-arms auto-execution and resumes market scanning.
     """
+    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
+        raise HTTPException(status_code=403, detail="Account pending administrator approval")
     return fast_executor.emergency_start()
 
 
 @router.post("/reset-demo")
-def reset_demo_trading():
+def reset_demo_trading(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
     """
     Reset Demo Account:
-    Wipes paper trade history and resets virtual equity back to $300.00 base.
+    Wipes paper trade history and resets virtual equity back to $300.00 base for the user.
     """
-    return fast_executor.reset_demo_account()
+    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
+        raise HTTPException(status_code=403, detail="Account pending administrator approval")
+    return fast_executor.reset_demo_account(user_id=current_user.id if current_user else None)
 
 
 
@@ -527,12 +541,46 @@ def connect_fast5m_wallet(req: WalletConnectRequest):
 
 
 @router.post("/wallet/mode")
-def set_fast5m_wallet_mode(req: WalletModeRequest):
+def set_fast5m_wallet_mode(
+    req: WalletModeRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
     """Toggle between 'demo' (Virtual $300 Paper) and 'live' (Real Wallet Polymarket CLOB)."""
+    target_mode = req.mode.strip().lower()
+    if target_mode == "live":
+        if not current_user:
+            raise HTTPException(
+                status_code=401, 
+                detail="Authentication required for Real Account live execution."
+            )
+        if getattr(current_user, "status", "PENDING") != "APPROVED":
+            raise HTTPException(
+                status_code=403, 
+                detail="Account pending administrator approval"
+            )
+        if getattr(current_user, "allowed_mode", "DEMO_ONLY") != "REAL_AND_DEMO":
+            raise HTTPException(
+                status_code=403, 
+                detail="Real Account mode restricted: Your account must be approved for REAL_AND_DEMO access by an administrator."
+            )
+        if not getattr(current_user, "wallet_address", None):
+            raise HTTPException(
+                status_code=400, 
+                detail="Web3 wallet not linked. Please connect and link a Polygon wallet first before switching to Real Vault."
+            )
+
     from app.fast5m.wallet import wallet_manager
-    res = wallet_manager.set_mode(req.mode)
+    res = wallet_manager.set_mode(target_mode)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Failed to switch mode"))
+
+    if current_user:
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+        if vault:
+            vault.account_mode = target_mode
+            db.commit()
+
     return res
 
 

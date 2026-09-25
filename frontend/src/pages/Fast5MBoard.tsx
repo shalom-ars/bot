@@ -10,6 +10,7 @@ import {
   Eye, EyeOff, Key, AlertTriangle, Check, Copy, Link2, Unlink, X,
   LogOut, ArrowDownToLine, ArrowUpFromLine
 } from 'lucide-react';
+import AdminConsoleTab from '../components/AdminConsoleTab';
 
 
 interface AssetData {
@@ -51,6 +52,8 @@ interface TradeStats {
   losses: number;
   total_trades: number;
   open_trades: number;
+  dynamic_hard_cap?: number;
+  active_margin?: number;
 }
 
 export interface SystemHealth {
@@ -171,7 +174,7 @@ export default function Fast5MBoard() {
   const [defaultSavedTime, setDefaultSavedTime] = useState<string>('');
   const [healthTesting, setHealthTesting] = useState<boolean>(false);
   const [toggling, setToggling] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'board' | 'settings' | 'squad' | 'trades' | 'scoring' | 'wallet'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'settings' | 'squad' | 'trades' | 'scoring' | 'wallet' | 'admin'>('board');
   const [selectedAssetForScore, setSelectedAssetForScore] = useState<string>('BTC');
 
   // Real Wallet & Polymarket CLOB State
@@ -195,23 +198,52 @@ export default function Fast5MBoard() {
   const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
   const [resettingDemo, setResettingDemo] = useState<boolean>(false);
   const [accountMode, setAccountMode] = useState<'demo' | 'live' | 'all'>('demo');
-
-  // Multi-User Profile & Session
-  const navigate = useNavigate();
-  const [userProfile, setUserProfile] = useState<{ email?: string; wallet_address?: string; auth_provider?: string } | null>(null);
-
-  // Isolated Trading Vault (Deposit & Withdraw) State
   const [vaultInfo, setVaultInfo] = useState<any | null>(null);
   const [vaultModalOpen, setVaultModalOpen] = useState<boolean>(false);
   const [vaultTab, setVaultTab] = useState<'deposit' | 'withdraw'>('deposit');
-  const [vaultAmountInput, setVaultAmountInput] = useState<string>('50');
+  const [vaultAmountInput, setVaultAmountInput] = useState<string>('');
   const [vaultLoading, setVaultLoading] = useState<boolean>(false);
   const [vaultMsg, setVaultMsg] = useState<string>('');
   const [vaultError, setVaultError] = useState<string>('');
 
+  // Multi-User Profile & Session
+  const navigate = useNavigate();
+  interface UserProfileData {
+    id?: number;
+    email?: string;
+    role?: string;
+    status?: string;
+    allowed_mode?: string;
+    wallet_address?: string;
+    auth_provider?: string;
+  }
+  const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
+
+  const fetchUserProfile = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const res = await axios.get('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data) {
+        setUserProfile(res.data);
+        if (res.data.status) localStorage.setItem('user_status', res.data.status);
+        if (res.data.role) localStorage.setItem('user_role', res.data.role);
+        if (res.data.allowed_mode) localStorage.setItem('allowed_mode', res.data.allowed_mode);
+        if (res.data.wallet_address) localStorage.setItem('wallet_address', res.data.wallet_address);
+      }
+    } catch (e) {
+      console.debug('User profile fetch note', e);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user_email');
+    localStorage.removeItem('user_status');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('allowed_mode');
     localStorage.removeItem('wallet_address');
     localStorage.removeItem('demo_access');
     localStorage.removeItem('account_mode');
@@ -404,14 +436,22 @@ export default function Fast5MBoard() {
     const storedEmail = localStorage.getItem('user_email');
     const storedWallet = localStorage.getItem('wallet_address');
     const storedProvider = localStorage.getItem('auth_provider');
+    const storedRole = localStorage.getItem('user_role');
+    const storedStatus = localStorage.getItem('user_status');
+    const storedAllowedMode = localStorage.getItem('allowed_mode');
+
     if (storedEmail || storedWallet) {
       setUserProfile({
         email: storedEmail || undefined,
         wallet_address: storedWallet || undefined,
-        auth_provider: storedProvider || undefined
+        auth_provider: storedProvider || undefined,
+        role: storedRole || undefined,
+        status: storedStatus || undefined,
+        allowed_mode: storedAllowedMode || undefined
       });
     }
 
+    fetchUserProfile();
     fetchBoard();
     fetchVault();
     fetchTrades(selectedTimeframe, accountMode);
@@ -759,16 +799,30 @@ export default function Fast5MBoard() {
   };
 
   const handleToggleWalletMode = async (targetMode: 'demo' | 'live') => {
-    if (targetMode === 'live' && (!walletInfo?.is_connected || !walletInfo?.wallet_address)) {
-      setWalletModalOpen(true);
-      setWalletError('Please connect your Polygon wallet or enter credentials to switch to Real Account execution.');
-      return;
+    if (targetMode === 'live') {
+      if (userProfile?.status && userProfile.status !== 'APPROVED') {
+        setWalletError('Account under review: Your account must be approved by an administrator before switching to Real Vault mode.');
+        return;
+      }
+      if (userProfile?.allowed_mode && userProfile.allowed_mode !== 'REAL_AND_DEMO') {
+        setWalletError('Access restricted: Your account is currently set to DEMO_ONLY. Please contact an administrator to approve REAL_AND_DEMO mode.');
+        return;
+      }
+      const userWallet = userProfile?.wallet_address || walletInfo?.wallet_address;
+      if (!userWallet && !walletInfo?.is_connected) {
+        setWalletModalOpen(true);
+        setWalletError('Web3 wallet required: Please connect and link your Polygon wallet address first.');
+        return;
+      }
     }
     setTogglingMode(true);
     setWalletError('');
     setWalletMsg('');
     try {
-      const res = await axios.post('/api/fast5m/wallet/mode', { mode: targetMode });
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/wallet/mode', { mode: targetMode }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (res.data?.wallet) {
         setWalletInfo(res.data.wallet);
         setAccountMode(targetMode);
@@ -925,6 +979,20 @@ export default function Fast5MBoard() {
             >
               Trades ({trades.length})
             </button>
+            {userProfile?.role === 'SUPER_ADMIN' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('admin')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'admin'
+                    ? 'bg-purple-600/30 text-purple-200 border border-purple-500/50 shadow-xs'
+                    : 'text-purple-400 hover:text-purple-200 hover:bg-purple-950/40 border border-purple-900/30'
+                }`}
+              >
+                <span>🛡️</span>
+                <span>Admin Console</span>
+              </button>
+            )}
           </nav>
         </div>
 
@@ -990,14 +1058,43 @@ export default function Fast5MBoard() {
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            title="Log Out / Disconnect Session"
-            className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          {/* User Profile Pill */}
+          <div className="flex items-center gap-2 pl-2 border-l border-[#30363d]">
+            <div className="flex items-center gap-2 px-2.5 py-1 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs">
+              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-[10px] font-black text-white shrink-0">
+                {userProfile?.email ? userProfile.email[0].toUpperCase() : 'U'}
+              </div>
+              <span className="font-mono text-slate-300 max-w-[110px] truncate" title={userProfile?.email || 'User'}>
+                {userProfile?.email ? userProfile.email.split('@')[0] : 'User'}
+              </span>
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                userProfile?.role === 'SUPER_ADMIN'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                  : 'bg-slate-800 text-slate-400 border border-slate-700'
+              }`}>
+                {userProfile?.role === 'SUPER_ADMIN' ? 'Admin' : 'User'}
+              </span>
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                userProfile?.status === 'APPROVED'
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+              }`}>
+                {userProfile?.status === 'APPROVED' ? 'Approved' : 'Pending'}
+              </span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                {userProfile?.allowed_mode === 'REAL_AND_DEMO' ? 'Real+Demo' : 'Demo'}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Log Out / Disconnect Session"
+              className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1082,6 +1179,11 @@ export default function Fast5MBoard() {
           <span>Confidence: <strong className="text-white font-bold">{confidenceThreshold}%</strong></span>
           <span className="text-slate-600">|</span>
           <span>R:R: <strong className="text-white font-bold">{riskRewardRatio}:1</strong></span>
+          <span className="text-slate-600">|</span>
+          <span className="text-amber-400 font-semibold flex items-center gap-1">
+            <span className="text-slate-400">Dynamic Cap:</span>
+            <strong className="text-amber-300">-${Math.abs(stats.dynamic_hard_cap ?? (positionSize * 2.5)).toFixed(2)}</strong>
+          </span>
           <span className="text-slate-600">|</span>
           <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -3504,7 +3606,12 @@ export default function Fast5MBoard() {
         </div>
       )}
 
-      {/* 7. INTERACTIVE WALLET CONNECTION MODAL */}
+      {/* 7. ADMIN CONSOLE TAB */}
+      {activeTab === 'admin' && (
+        <AdminConsoleTab />
+      )}
+
+      {/* 8. INTERACTIVE WALLET CONNECTION MODAL */}
       {walletModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
           <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-xl w-full p-5 sm:p-6 space-y-5 relative overflow-hidden">

@@ -110,6 +110,28 @@ class FastExecutor:
         """Return all currently open active trades."""
         return list(self.active_trades.values())
 
+    def get_active_trades_for_user(self, user_id: Optional[int] = None, account_mode: str = "demo") -> List[Dict[str, Any]]:
+        """Return open active trades partitioned by user and account mode."""
+        trades = list(self.active_trades.values())
+        if account_mode != "all":
+            trades = [t for t in trades if t.get("account_mode", "demo") == account_mode]
+        if user_id is not None:
+            trades = [t for t in trades if t.get("user_id") == user_id]
+        return trades
+
+    def get_active_margin_for_user(self, user_id: Optional[int] = None, account_mode: str = "demo") -> float:
+        """Calculate total active margin locked in open trades for a user."""
+        user_trades = self.get_active_trades_for_user(user_id=user_id, account_mode=account_mode)
+        return round(sum(t.get("cost", 0.0) for t in user_trades), 2)
+
+    def get_dynamic_hard_cap(self, active_margin: float) -> float:
+        """
+        Calculate Dynamic Hard Cap Risk limit:
+        dynamic_hard_cap = -(active_margin * 2.5)
+        """
+        effective_margin = max(active_margin, float(self.settings.get("position_size_usd", 10.0)))
+        return round(-(effective_margin * 2.5), 2)
+
     async def start(self):
         if self.running:
             return
@@ -289,12 +311,15 @@ class FastExecutor:
             "auto_trading_enabled": True
         }
 
-    def reset_demo_account(self) -> Dict[str, Any]:
+    def reset_demo_account(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
-        Wipes demo paper trading history (temporary paper simulation) and resets virtual balance to $300.00.
+        Wipes demo paper trading history for the user and resets virtual balance to $300.00.
         Real account history and live on-chain trades are strictly preserved.
         """
-        demo_trade_ids = [tid for tid, t in self.active_trades.items() if t.get("account_mode", "demo") == "demo"]
+        demo_trade_ids = [
+            tid for tid, t in self.active_trades.items() 
+            if t.get("account_mode", "demo") == "demo" and (user_id is None or t.get("user_id") == user_id)
+        ]
         for tid in demo_trade_ids:
             self.active_trades.pop(tid, None)
 
@@ -304,17 +329,29 @@ class FastExecutor:
         db: Session = SessionLocal()
         deleted_count = 0
         try:
-            # Delete ONLY temporary demo trades (real trades are never touched)
-            deleted_count = db.query(Fast5MTrade).filter(
+            # Delete ONLY temporary demo trades for the user (or all if user_id is None)
+            query = db.query(Fast5MTrade).filter(
                 (Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None))
-            ).delete(synchronize_session=False)
+            )
+            if user_id is not None:
+                query = query.filter(Fast5MTrade.user_id == user_id)
+                # Reset user's vault balance to 300.0
+                vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == user_id).first()
+                if vault:
+                    vault.allocated_balance = 300.0
+                    vault.initial_deposit = 300.0
+                    vault.total_deposited = 300.0
+                    vault.total_withdrawn = 0.0
+
+            deleted_count = query.delete(synchronize_session=False)
             db.commit()
-            logger.info(f"[Fast5M Executor] 🔄 DEMO ACCOUNT RESET: {deleted_count} temporary paper trades wiped. Base balance restored to $300.00.")
+            logger.info(f"[Fast5M Executor] 🔄 DEMO ACCOUNT RESET (User #{user_id}): {deleted_count} temporary paper trades wiped. Base balance restored to $300.00.")
         except Exception as e:
             logger.error(f"[Fast5M Executor] Error resetting demo account: {e}")
             db.rollback()
         finally:
             db.close()
+
 
         return {
             "status": "success",
@@ -700,6 +737,25 @@ class FastExecutor:
         should_close = False
         resolution = "HOLD"
         exit_price = current_share_price
+
+        # Dynamic Hard Cap Risk Safeguard: dynamic_hard_cap = -(active_margin * 2.5)
+        # Replaces any static hard cap with a dynamic, strictly margin-scaled ceiling
+        active_margin_for_trade = cost
+        dynamic_hard_cap = round(-(active_margin_for_trade * 2.5), 2)
+        trade["dynamic_hard_cap"] = dynamic_hard_cap
+
+        # If drawdown breaches dynamic hard cap, immediately force circuit breaker hard stop
+        if unrealized_pnl <= dynamic_hard_cap:
+            should_close = True
+            resolution = "HARD_STOP_LOSS"
+            exit_price = current_share_price
+            trade["reversal_defense_active"] = False
+            logger.warning(
+                f"[Fast5M Executor] 🛑 DYNAMIC HARD CAP BREACHED: #{trade['id']} {asset} {outcome} "
+                f"PnL ${unrealized_pnl:.2f} <= Dynamic Hard Cap ${dynamic_hard_cap:.2f} (-2.5x margin limit). "
+                f"Forcing immediate emergency exit at ${exit_price:.4f}."
+            )
+
 
         # 3. STRICT REAL-TIME TRAILING STOP & ZERO-SLIPPAGE PROFIT LOCKING
         # Rules:
