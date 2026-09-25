@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
 from app.db.models import Fast5MTrade, Fast5MSetting, Fast5MUserVault, Fast5MUserSetting, User
-from app.api.security import get_current_user_optional
+from app.api.security import get_current_user_optional, get_current_super_admin
 from app.fast5m.engine import fast5m_engine
 from app.fast5m.executor import fast_executor
 
@@ -408,8 +408,11 @@ def _extract_settings_from_payload(payload: SettingsUpdate) -> Dict[str, str]:
 
 
 @router.post("/settings")
-def update_fast5m_settings(payload: SettingsUpdate):
-    """Update Fast 5M settings and optionally persist as permanent custom default baseline."""
+def update_fast5m_settings(
+    payload: SettingsUpdate,
+    admin_user: User = Depends(get_current_super_admin)
+):
+    """Update Fast 5M settings and optionally persist as permanent custom default baseline (Admin only)."""
     updates = _extract_settings_from_payload(payload)
 
     if payload.save_as_default:
@@ -426,8 +429,11 @@ def update_fast5m_settings(payload: SettingsUpdate):
 
 
 @router.post("/settings/default")
-def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
-    """Save current or specified settings as custom default baseline."""
+def save_settings_as_default(
+    payload: Optional[SettingsUpdate] = None,
+    admin_user: User = Depends(get_current_super_admin)
+):
+    """Save current or specified settings as custom default baseline (Admin only)."""
     updates = _extract_settings_from_payload(payload) if payload else {}
     defaults = fast_executor.save_as_default(updates if updates else None)
     return {
@@ -439,8 +445,10 @@ def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
 
 
 @router.post("/settings/restore-defaults")
-def restore_settings_defaults():
-    """Restore active settings to the saved custom default baseline."""
+def restore_settings_defaults(
+    admin_user: User = Depends(get_current_super_admin)
+):
+    """Restore active settings to the saved custom default baseline (Admin only)."""
     restored = fast_executor.restore_defaults()
     return {
         "status": "success",
@@ -450,10 +458,10 @@ def restore_settings_defaults():
 
 
 @router.post("/toggle")
-def toggle_auto_trading(current_user: Optional[User] = Depends(get_current_user_optional)):
-    """Toggle auto-trading ON / PAUSED."""
-    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
-        raise HTTPException(status_code=403, detail="Account pending administrator approval")
+def toggle_auto_trading(
+    admin_user: User = Depends(get_current_super_admin)
+):
+    """Toggle auto-trading ON / PAUSED (Admin only)."""
     curr = fast_executor.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes")
     new_val = not curr
     fast_executor.update_settings({"auto_trading_enabled": "true" if new_val else "false"})
@@ -461,24 +469,24 @@ def toggle_auto_trading(current_user: Optional[User] = Depends(get_current_user_
 
 
 @router.post("/emergency-stop")
-def emergency_stop_trading(current_user: Optional[User] = Depends(get_current_user_optional)):
+def emergency_stop_trading(
+    admin_user: User = Depends(get_current_super_admin)
+):
     """
     Emergency Panic Button:
-    Instantly kills auto-trading and force-closes any open active positions.
+    Instantly kills auto-trading and force-closes any open active positions (Admin only).
     """
-    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
-        raise HTTPException(status_code=403, detail="Account pending administrator approval")
     return fast_executor.emergency_stop()
 
 
 @router.post("/emergency-start")
-def emergency_start_trading(current_user: Optional[User] = Depends(get_current_user_optional)):
+def emergency_start_trading(
+    admin_user: User = Depends(get_current_super_admin)
+):
     """
     Emergency Start / Resume:
-    Re-arms auto-execution and resumes market scanning.
+    Re-arms auto-execution and resumes market scanning (Admin only).
     """
-    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
-        raise HTTPException(status_code=403, detail="Account pending administrator approval")
     return fast_executor.emergency_start()
 
 

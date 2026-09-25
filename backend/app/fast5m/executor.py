@@ -410,7 +410,7 @@ class FastExecutor:
                     "trailing_armed": False,
                     "trailing_floor": 0.0,
                 }
-                self._traded_epochs.add((open_trade.asset, open_trade.epoch_bucket))
+                self._traded_epochs.add((open_trade.user_id, open_trade.asset, open_trade.epoch_bucket))
                 logger.info(f"[Fast5M Executor] Rehydrated open trade #{open_trade.id} ({open_trade.asset} {open_trade.outcome})")
         except Exception as e:
             logger.error(f"[Fast5M Executor] Error rehydrating trades: {e}")
@@ -422,8 +422,7 @@ class FastExecutor:
         while self.running:
             try:
                 auto_enabled = self.settings.get("auto_trading_enabled", "true").lower() in ("true", "1", "yes")
-                max_pools = int(self.settings.get("max_active_pools", 3))
-                if auto_enabled and len(self.active_trades) < max_pools:
+                if auto_enabled:
                     await self._check_and_execute_pairs()
             except asyncio.CancelledError:
                 break
@@ -434,86 +433,116 @@ class FastExecutor:
     async def _check_and_execute_pairs(self):
         """
         Identify top qualifying pairs and execute positions concurrently (up to 2 to 3 pairs)
-        if prediction scores meet thresholds (>=90.0% for multi-pair entries),
-        while strictly enforcing account margin exposure safeguards.
+        for each active user bot independently, while strictly enforcing individual margin exposure safeguards.
         """
         conf_threshold = float(self.settings.get("confidence_threshold", 70.0))
         multi_pair_threshold = float(self.settings.get("multi_pair_min_score", 90.0))
         max_pools = int(self.settings.get("max_active_pools", 3))
-        
-        available_slots = max_pools - len(self.active_trades)
-        if available_slots <= 0:
-            return
-
         min_time = float(self.settings.get("min_time_remaining", 20.0))
         max_time = float(self.settings.get("max_time_remaining", 280.0))
         base_size = float(self.settings.get("position_size_usd", 10.0))
-
-        # Position Sizing & Exposure Safeguard:
-        total_balance = float(self.settings.get("total_balance_usd", 300.0))
         max_margin_pct = float(self.settings.get("max_portfolio_margin_pct", 30.0))
-        max_total_exposure = total_balance * (max_margin_pct / 100.0) # e.g. $90 max margin
-        current_exposure = sum(t["cost"] for t in self.active_trades.values())
-        available_exposure = max(0.0, max_total_exposure - current_exposure)
+        strat_dir = self.settings.get("strategy_direction", "BOTH").upper()
 
-        min_req_exposure = max(0.50, min(base_size, 5.0))
-        if available_exposure < min_req_exposure:
-            return
-
-        # Score all 7 assets
+        # Score all 7 assets once per tick
         scored_assets = fast_scorer.score_all_assets(conf_threshold)
         if not scored_assets:
             return
 
-        strat_dir = self.settings.get("strategy_direction", "BOTH").upper()
+        # Query all approved active users so every user bot executes independently
+        db: Session = SessionLocal()
+        user_targets = []
+        try:
+            from app.db.models import User, Fast5MUserVault
+            active_users = db.query(User).filter(User.status == "APPROVED", User.is_active == True).all()
+            for u in active_users:
+                vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == u.id).first()
+                mode = vault.account_mode if vault else "demo"
+                balance = float(vault.allocated_balance) if vault and vault.allocated_balance > 0 else float(self.settings.get("total_balance_usd", 300.0))
+                user_targets.append({
+                    "user_id": u.id,
+                    "email": u.email,
+                    "mode": mode,
+                    "balance": balance
+                })
+        except Exception as e:
+            logger.debug(f"[Fast5M Executor] Error querying active users: {e}")
+        finally:
+            db.close()
 
-        active_assets = {t["asset"] for t in self.active_trades.values()}
-        qualified_candidates: List[ScoredAsset] = []
+        if not user_targets:
+            user_targets.append({
+                "user_id": None,
+                "email": "default",
+                "mode": "demo",
+                "balance": float(self.settings.get("total_balance_usd", 300.0))
+            })
 
-        for asset_score in scored_assets:
-            if not asset_score.is_tradable:
+        for user_cfg in user_targets:
+            uid = user_cfg["user_id"]
+            umode = user_cfg["mode"]
+            ubal = user_cfg["balance"]
+
+            # Independent trade capacity per user bot
+            user_trades = [
+                t for t in self.active_trades.values() 
+                if (uid is None or t.get("user_id") == uid) and t.get("account_mode", "demo") == umode
+            ]
+            available_slots = max_pools - len(user_trades)
+            if available_slots <= 0:
                 continue
-            if asset_score.asset in active_assets:
-                continue
-            if strat_dir == "UP_ONLY" and asset_score.direction != "UP":
-                continue
-            if strat_dir == "DOWN_ONLY" and asset_score.direction != "DOWN":
-                continue
-            if not (min_time <= asset_score.time_remaining_sec <= max_time):
-                continue
 
-            market = fast_markets.get_market(asset_score.asset)
-            if not market:
-                continue
-            epoch_key = (asset_score.asset, market.epoch_bucket)
-            if epoch_key in self._traded_epochs:
+            # Independent Exposure Safeguard for this user:
+            max_total_exposure = ubal * (max_margin_pct / 100.0)
+            current_exposure = sum(t.get("cost", 0.0) for t in user_trades)
+            available_exposure = max(0.0, max_total_exposure - current_exposure)
+
+            if available_exposure < 0.50:
                 continue
 
-            # Multi-Pair Scoring Rule:
-            # 1st active trade requires standard confidence_threshold (>= 70%)
-            # Concurrent 2nd or 3rd trades require multi_pair_threshold (>= 90.0%+)
-            current_count = len(self.active_trades) + len(qualified_candidates)
-            req_score = conf_threshold if current_count == 0 else multi_pair_threshold
+            active_assets = {t["asset"] for t in user_trades}
+            user_candidates: List[ScoredAsset] = []
 
-            if asset_score.confidence >= req_score:
-                qualified_candidates.append(asset_score)
-                if len(qualified_candidates) >= available_slots:
-                    break
+            for asset_score in scored_assets:
+                if not asset_score.is_tradable:
+                    continue
+                if asset_score.asset in active_assets:
+                    continue
+                if strat_dir == "UP_ONLY" and asset_score.direction != "UP":
+                    continue
+                if strat_dir == "DOWN_ONLY" and asset_score.direction != "DOWN":
+                    continue
+                if not (min_time <= asset_score.time_remaining_sec <= max_time):
+                    continue
 
-        if not qualified_candidates:
-            return
+                market = fast_markets.get_market(asset_score.asset)
+                if not market:
+                    continue
+                epoch_key = (uid, asset_score.asset, market.epoch_bucket)
+                if epoch_key in self._traded_epochs:
+                    continue
 
-        # Exposure Safeguard: partition available margin safely
-        num_new_trades = len(qualified_candidates)
-        safe_per_trade_cost = min(base_size, round(available_exposure / num_new_trades, 2))
-        if safe_per_trade_cost < 0.50:
-            return
+                # Multi-Pair Scoring Rule for this user
+                current_count = len(user_trades) + len(user_candidates)
+                req_score = conf_threshold if current_count == 0 else multi_pair_threshold
 
-        # Open qualified pairs concurrently without skipping or waiting
-        for candidate in qualified_candidates:
-            await self._execute_single_trade(candidate, safe_per_trade_cost)
+                if asset_score.confidence >= req_score:
+                    user_candidates.append(asset_score)
+                    if len(user_candidates) >= available_slots:
+                        break
 
-    async def _execute_single_trade(self, top_asset: ScoredAsset, cost: float):
+            if not user_candidates:
+                continue
+
+            # Partition cost safely
+            num_new_trades = len(user_candidates)
+            safe_per_trade_cost = max(0.50, min(base_size, round(available_exposure / num_new_trades, 2)))
+
+            # Open qualified pairs independently for this user bot
+            for candidate in user_candidates:
+                await self._execute_single_trade(candidate, safe_per_trade_cost, user_id=uid, account_mode=umode)
+
+    async def _execute_single_trade(self, top_asset: ScoredAsset, cost: float, user_id: Optional[int] = None, account_mode: Optional[str] = None):
         market = fast_markets.get_market(top_asset.asset)
         if not market:
             return
@@ -525,17 +554,20 @@ class FastExecutor:
         raw_liq = self.settings.get(f"min_liquidity_usd_{asset_lower}")
         asset_min_liq = float(raw_liq) if raw_liq is not None and float(raw_liq) > 0 else float(self.settings.get("min_liquidity_usd", 100.0))
 
-        if market.spread > asset_max_spread:
+        # Effective spread and adaptive liquidity bounds: small trades (e.g. $1-$10) are never blocked by huge depth checks
+        effective_max_spread = max(0.12, asset_max_spread)
+        if market.spread > effective_max_spread:
             logger.warning(
                 f"[Fast5M Executor] ⛔ PRE-TRADE ENTRY BLOCKED for {top_asset.asset}: "
-                f"Live spread {market.spread*100:.1f}% exceeds dedicated asset threshold {asset_max_spread*100:.1f}%"
+                f"Live spread {market.spread*100:.1f}% exceeds threshold {effective_max_spread*100:.1f}%"
             )
             return
 
-        if market.total_liquidity < asset_min_liq:
+        required_liq = max(10.0, min(asset_min_liq, cost * 5.0))
+        if market.total_liquidity < required_liq:
             logger.warning(
                 f"[Fast5M Executor] ⛔ PRE-TRADE ENTRY BLOCKED for {top_asset.asset}: "
-                f"Live liquidity ${market.total_liquidity:.1f} below dedicated asset threshold ${asset_min_liq:.1f}"
+                f"Live liquidity ${market.total_liquidity:.1f} below required ${required_liq:.1f}"
             )
             return
 
@@ -550,34 +582,16 @@ class FastExecutor:
         if entry_price <= 0.01 or entry_price >= 0.99:
             return
 
-        shares = round(cost / entry_price, 4)
-        epoch_key = (top_asset.asset, market.epoch_bucket)
+        cost = max(0.50, round(cost, 2))
+        shares = max(0.01, round(cost / entry_price, 4))
+        epoch_key = (user_id, top_asset.asset, market.epoch_bucket)
 
         from app.fast5m.wallet import wallet_manager
-        current_account_mode = getattr(wallet_manager, "account_mode", "demo") or "demo"
+        current_account_mode = account_mode or getattr(wallet_manager, "account_mode", "demo") or "demo"
 
         # Place trade in DB
         db: Session = SessionLocal()
         try:
-            # Associate user_id based on wallet address or default active user
-            user_id = None
-            try:
-                from app.db.models import User
-                if current_account_mode == "live" and wallet_manager.wallet_address:
-                    matched_user = db.query(User).filter(User.wallet_address == wallet_manager.wallet_address.lower()).first()
-                    if matched_user:
-                        user_id = matched_user.id
-                if not user_id:
-                    real_user = db.query(User).filter(~User.email.like("perf_%"), ~User.email.like("test_%"), ~User.email.like("user_%")).first()
-                    if real_user:
-                        user_id = real_user.id
-                    else:
-                        first_user = db.query(User).first()
-                        if first_user:
-                            user_id = first_user.id
-            except Exception:
-                pass
-
             trade_record = Fast5MTrade(
                 user_id=user_id,
                 asset=top_asset.asset,
@@ -644,10 +658,10 @@ class FastExecutor:
             }
             self._traded_epochs.add(epoch_key)
 
-            active_count = len(self.active_trades)
+            user_label = f"User #{user_id}" if user_id else "Global"
             logger.info(
-                f"[Fast5M Executor] 🚀 EXECUTED CONCURRENT POSITION ({active_count}/3): {top_asset.asset} {outcome} @ ${entry_price:.3f} "
-                f"(Cost: ${cost:.2f}, Shares: {shares}, Score: {top_asset.confidence}%, Latency: {top_asset.latency_ms}ms)"
+                f"[Fast5M Executor] 🚀 EXECUTED INDEPENDENT POSITION ({user_label} - {current_account_mode.upper()}): "
+                f"{top_asset.asset} {outcome} @ ${entry_price:.3f} (Cost: ${cost:.2f}, Shares: {shares}, Score: {top_asset.confidence}%)"
             )
         except Exception as e:
             logger.error(f"[Fast5M Executor] Order routing error for {top_asset.asset}: {e}", exc_info=True)

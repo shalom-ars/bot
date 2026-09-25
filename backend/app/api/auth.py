@@ -83,11 +83,15 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         )
     
     # 1. Create User
+    clean_email = user_in.email.strip().lower()
+    is_super_admin = (clean_email == "shalombinrasheed@gmail.com")
     new_user = User(
-        email=user_in.email,
+        email=clean_email,
         hashed_password=get_password_hash(user_in.password),
         auth_provider="email",
-        role="USER",
+        role="SUPER_ADMIN" if is_super_admin else "USER",
+        status="APPROVED" if is_super_admin else "PENDING",
+        allowed_mode="REAL_AND_DEMO" if is_super_admin else "DEMO_ONLY",
         is_active=True
     )
     db.add(new_user)

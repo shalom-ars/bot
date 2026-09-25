@@ -134,9 +134,25 @@ export default function Fast5MBoard() {
   const [minProfitToLock, setMinProfitToLock] = useState<number>(0.10);
   const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.03);
 
+  interface UserProfileData {
+    id?: number;
+    email?: string;
+    role?: string;
+    status?: string;
+    allowed_mode?: string;
+    wallet_address?: string;
+    auth_provider?: string;
+  }
+  const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
+  const isAdmin = userProfile?.email?.toLowerCase() === 'shalombinrasheed@gmail.com' ||
+    userProfile?.role === 'SUPER_ADMIN' ||
+    localStorage.getItem('user_role') === 'SUPER_ADMIN' ||
+    localStorage.getItem('user_email')?.toLowerCase() === 'shalombinrasheed@gmail.com';
+
   // Settings input protection lock (prevents polling from reverting user inputs during modification)
   const lastSettingEditTime = useRef<number>(0);
   const markSettingEdited = () => {
+    if (!isAdmin) return;
     lastSettingEditTime.current = Date.now();
   };
 
@@ -208,16 +224,6 @@ export default function Fast5MBoard() {
 
   // Multi-User Profile & Session
   const navigate = useNavigate();
-  interface UserProfileData {
-    id?: number;
-    email?: string;
-    role?: string;
-    status?: string;
-    allowed_mode?: string;
-    wallet_address?: string;
-    auth_provider?: string;
-  }
-  const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
 
   const fetchUserProfile = async () => {
     try {
@@ -471,9 +477,13 @@ export default function Fast5MBoard() {
 
 
   const handleEmergencyStop = async () => {
+    if (!isAdmin) return;
     setToggling(true);
     try {
-      const res = await axios.post('/api/fast5m/emergency-stop');
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/emergency-stop', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (res.data) {
         setSaveSuccessMsg('🚨 EMERGENCY STOP ENGAGED: Auto-trading killed and active positions closed.');
         setTimeout(() => setSaveSuccessMsg(''), 5000);
@@ -488,9 +498,13 @@ export default function Fast5MBoard() {
   };
 
   const handleEmergencyStart = async () => {
+    if (!isAdmin) return;
     setToggling(true);
     try {
-      const res = await axios.post('/api/fast5m/emergency-start');
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/emergency-start', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (res.data) {
         setSaveSuccessMsg('🟢 ENGINE RESUMED: Auto-execution armed and actively scanning.');
         setTimeout(() => setSaveSuccessMsg(''), 5000);
@@ -506,7 +520,10 @@ export default function Fast5MBoard() {
   const handleResetDemoAccount = async () => {
     setResettingDemo(true);
     try {
-      const res = await axios.post('/api/fast5m/reset-demo');
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/reset-demo', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (res.data) {
         setResetModalOpen(false);
         setSaveSuccessMsg('Demo account reset successfully! Virtual paper history wiped and $300.00 baseline restored.');
@@ -521,21 +538,14 @@ export default function Fast5MBoard() {
     }
   };
 
-  const handleSaveSettings = async (newThreshold: number, newSize: number) => {
-    try {
-      await axios.post('/api/fast5m/settings', {
-        confidence_threshold: newThreshold,
-        position_size_usd: newSize,
-      });
-      await fetchBoard();
-    } catch (e) {
-      console.error('Save settings error', e);
-    }
-  };
-
   const handleSaveAllSettings = async () => {
+    if (!isAdmin) {
+      alert('Administrative Action Restricted: Only platform administrators can modify trading settings.');
+      return;
+    }
     setSavingSettings(true);
     try {
+      const token = localStorage.getItem('token');
       await axios.post('/api/fast5m/settings', {
         position_size_usd: positionSize,
         max_active_pools: maxActivePools,
@@ -584,6 +594,8 @@ export default function Fast5MBoard() {
         min_liquidity_usd_bnb: perAssetLiquidity['BNB'] ?? 100,
         max_spread_hype: (perAssetSpread['HYPE'] ?? 8) / 100,
         min_liquidity_usd_hype: perAssetLiquidity['HYPE'] ?? 150,
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       lastSettingEditTime.current = Date.now();
       setSaveSuccessMsg('Configuration synchronized across all Squad workers with 0ms latency!');
@@ -597,8 +609,13 @@ export default function Fast5MBoard() {
   };
 
   const handleSaveAsDefault = async () => {
+    if (!isAdmin) {
+      alert('Administrative Action Restricted: Only platform administrators can save default baselines.');
+      return;
+    }
     setSavingAsDefault(true);
     try {
+      const token = localStorage.getItem('token');
       const res = await axios.post('/api/fast5m/settings/default', {
         position_size_usd: positionSize,
         max_active_pools: maxActivePools,
@@ -647,6 +664,8 @@ export default function Fast5MBoard() {
         min_liquidity_usd_bnb: perAssetLiquidity['BNB'] ?? 100,
         max_spread_hype: (perAssetSpread['HYPE'] ?? 8) / 100,
         min_liquidity_usd_hype: perAssetLiquidity['HYPE'] ?? 150,
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       if (res.data?.defaults?.custom_defaults_saved_at) {
         setDefaultSavedTime(res.data.defaults.custom_defaults_saved_at);
@@ -662,9 +681,16 @@ export default function Fast5MBoard() {
   };
 
   const handleRestoreDefaults = async () => {
+    if (!isAdmin) {
+      alert('Administrative Action Restricted: Only platform administrators can restore default baselines.');
+      return;
+    }
     setRestoringDefaults(true);
     try {
-      await axios.post('/api/fast5m/settings/restore-defaults');
+      const token = localStorage.getItem('token');
+      await axios.post('/api/fast5m/settings/restore-defaults', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       setSaveSuccessMsg('Restored active configuration from custom default baseline profile!');
       setTimeout(() => setSaveSuccessMsg(''), 4500);
       await fetchBoard();
@@ -1034,28 +1060,35 @@ export default function Fast5MBoard() {
             <span>Deposit</span>
           </button>
 
-          {board?.auto_trading_active ? (
-            <button
-              type="button"
-              onClick={handleEmergencyStop}
-              disabled={toggling}
-              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-rose-900/30 transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
-              title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
-            >
-              <AlertTriangle className="w-3.5 h-3.5 text-white" />
-              <span>EMERGENCY STOP</span>
-            </button>
+          {isAdmin ? (
+            board?.auto_trading_active ? (
+              <button
+                type="button"
+                onClick={handleEmergencyStop}
+                disabled={toggling}
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-rose-900/30 transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
+                title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-white" />
+                <span>EMERGENCY STOP</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleEmergencyStart}
+                disabled={toggling}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-900/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Start / Resume Engine: Re-arm automated execution"
+              >
+                <Play className="w-3.5 h-3.5 text-white" />
+                <span>RESUME ENGINE</span>
+              </button>
+            )
           ) : (
-            <button
-              type="button"
-              onClick={handleEmergencyStart}
-              disabled={toggling}
-              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-900/30 transition-all flex items-center gap-1.5 cursor-pointer"
-              title="Start / Resume Engine: Re-arm automated execution"
-            >
-              <Play className="w-3.5 h-3.5 text-white" />
-              <span>RESUME ENGINE</span>
-            </button>
+            <div className="px-3 py-1.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs font-mono text-slate-300 flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+              <span>{board?.auto_trading_active ? 'Engine Armed' : 'Engine Paused'}</span>
+            </div>
           )}
 
           {/* User Profile Pill */}
@@ -1131,51 +1164,10 @@ export default function Fast5MBoard() {
           </div>
         </div>
 
-        {/* Middle: Position Sizing Presets */}
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Size:</span>
-          <div className="flex items-center gap-1">
-            {[1, 10, 25, 50].map((sz) => (
-              <button
-                key={sz}
-                type="button"
-                onClick={() => {
-                  markSettingEdited();
-                  setPositionSize(sz);
-                  handleSaveSettings(confidenceThreshold, sz);
-                }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
-                  positionSize === sz
-                    ? 'bg-blue-600 text-white font-black shadow-xs border border-blue-400/30'
-                    : 'bg-[#0d1117] text-slate-300 hover:bg-[#21262d] border border-[#30363d]'
-                }`}
-              >
-                ${sz}
-              </button>
-            ))}
-            <div className="relative flex items-center ml-0.5">
-              <span className="absolute left-2 text-slate-500 font-mono text-[11px]">$</span>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                placeholder="Custom"
-                value={positionSize}
-                onChange={(e) => {
-                  markSettingEdited();
-                  const val = Math.max(1, Number(e.target.value));
-                  setPositionSize(val);
-                }}
-                onBlur={() => handleSaveSettings(confidenceThreshold, positionSize)}
-                className="w-16 pl-4 pr-1.5 py-1 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs font-mono font-bold text-slate-200 focus:outline-hidden focus:border-blue-500"
-                title="Enter custom position size in USD"
-              />
-            </div>
-          </div>
-        </div>
-
         {/* Right: Telemetry & Risk Readouts in a single row */}
         <div className="flex items-center gap-2.5 font-mono text-xs text-slate-300 flex-wrap">
+          <span>Target Size: <strong className="text-white font-bold">${positionSize}</strong></span>
+          <span className="text-slate-600">|</span>
           <span>Confidence: <strong className="text-white font-bold">{confidenceThreshold}%</strong></span>
           <span className="text-slate-600">|</span>
           <span>R:R: <strong className="text-white font-bold">{riskRewardRatio}:1</strong></span>
@@ -1363,12 +1355,20 @@ export default function Fast5MBoard() {
                 <div>
                   <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
                     Settings & Risk Configuration Dashboard
-                    <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
-                      Full Administrative Access
-                    </span>
+                    {isAdmin ? (
+                      <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                        Full Administrative Access
+                      </span>
+                    ) : (
+                      <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-1">
+                        <Lock className="w-3 h-3" /> Read-Only Mode
+                      </span>
+                    )}
                   </h2>
                   <p className="text-xs text-slate-500 font-medium">
-                    Manual adjustments to Risk—to—Reward ratio, active quantitative filters, indicator weights, and default profiles
+                    {isAdmin
+                      ? "Manual adjustments to Risk—to—Reward ratio, active quantitative filters, indicator weights, and default profiles"
+                      : "Administrative parameter protection: All trading configurations and risk limits are centrally managed by platform administration."}
                   </p>
                 </div>
               </div>
@@ -1389,19 +1389,7 @@ export default function Fast5MBoard() {
                 </div>
               )}
 
-              {/* Restore Defaults Button */}
-              <button
-                type="button"
-                onClick={handleRestoreDefaults}
-                disabled={restoringDefaults || savingSettings || savingAsDefault}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200"
-                title="Restore settings to saved default baseline"
-              >
-                <RotateCcw className={`w-3.5 h-3.5 ${restoringDefaults ? 'animate-spin' : ''}`} />
-                <span>{restoringDefaults ? 'Restoring...' : 'Restore Defaults'}</span>
-              </button>
-
-              {/* Reset Demo Account Button */}
+              {/* Reset Demo Account Button (available to all users to reset their own virtual demo balance) */}
               <button
                 type="button"
                 onClick={() => setResetModalOpen(true)}
@@ -1413,40 +1401,77 @@ export default function Fast5MBoard() {
                 <span>{resettingDemo ? 'Resetting...' : 'Reset Demo ($300)'}</span>
               </button>
 
-              {/* Save as Default Button */}
-              <button
-                type="button"
-                onClick={handleSaveAsDefault}
-                disabled={savingAsDefault || savingSettings || restoringDefaults}
-                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
-                title="Save current custom configuration as permanent default profile"
-              >
-                <BookmarkCheck className={`w-3.5 h-3.5 ${savingAsDefault ? 'animate-spin' : ''}`} />
-                <span>{savingAsDefault ? 'Saving Default...' : 'Save as Default'}</span>
-              </button>
+              {isAdmin && (
+                <>
+                  {/* Restore Defaults Button */}
+                  <button
+                    type="button"
+                    onClick={handleRestoreDefaults}
+                    disabled={restoringDefaults || savingSettings || savingAsDefault}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200"
+                    title="Restore settings to saved default baseline"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 ${restoringDefaults ? 'animate-spin' : ''}`} />
+                    <span>{restoringDefaults ? 'Restoring...' : 'Restore Defaults'}</span>
+                  </button>
 
-              {/* Save All Settings (Active Apply) */}
-              <button
-                type="button"
-                onClick={handleSaveAllSettings}
-                disabled={savingSettings || savingAsDefault || restoringDefaults}
-                className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 cursor-pointer transition-all"
-              >
-                {savingSettings ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Synchronizing...
-                  </>
-                ) : (
-                  <>
-                    <Shield className="w-3.5 h-3.5" /> Save All Settings
-                  </>
-                )}
-              </button>
+                  {/* Save as Default Button */}
+                  <button
+                    type="button"
+                    onClick={handleSaveAsDefault}
+                    disabled={savingAsDefault || savingSettings || restoringDefaults}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                    title="Save current custom configuration as permanent default profile"
+                  >
+                    <BookmarkCheck className={`w-3.5 h-3.5 ${savingAsDefault ? 'animate-spin' : ''}`} />
+                    <span>{savingAsDefault ? 'Saving Default...' : 'Save as Default'}</span>
+                  </button>
+
+                  {/* Save All Settings (Active Apply) */}
+                  <button
+                    type="button"
+                    onClick={handleSaveAllSettings}
+                    disabled={savingSettings || savingAsDefault || restoringDefaults}
+                    className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                  >
+                    {savingSettings ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Synchronizing...
+                      </>
+                    ) : (
+                      <>
+                        <Shield className="w-3.5 h-3.5" /> Save All Settings
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
+          {/* Non-Admin Prominent Warning Banner */}
+          {!isAdmin && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-2xl text-xs flex items-center gap-3 shadow-xs">
+              <div className="p-2 bg-amber-100 text-amber-700 rounded-xl shrink-0">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="font-bold text-amber-950 text-sm flex items-center gap-2">
+                  <span>Administrative Control Enforced (Read-Only Mode)</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-200/80 text-amber-900">
+                    shalombinrasheed@gmail.com
+                  </span>
+                </div>
+                <p className="text-amber-800 leading-relaxed">
+                  Trading rules, risk parameters, quantitative weights, and execution sizes are centrally managed by the platform Super Admin. All configuration fields below are displayed in read-only mode for your transparency and inspection.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* MAIN 3-PANEL CONFIGURATION GRID */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <fieldset disabled={!isAdmin} className={`border-0 p-0 m-0 ${!isAdmin ? 'opacity-85 pointer-events-none select-none' : ''}`}>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
             {/* PANEL 1: MANUAL RISK—TO—REWARD RATIO & TARGETS */}
             <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
@@ -2322,6 +2347,7 @@ export default function Fast5MBoard() {
             </div>
 
           </div>
+          </fieldset>
         </div>
       )}
 

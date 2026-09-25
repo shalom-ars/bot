@@ -149,6 +149,9 @@ class FastScorer:
 
         raw_asset_liq = cfg.get(f"min_liquidity_usd_{asset_lower}")
         min_liquidity = float(raw_asset_liq) if raw_asset_liq is not None and float(raw_asset_liq) > 0 else float(cfg.get("min_liquidity_usd", 100.0))
+        # Adaptive liquidity bound: ensure smaller trades (e.g. $1 - $10) are not blocked by huge book depth checks
+        pos_size = float(cfg.get("position_size_usd", 10.0))
+        effective_min_liq = max(10.0, min(min_liquidity, pos_size * 5.0))
 
         min_time = float(cfg.get("min_time_remaining", 20.0))
         max_time = float(cfg.get("max_time_remaining", 280.0))
@@ -309,9 +312,9 @@ class FastScorer:
         elif spread > max_spread:
             is_tradable = False
             rejection_reason = f"{asset} spread too wide ({spread*100:.1f}% > {max_spread*100:.1f}%)"
-        elif liquidity < min_liquidity:
+        elif liquidity < effective_min_liq:
             is_tradable = False
-            rejection_reason = f"{asset} liquidity too low (${liquidity:.0f} < ${min_liquidity:.0f})"
+            rejection_reason = f"{asset} liquidity too low (${liquidity:.0f} < ${effective_min_liq:.0f})"
         elif confidence < threshold:
             is_tradable = False
             rejection_reason = f"Confidence {confidence:.1f} < threshold {threshold:.1f}"
