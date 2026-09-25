@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   Shield, CheckCircle2, AlertTriangle, XCircle, 
-  RefreshCw, Search, Wallet, Check, Zap, Clock
+  RefreshCw, Search, Wallet, Check, Zap, Clock,
+  Trash2
 } from 'lucide-react';
 
 interface UserRecord {
@@ -37,6 +38,8 @@ export default function AdminConsoleTab() {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+  const [userToDelete, setUserToDelete] = useState<UserRecord | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   
   // Filters
@@ -124,6 +127,33 @@ export default function AdminConsoleTab() {
       });
     } finally {
       setActionLoadingId(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId: number, email: string) => {
+    setDeleteLoading(true);
+    setNotification(null);
+    try {
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.delete(`/api/admin/users/${userId}`, { headers });
+      
+      setNotification({
+        type: 'success',
+        message: res.data?.message || `User #${userId} (${email}) and all associated records have been permanently deleted.`
+      });
+
+      // Optimistic removal from table
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      setUserToDelete(null);
+      fetchAdminData();
+    } catch (err: any) {
+      setNotification({
+        type: 'error',
+        message: err?.response?.data?.detail || `Failed to delete user #${userId}.`
+      });
+      setUserToDelete(null);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -348,7 +378,8 @@ export default function AdminConsoleTab() {
                 </tr>
               ) : (
                 filteredUsers.map((u) => {
-                  const isPrimaryAdmin = u.email.toLowerCase() === 'shalombinrasheed@gmail.com';
+                  const currentAdminEmail = (localStorage.getItem('user_email') || '').trim().toLowerCase();
+                  const isPrimaryAdmin = u.email.toLowerCase() === 'shalombinrasheed@gmail.com' || (currentAdminEmail !== '' && u.email.toLowerCase() === currentAdminEmail);
                   const isPending = u.status === 'PENDING';
                   const isApproved = u.status === 'APPROVED';
                   const isSuspended = u.status === 'SUSPENDED';
@@ -520,6 +551,17 @@ export default function AdminConsoleTab() {
                                 <span>Grant Real</span>
                               </button>
                             )}
+                            {/* Delete Button */}
+                            <button
+                              type="button"
+                              disabled={isLoading || deleteLoading}
+                              onClick={() => setUserToDelete(u)}
+                              className="px-2 py-1 bg-red-950/60 hover:bg-red-900 border border-red-700/60 text-red-300 font-bold text-[10px] rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              title="Permanently delete user and cascade all associated records"
+                            >
+                              <Trash2 className="w-3 h-3 text-red-400" />
+                              <span>Delete</span>
+                            </button>
                           </div>
                         )}
                       </td>
@@ -531,6 +573,61 @@ export default function AdminConsoleTab() {
           </table>
         </div>
       </div>
+
+      {/* CONFIRMATION DIALOG FOR USER DELETION */}
+      {userToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#161b22] border-2 border-red-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-red-500/20 text-red-400 rounded-xl">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Delete User Account</h3>
+                <p className="text-xs text-slate-400">Irreversible Database Cascade Action</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-red-950/40 border border-red-500/30 rounded-xl space-y-2 text-xs">
+              <p className="text-slate-200">
+                Are you sure you want to permanently delete user <strong className="text-white font-mono">{userToDelete.email}</strong> (ID #{userToDelete.id})?
+              </p>
+              <p className="text-red-300 text-[11px] leading-relaxed">
+                ⚠️ <strong>Cascade Warning:</strong> This action will permanently remove all associated trading vaults, positions, trade records, wallet links, credentials, and settings. This cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={deleteLoading}
+                onClick={() => setUserToDelete(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteLoading}
+                onClick={() => handleDeleteUser(userToDelete.id, userToDelete.email)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl shadow-md shadow-red-600/30 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {deleteLoading ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,7 +5,11 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 from app.db.session import get_db
-from app.db.models import User, UserPortfolio, UserTrade, AuditLog, Subscription, Fast5MUserVault, Fast5MTrade
+from app.db.models import (
+    User, UserPortfolio, UserTrade, UserPosition, UserSetting,
+    UsageRecord, AuditLog, Subscription, Fast5MUserVault,
+    Fast5MTrade, Fast5MUserSetting
+)
 from app.api.security import get_current_super_admin
 
 router = APIRouter()
@@ -178,6 +182,87 @@ def update_user_mode(
         "email": user.email,
         "allowed_mode": user.allowed_mode
     }
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_super_admin)
+):
+    """
+    Permanently delete a user record from the platform.
+    Cascades and deletes user sessions, wallets, vaults, trades, positions, settings, and credentials safely.
+    Enforces admin authentication and strictly prevents admins from deleting themselves.
+    """
+    # 1. Admin self-deletion prevention
+    if admin.id == user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Admins cannot delete their own account."
+        )
+
+    # 2. Check if user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail=f"User #{user_id} not found."
+        )
+
+    # 3. Protect configured primary admin email and logged-in admin email
+    from app.config import settings
+    configured_admin = getattr(settings, "admin_email", "shalombinrasheed@gmail.com").strip().lower()
+    target_email = (user.email or "").strip().lower()
+    admin_email = (admin.email or "").strip().lower()
+    
+    if target_email == configured_admin or target_email == admin_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Admins cannot delete their own account or primary Super Administrator account."
+        )
+
+    user_email = user.email
+
+    try:
+        # 4. Safe Cascade Deletion:
+        # Fast 5M Trades, Vaults, and Settings
+        db.query(Fast5MTrade).filter(Fast5MTrade.user_id == user_id).delete(synchronize_session=False)
+        db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == user_id).delete(synchronize_session=False)
+        db.query(Fast5MUserSetting).filter(Fast5MUserSetting.user_id == user_id).delete(synchronize_session=False)
+
+        # SaaS Portfolios, Trades, Positions, Settings, Subscriptions, and Usage Records
+        db.query(UserTrade).filter(UserTrade.user_id == user_id).delete(synchronize_session=False)
+        db.query(UserPosition).filter(UserPosition.user_id == user_id).delete(synchronize_session=False)
+        db.query(UserPortfolio).filter(UserPortfolio.user_id == user_id).delete(synchronize_session=False)
+        db.query(UserSetting).filter(UserSetting.user_id == user_id).delete(synchronize_session=False)
+        db.query(Subscription).filter(Subscription.user_id == user_id).delete(synchronize_session=False)
+        db.query(UsageRecord).filter(UsageRecord.user_id == user_id).delete(synchronize_session=False)
+
+        # 5. Record Audit Log before removing user
+        db.add(AuditLog(
+            action="USER_DELETED",
+            details=f"Admin #{admin.id} ({admin.email}) permanently deleted user #{user_id} ({user_email}) and cascaded all associated records."
+        ))
+
+        # 6. Delete User Record
+        db.delete(user)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Successfully deleted User #{user_id} ({user_email}) and all associated records.",
+            "deleted_user_id": user_id,
+            "deleted_email": user_email
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cascade delete user #{user_id}: {str(e)}"
+        )
 
 
 @router.get("/audit_logs")

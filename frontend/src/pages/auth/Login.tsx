@@ -43,6 +43,11 @@ export default function Login() {
 
   const [error, setError] = useState<string | null>(null);
 
+  const getOAuthRedirectUri = () => {
+    if (typeof window === 'undefined') return 'http://localhost:5173/login';
+    return `${window.location.origin}/login`;
+  };
+
   useEffect(() => {
     const qMode = searchParams.get('mode');
     if (qMode === 'demo') {
@@ -51,7 +56,47 @@ export default function Login() {
       setIsWalletSelectorOpen(true);
     }
 
-    // Check for Google OAuth callback in URL hash (from popup or redirect)
+    // 1. Check for Google OAuth errors in query parameters
+    const qError = searchParams.get('error') || searchParams.get('error_description');
+    if (qError) {
+      setError(`Google authentication failed: ${qError}`);
+      window.history.replaceState(null, '', window.location.pathname);
+      return;
+    }
+
+    // 2. Check for session token returned via backend redirect
+    const qToken = searchParams.get('token');
+    if (qToken) {
+      localStorage.setItem('token', qToken);
+      localStorage.setItem('account_mode', 'demo');
+      localStorage.setItem('auth_provider', 'google');
+      window.history.replaceState(null, '', window.location.pathname);
+      client.get('/auth/me').then(res => {
+        applyAuthSession(qToken, res.data);
+      }).catch(() => {
+        navigate('/app');
+      });
+      return;
+    }
+
+    // 3. Check for Google OAuth authorization code in query parameters
+    const qCode = searchParams.get('code');
+    if (qCode) {
+      if (window.opener && window.opener !== window) {
+        try {
+          window.opener.postMessage({ type: 'GOOGLE_OAUTH_CODE', code: qCode }, window.location.origin);
+          window.close();
+          return;
+        } catch (e) {
+          console.debug('Opener postMessage notice', e);
+        }
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+      handleGoogleCodeExchange(qCode, getOAuthRedirectUri());
+      return;
+    }
+
+    // 4. Check for Google OAuth callback in URL hash (implicit flow fallback)
     if (typeof window !== 'undefined' && window.location.hash) {
       const hash = window.location.hash;
       if (hash.includes('access_token=') || hash.includes('id_token=')) {
@@ -65,6 +110,17 @@ export default function Login() {
       }
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'GOOGLE_OAUTH_CODE' && event.data.code) {
+        handleGoogleCodeExchange(event.data.code, getOAuthRedirectUri());
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   // Available Web3 Wallets with detection
   const getWalletOptions = (): WalletOption[] => {
@@ -158,38 +214,62 @@ export default function Login() {
     }
   };
 
-  // Common processor for Google authentication payloads
+  // Common helper to store session and route user into dashboard
+  const applyAuthSession = (access_token: string, user: any) => {
+    const userEmail = (user?.email || '').trim().toLowerCase();
+    const isAdmin = userEmail === 'shalombinrasheed@gmail.com';
+    const userStatus = isAdmin ? 'APPROVED' : (user?.status || 'PENDING');
+    const userRole = isAdmin ? 'SUPER_ADMIN' : (user?.role || 'USER');
+
+    localStorage.setItem('token', access_token);
+    localStorage.setItem('user_email', userEmail);
+    localStorage.setItem('user_role', userRole);
+    localStorage.setItem('user_status', userStatus);
+    localStorage.setItem('allowed_mode', user?.allowed_mode || (isAdmin ? 'REAL_AND_DEMO' : 'DEMO_ONLY'));
+    localStorage.setItem('account_mode', 'demo');
+    localStorage.setItem('auth_provider', 'google');
+    if (user?.wallet_address) {
+      localStorage.setItem('wallet_address', user.wallet_address);
+    }
+
+    try {
+      client.post('/fast5m/wallet/mode', { mode: 'demo' }).catch(() => {});
+    } catch (e) {
+      console.debug('Mode sync note', e);
+    }
+
+    setIsDemoModalOpen(false);
+    navigate('/app');
+  };
+
+  // Google OAuth authorization code exchange
+  const handleGoogleCodeExchange = async (code: string, redirectUri?: string) => {
+    setGoogleLoading(true);
+    setError(null);
+    try {
+      const effectiveRedirectUri = redirectUri || getOAuthRedirectUri();
+      const res = await client.post('/auth/google/callback', {
+        code,
+        redirect_uri: effectiveRedirectUri
+      });
+      const { access_token, user } = res.data;
+      applyAuthSession(access_token, user);
+    } catch (err: any) {
+      console.error('Google authorization code exchange error:', err);
+      setError(err?.response?.data?.detail || 'Google authentication failed. Please try again.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  // Common processor for Google authentication payloads (access_token, id_token, direct email)
   const processGoogleAuthPayload = async (payload: { access_token?: string; id_token?: string; credential?: string; email?: string }) => {
     setGoogleLoading(true);
     setError(null);
     try {
       const res = await client.post('/auth/google-login', payload);
       const { access_token, user } = res.data;
-
-      const userEmail = (user?.email || payload.email || '').trim().toLowerCase();
-      const isAdmin = userEmail === 'shalombinrasheed@gmail.com';
-      const userStatus = isAdmin ? 'APPROVED' : (user?.status || 'PENDING');
-      const userRole = isAdmin ? 'SUPER_ADMIN' : (user?.role || 'USER');
-
-      localStorage.setItem('token', access_token);
-      localStorage.setItem('user_email', userEmail);
-      localStorage.setItem('user_role', userRole);
-      localStorage.setItem('user_status', userStatus);
-      localStorage.setItem('allowed_mode', user?.allowed_mode || (isAdmin ? 'REAL_AND_DEMO' : 'DEMO_ONLY'));
-      localStorage.setItem('account_mode', 'demo');
-      localStorage.setItem('auth_provider', 'google');
-      if (user?.wallet_address) {
-        localStorage.setItem('wallet_address', user.wallet_address);
-      }
-
-      try {
-        await client.post('/fast5m/wallet/mode', { mode: 'demo' });
-      } catch (e) {
-        console.debug('Mode sync note', e);
-      }
-
-      setIsDemoModalOpen(false);
-      navigate('/app');
+      applyAuthSession(access_token, user);
     } catch (err: any) {
       console.error('Google sign-in error:', err);
       setError(err?.response?.data?.detail || 'Google sign-in failed. Please try again.');
@@ -198,63 +278,97 @@ export default function Login() {
     }
   };
 
+  // Open Google OAuth popup window with URL
+  const openGoogleOAuthUrlPopup = (url: string, redirectUri: string) => {
+    const width = 520;
+    const height = 640;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+
+    const popup = window.open(
+      url,
+      'google_oauth_select_account',
+      `width=${width},height=${height},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+    );
+
+    if (!popup || popup.closed) {
+      window.location.href = url;
+      return;
+    }
+
+    const pollTimer = setInterval(async () => {
+      try {
+        if (!popup || popup.closed) {
+          clearInterval(pollTimer);
+          setGoogleLoading(false);
+          return;
+        }
+
+        if (popup.location && popup.location.origin === window.location.origin) {
+          const search = popup.location.search;
+          const hash = popup.location.hash;
+
+          if (search) {
+            const pParams = new URLSearchParams(search);
+            const code = pParams.get('code');
+            const err = pParams.get('error') || pParams.get('error_description');
+            const token = pParams.get('token');
+
+            if (code || err || token) {
+              clearInterval(pollTimer);
+              popup.close();
+
+              if (err) {
+                setError(`Google authentication failed: ${err}`);
+                setGoogleLoading(false);
+                return;
+              }
+              if (token) {
+                applyAuthSession(token, { email: '' });
+                return;
+              }
+              if (code) {
+                await handleGoogleCodeExchange(code, redirectUri);
+                return;
+              }
+            }
+          }
+
+          if (hash && (hash.includes('access_token=') || hash.includes('id_token='))) {
+            clearInterval(pollTimer);
+            popup.close();
+            const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
+            const accessTok = hashParams.get('access_token');
+            const idTok = hashParams.get('id_token');
+            processGoogleAuthPayload({ access_token: accessTok || undefined, id_token: idTok || undefined });
+          }
+        }
+      } catch {
+        // Cross-origin access expected while user is selecting account on accounts.google.com
+      }
+    }, 500);
+  };
+
   // Popup window fallback for Google OAuth enforcing prompt=select_account
   const openGoogleOAuthPopup = (clientId: string) => {
     try {
-      const redirectUri = window.location.origin + '/login';
+      const redirectUri = getOAuthRedirectUri();
       const stateNonce = Math.random().toString(36).substring(2, 12);
       sessionStorage.setItem('oauth_state', stateNonce);
 
+      // Enforce valid query parameters: prompt=select_account, client_id, redirect_uri, response_type=code, and scope
       const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
-        response_type: 'token id_token',
+        response_type: 'code',
         scope: 'openid email profile',
-        prompt: 'select_account', // FORCES GOOGLE EMAIL SELECTION WINDOW
-        state: stateNonce,
-        nonce: Math.random().toString(36).substring(2, 12)
+        prompt: 'select_account',
+        access_type: 'offline',
+        state: stateNonce
       });
 
       const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-      const width = 500;
-      const height = 620;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
-
-      const popup = window.open(
-        url,
-        'google_oauth_select_account',
-        `width=${width},height=${height},left=${left},top=${top},status=no,toolbar=no,menubar=no`
-      );
-
-      if (!popup || popup.closed) {
-        // Pop-up blocked, redirect directly
-        window.location.href = url;
-        return;
-      }
-
-      const pollTimer = setInterval(() => {
-        try {
-          if (!popup || popup.closed) {
-            clearInterval(pollTimer);
-            setGoogleLoading(false);
-            return;
-          }
-          if (popup.location && popup.location.origin === window.location.origin) {
-            const hash = popup.location.hash;
-            if (hash && (hash.includes('access_token=') || hash.includes('id_token='))) {
-              clearInterval(pollTimer);
-              popup.close();
-              const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
-              const accessTok = hashParams.get('access_token');
-              const idTok = hashParams.get('id_token');
-              processGoogleAuthPayload({ access_token: accessTok || undefined, id_token: idTok || undefined });
-            }
-          }
-        } catch {
-          // Cross-origin access expected while user is selecting account on accounts.google.com
-        }
-      }, 500);
+      openGoogleOAuthUrlPopup(url, redirectUri);
     } catch (err: any) {
       console.warn('OAuth popup launch note:', err);
       setGoogleLoading(false);
@@ -263,46 +377,27 @@ export default function Login() {
   };
 
   // Trigger Google OAuth flow with explicit prompt: 'select_account'
-  const triggerGoogleOAuthFlow = () => {
+  const triggerGoogleOAuthFlow = async () => {
     setGoogleLoading(true);
     setError(null);
 
+    const redirectUri = getOAuthRedirectUri();
     const googleClientId =
       (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
       '249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com';
 
-    // 1. Google Identity Services (GIS) OAuth2 client with prompt: 'select_account'
-    if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
-      try {
-        const clientObj = (window as any).google.accounts.oauth2.initTokenClient({
-          client_id: googleClientId,
-          scope: 'email profile openid',
-          prompt: 'select_account', // FORCES ACCOUNT SELECTION WINDOW
-          callback: async (tokenResponse: any) => {
-            if (tokenResponse.error) {
-              if (tokenResponse.error !== 'popup_closed_by_user') {
-                setError(tokenResponse.error_description || tokenResponse.error || 'Google account selection was cancelled');
-              }
-              setGoogleLoading(false);
-              return;
-            }
-            if (tokenResponse.access_token) {
-              await processGoogleAuthPayload({ access_token: tokenResponse.access_token });
-            }
-          },
-          error_callback: (err: any) => {
-            console.warn('GIS initTokenClient error callback:', err);
-            openGoogleOAuthPopup(googleClientId);
-          }
-        });
-        clientObj.requestAccessToken({ prompt: 'select_account' });
+    // 1. Fetch formatted OAuth authorization URL from backend
+    try {
+      const res = await client.get(`/auth/google/url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+      if (res.data?.auth_url) {
+        openGoogleOAuthUrlPopup(res.data.auth_url, redirectUri);
         return;
-      } catch (e) {
-        console.warn('Google GIS error, opening popup:', e);
       }
+    } catch (e) {
+      console.debug('Backend auth url endpoint note, using standard authorization URL', e);
     }
 
-    // 2. Fallback popup window with prompt=select_account
+    // 2. Standard authorization URL popup with prompt=select_account
     openGoogleOAuthPopup(googleClientId);
   };
 

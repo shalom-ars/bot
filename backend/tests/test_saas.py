@@ -85,12 +85,12 @@ def test_rbac_admin_dashboard_forbidden_for_user():
     response = client.get("/api/admin/dashboard", headers={"Authorization": f"Bearer {token}"})
     
     assert response.status_code == 403
-    assert response.json()["detail"] == "The user doesn't have enough privileges"
+    assert "Forbidden: Admin Panel access is strictly restricted" in response.json()["detail"]
 
 def test_rbac_admin_dashboard_allowed_for_admin():
     def override_rbac_admin_db():
         db = MagicMock()
-        mock_admin = MagicMock(id=2, is_active=True, role="ADMIN")
+        mock_admin = MagicMock(id=2, email="shalombinrasheed@gmail.com", is_active=True, role="SUPER_ADMIN", status="APPROVED")
         db.query().filter().first.return_value = mock_admin
         db.query().count.return_value = 10
         yield db

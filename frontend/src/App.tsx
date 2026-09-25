@@ -24,6 +24,10 @@ export default function App() {
         <Route element={<AuthLayout />}>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/auth/callback" element={<Login />} />
+          <Route path="/login/callback" element={<Login />} />
+          <Route path="/auth/google/callback" element={<Login />} />
+          <Route path="/callback" element={<Login />} />
         </Route>
 
         {/* Protected Dashboard Routes */}

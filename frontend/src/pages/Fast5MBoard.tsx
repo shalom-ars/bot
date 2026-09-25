@@ -1070,13 +1070,14 @@ export default function Fast5MBoard() {
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5 pb-12 font-sans text-slate-100">
       
       {/* 1. TOP NAVIGATION BAR */}
-      <header className="bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-2.5 sm:px-5 sm:py-3 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        {/* Left: Brand Logo + Platform Name "Jonanda Bot" + Shalom Bin Rasheed + Navigation Links */}
-        <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-          <div className="flex items-center gap-2.5 pr-2 sm:pr-4 border-r border-[#30363d]">
-            <BrandLogo size={36} glow={true} />
+      <header className="bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-2.5 sm:px-5 sm:py-3 shadow-md flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+        {/* Left: Brand Logo + "Jonanda Bot" + All Tabs in a Single Horizontal Line */}
+        <div className="flex items-center gap-2 sm:gap-3 flex-nowrap shrink-0 overflow-x-auto">
+          {/* Brand Logo & Name */}
+          <div className="flex items-center gap-2.5 pr-2 sm:pr-3 border-r border-[#30363d] shrink-0">
+            <BrandLogo size={34} glow={true} />
             <div>
-              <div className="text-sm font-black text-white tracking-tight flex items-center gap-1.5">
+              <div className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 whitespace-nowrap">
                 <span className="bg-gradient-to-r from-blue-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent font-black tracking-wide">
                   Jonanda Bot
                 </span>
@@ -1086,7 +1087,7 @@ export default function Fast5MBoard() {
                   </span>
                 )}
               </div>
-              <div className="text-[10px] text-slate-400 font-mono -mt-0.5 flex items-center gap-1">
+              <div className="text-[10px] text-slate-400 font-mono -mt-0.5 flex items-center gap-1 whitespace-nowrap">
                 <span>Shalom Bin Rasheed</span>
                 <span className="text-slate-600">•</span>
                 <span className="text-emerald-400 font-semibold">5M Engine</span>
@@ -1094,11 +1095,12 @@ export default function Fast5MBoard() {
             </div>
           </div>
 
-          <nav className="flex items-center gap-1 sm:gap-1.5 text-xs font-bold">
+          {/* Navigation Tabs in Single Continuous Line */}
+          <nav className="flex items-center gap-1 sm:gap-1.5 text-xs font-bold shrink-0">
             <button
               type="button"
               onClick={() => setActiveTab('board')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'board'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1113,14 +1115,14 @@ export default function Fast5MBoard() {
                 const el = document.getElementById('fast5m-markets-grid');
                 if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50 transition-all cursor-pointer"
+              className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50 transition-all cursor-pointer whitespace-nowrap"
             >
               Markets
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('scoring')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'scoring'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1131,18 +1133,18 @@ export default function Fast5MBoard() {
             <button
               type="button"
               onClick={() => setActiveTab('settings')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'settings'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
               }`}
             >
-              Settings & Risk
+              Settings
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('trades')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'trades'
                   ? 'bg-[#21262d] text-white border border-[#30363d] shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d]/50'
@@ -1154,7 +1156,7 @@ export default function Fast5MBoard() {
               <button
                 type="button"
                 onClick={() => setActiveTab('admin')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                   activeTab === 'admin'
                     ? 'bg-purple-600/30 text-purple-200 border border-purple-500/50 shadow-xs'
                     : 'text-purple-400 hover:text-purple-200 hover:bg-purple-950/40 border border-purple-900/30'
@@ -1167,65 +1169,72 @@ export default function Fast5MBoard() {
           </nav>
         </div>
 
-        {/* Right: Action Buttons (Deposit, Emergency Stop, Wallet, Logout) */}
-        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
-          {/* 1. Deposit Button */}
+        {/* Right: Unified Deposit/Withdraw, Compact Emergency Stop next to Wallet, Corner Logout */}
+        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
+          {/* 1. Unified Deposit / Withdraw Button */}
           <button
             type="button"
             onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
-            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1 cursor-pointer"
-            title="Deposit / Allocate Capital to Bot Vault"
+            className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+            title="Deposit or Withdraw Capital to/from Trading Vault"
           >
-            <span className="text-sm font-black leading-none">+</span>
-            <span>Deposit</span>
+            <ArrowDownToLine className="w-3.5 h-3.5" />
+            <span>Deposit / Withdraw</span>
           </button>
 
-          {/* 2. Emergency Stop Button */}
+          {/* 2. Compact Emergency Stop Button (Shrunk size, aligned right next to Wallet) */}
           {isAdmin ? (
             board?.auto_trading_active ? (
               <button
                 type="button"
                 onClick={handleEmergencyStop}
                 disabled={toggling}
-                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-rose-900/30 transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
+                className="px-2.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 animate-pulse border border-rose-500/40"
                 title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-white" />
-                <span>Emergency Stop</span>
+                <span className="hidden sm:inline">Emergency Stop</span>
+                <span className="sm:hidden">Stop</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={handleEmergencyStart}
                 disabled={toggling}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-900/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-2.5 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 border border-emerald-500/40"
                 title="Resume Engine: Re-arm automated execution"
               >
                 <Play className="w-3.5 h-3.5 text-white" />
-                <span>Resume Engine</span>
+                <span className="hidden sm:inline">Resume Engine</span>
+                <span className="sm:hidden">Resume</span>
               </button>
             )
           ) : (
-            <div className="px-3 py-1.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs font-mono text-slate-300 flex items-center gap-1.5">
+            <div className="px-2.5 py-1.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-300 flex items-center gap-1.5 shrink-0">
               <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-              <span>{board?.auto_trading_active ? 'Engine Armed' : 'Engine Paused'}</span>
+              <span>{board?.auto_trading_active ? 'Armed' : 'Paused'}</span>
             </div>
           )}
 
-          {/* 3. Wallet Button */}
+          {/* 3. Wallet Button (Immediately next to Emergency Stop) with Real-Time Balance Display */}
           <button
             type="button"
             onClick={() => setWalletModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer"
-            title="Open Web3 Wallet Controls & Vault"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer shrink-0"
+            title="Open Web3 Wallet Controls & Balance"
           >
             <Wallet className={`w-3.5 h-3.5 ${isRealAccount ? 'text-emerald-400' : 'text-blue-400'}`} />
             <span className="font-bold">{isRealAccount ? 'Real Wallet' : 'Wallet'}</span>
-            <span className="text-slate-400 text-[11px]">
+            <span className={`text-[11px] font-bold ${isRealAccount ? 'text-emerald-400' : 'text-blue-300'}`}>
               {isRealAccount
-                ? `($${(walletInfo?.usdc_total ?? 0).toFixed(0)})`
-                : `($${currentVaultAllocated.toFixed(0)})`}
+                ? `($${(walletInfo?.usdc_total ?? 0).toFixed(2)})`
+                : `($${currentVaultAllocated.toFixed(2)})`}
             </span>
+            {isRealAccount && walletInfo?.pol_gas_balance != null && (
+              <span className="text-[10px] text-purple-400 hidden 2xl:inline">
+                • {walletInfo.pol_gas_balance.toFixed(3)} POL
+              </span>
+            )}
           </button>
 
           {/* 4. Disconnect Button (Prominent disconnect option for connected Web3 personal wallets) */}
@@ -1233,23 +1242,25 @@ export default function Fast5MBoard() {
             <button
               type="button"
               onClick={handleDisconnectWallet}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-[11px] font-bold transition-all cursor-pointer shrink-0"
               title="Disconnect Web3 Wallet (Switch back to Safe Demo)"
             >
-              <Unlink className="w-3.5 h-3.5 text-rose-400" />
+              <Unlink className="w-3 h-3 text-rose-400" />
               <span className="hidden sm:inline">Disconnect</span>
             </button>
           )}
 
-          {/* User Logout */}
-          <button
-            type="button"
-            onClick={handleLogout}
-            title="Log Out / Disconnect Session"
-            className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          {/* 5. User Logout placed at the absolute far corner */}
+          <div className="pl-1 sm:pl-2 border-l border-[#30363d] shrink-0">
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Log Out / Disconnect Session"
+              className="p-2 bg-[#0d1117] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/50 text-slate-400 hover:text-rose-300 rounded-xl transition-all cursor-pointer flex items-center justify-center"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -4354,24 +4365,32 @@ export default function Fast5MBoard() {
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Primary Wallet Reserve</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                      {isRealAccount ? 'Connected Wallet Balance' : 'Demo Wallet Reserve'}
+                    </span>
                     <span className="text-sm font-black text-slate-800 font-mono">
                       ${vaultInfo?.account_mode === 'live' 
-                        ? (vaultInfo?.total_wallet_balance != null ? vaultInfo.total_wallet_balance.toFixed(2) : '0.00') 
+                        ? (walletInfo?.usdc_total != null ? walletInfo.usdc_total.toFixed(2) : (vaultInfo?.total_wallet_balance != null ? vaultInfo.total_wallet_balance.toFixed(2) : '0.00')) 
                         : '1,000.00'} USDC
+                    </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">
+                      Source: {isRealAccount ? displayAddress : 'Virtual Reserve'}
                     </span>
                   </div>
                   <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-indigo-500 block">Currently Allocated</span>
+                    <span className="text-[10px] uppercase font-bold text-indigo-500 block">Dashboard Trading Vault</span>
                     <span className="text-sm font-black text-indigo-950 font-mono">
                       ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'} USDC
+                    </span>
+                    <span className="text-[10px] text-indigo-600 font-bold block mt-0.5">
+                      Target: Active Bot Margin
                     </span>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-700 block">
-                    Amount to Allocate (USDC):
+                    Amount to Deposit into Dashboard (USDC):
                   </label>
                   <div className="relative">
                     <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">$</span>
@@ -4401,7 +4420,7 @@ export default function Fast5MBoard() {
                     <button
                       type="button"
                       onClick={() => {
-                        const bal = vaultInfo?.account_mode === 'live' ? (vaultInfo?.total_wallet_balance || 50) : 300;
+                        const bal = vaultInfo?.account_mode === 'live' ? (walletInfo?.usdc_total ?? vaultInfo?.total_wallet_balance ?? 50) : 300;
                         setVaultAmountInput(String(Math.max(5, Math.floor(bal * 0.5))));
                       }}
                       className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
@@ -4411,7 +4430,7 @@ export default function Fast5MBoard() {
                     <button
                       type="button"
                       onClick={() => {
-                        const bal = vaultInfo?.account_mode === 'live' ? (vaultInfo?.total_wallet_balance || 100) : 300;
+                        const bal = vaultInfo?.account_mode === 'live' ? (walletInfo?.usdc_total ?? vaultInfo?.total_wallet_balance ?? 100) : 300;
                         setVaultAmountInput(String(Math.max(5, Math.floor(bal))));
                       }}
                       className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
@@ -4422,7 +4441,7 @@ export default function Fast5MBoard() {
                 </div>
 
                 <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  🔒 <strong>Hard Execution Bound:</strong> Allocating capital bounds the Fast5M engine&apos;s maximum trading capacity to this amount. The bot cannot commit more margin than your allocated vault limit.
+                  🔒 <strong>Instant Fund Allocation:</strong> Deposited funds move immediately into your active dashboard balance to trade prediction rounds safely within your set risk limits.
                 </p>
 
                 <button
@@ -4432,7 +4451,7 @@ export default function Fast5MBoard() {
                   className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
                 >
                   <ArrowDownToLine className="w-4 h-4" />
-                  <span>{vaultLoading ? 'Allocating Funds...' : `Confirm Deposit of $${parseFloat(vaultAmountInput) || 0} USDC`}</span>
+                  <span>{vaultLoading ? 'Allocating Funds...' : `Confirm Deposit of $${parseFloat(vaultAmountInput) || 0} USDC into Dashboard`}</span>
                 </button>
               </div>
             )}
@@ -4442,19 +4461,19 @@ export default function Fast5MBoard() {
               <div className="space-y-4">
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Allocated Balance</span>
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Dashboard Balance</span>
                     <span className="text-xs font-black text-slate-800 font-mono">
                       ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'}
                     </span>
                   </div>
                   <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                    <span className="text-[9px] uppercase font-bold text-amber-600 block">Locked Margin</span>
+                    <span className="text-[9px] uppercase font-bold text-amber-600 block">Locked in Trades</span>
                     <span className="text-xs font-black text-amber-900 font-mono">
                       ${vaultInfo?.active_margin != null ? vaultInfo.active_margin.toFixed(2) : '0.00'}
                     </span>
                   </div>
                   <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
-                    <span className="text-[9px] uppercase font-bold text-emerald-600 block">Available to Withdraw</span>
+                    <span className="text-[9px] uppercase font-bold text-emerald-600 block">Available to Transfer</span>
                     <span className="text-xs font-black text-emerald-950 font-mono">
                       ${vaultInfo?.available_to_withdraw != null ? vaultInfo.available_to_withdraw.toFixed(2) : '300.00'}
                     </span>
@@ -4472,7 +4491,7 @@ export default function Fast5MBoard() {
 
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-700 block">
-                    Amount to Withdraw (USDC):
+                    Amount to Transfer Back to Wallet (USDC):
                   </label>
                   <div className="relative">
                     <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">$</span>
@@ -4523,6 +4542,10 @@ export default function Fast5MBoard() {
                   </div>
                 </div>
 
+                <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  ↩️ <strong>Direct Return to Connected Wallet:</strong> Withdrawn funds will be transferred directly back into your connected Web3 wallet ({isRealAccount ? displayAddress : 'Demo Reserve'}).
+                </p>
+
                 <button
                   type="button"
                   onClick={() => handleVaultWithdraw(parseFloat(vaultAmountInput) || 0)}
@@ -4534,7 +4557,7 @@ export default function Fast5MBoard() {
                   className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all flex items-center justify-center gap-2"
                 >
                   <ArrowUpFromLine className="w-4 h-4" />
-                  <span>{vaultLoading ? 'De-allocating Funds...' : `Withdraw $${parseFloat(vaultAmountInput) || 0} USDC to Reserve`}</span>
+                  <span>{vaultLoading ? 'Transferring Funds...' : `Transfer $${parseFloat(vaultAmountInput) || 0} USDC Back to Connected Wallet`}</span>
                 </button>
               </div>
             )}

@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     # Admin & Authentication Configuration
     admin_email: str = "shalombinrasheed@gmail.com"
     google_client_id: str = "249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com"
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:5173/login"
 
     class Config:
         env_file = ".env"
