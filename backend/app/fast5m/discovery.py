@@ -221,8 +221,13 @@ class FastMarketTracker:
                 bids = book.get("bids", [])
                 asks = book.get("asks", [])
 
-                raw_bid = float(bids[0]["price"]) if bids else 0.0
-                raw_ask = float(asks[0]["price"]) if asks else 0.0
+                # Polymarket CLOB returns bids ascending and asks descending.
+                # Must sort bids descending (highest first) and asks ascending (lowest first) to get true market quotes.
+                sorted_bids = sorted(bids, key=lambda b: float(b.get("price", 0)), reverse=True)
+                sorted_asks = sorted(asks, key=lambda a: float(a.get("price", 0)))
+
+                raw_bid = float(sorted_bids[0]["price"]) if sorted_bids else 0.0
+                raw_ask = float(sorted_asks[0]["price"]) if sorted_asks else 0.0
 
                 # Use genuine Polymarket CLOB orderbook quotes whenever available
                 if raw_bid > 0.001:
@@ -237,8 +242,8 @@ class FastMarketTracker:
 
                 up_mid = round((up_bid + up_ask) / 2.0, 3)
                 
-                bid_depth = sum(float(b.get("size", 0)) * float(b.get("price", 0)) for b in bids[:5]) if bids else 500.0
-                ask_depth = sum(float(a.get("size", 0)) * float(a.get("price", 0)) for a in asks[:5]) if asks else 500.0
+                bid_depth = sum(float(b.get("size", 0)) * float(b.get("price", 0)) for b in sorted_bids[:5]) if sorted_bids else 500.0
+                ask_depth = sum(float(a.get("size", 0)) * float(a.get("price", 0)) for a in sorted_asks[:5]) if sorted_asks else 500.0
                 
                 market.up_bid = up_bid
                 market.up_ask = up_ask
