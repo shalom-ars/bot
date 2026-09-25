@@ -51,6 +51,25 @@ class SettingsUpdate(BaseModel):
     filter_ema_macd_enabled: Optional[bool] = None
     max_spread: Optional[float] = None
     min_liquidity_usd: Optional[float] = None
+    # Slippage Circuit Breaker on Exit
+    exit_circuit_breaker_enabled: Optional[bool] = None
+    max_exit_slippage_pct: Optional[float] = None
+    # Dedicated Per-Asset Spread & Liquidity Thresholds
+    max_spread_btc: Optional[float] = None
+    min_liquidity_usd_btc: Optional[float] = None
+    max_spread_eth: Optional[float] = None
+    min_liquidity_usd_eth: Optional[float] = None
+    max_spread_sol: Optional[float] = None
+    min_liquidity_usd_sol: Optional[float] = None
+    max_spread_xrp: Optional[float] = None
+    min_liquidity_usd_xrp: Optional[float] = None
+    max_spread_doge: Optional[float] = None
+    min_liquidity_usd_doge: Optional[float] = None
+    max_spread_bnb: Optional[float] = None
+    min_liquidity_usd_bnb: Optional[float] = None
+    max_spread_hype: Optional[float] = None
+    min_liquidity_usd_hype: Optional[float] = None
+    per_asset_controls: Optional[Dict[str, Any]] = None
     save_as_default: Optional[bool] = None
 
 
@@ -238,10 +257,8 @@ def get_fast5m_settings():
     }
 
 
-@router.post("/settings")
-def update_fast5m_settings(payload: SettingsUpdate):
-    """Update Fast 5M settings and optionally persist as permanent custom default baseline."""
-    updates = {}
+def _extract_settings_from_payload(payload: SettingsUpdate) -> Dict[str, str]:
+    updates: Dict[str, str] = {}
     if payload.auto_trading_enabled is not None:
         updates["auto_trading_enabled"] = "true" if payload.auto_trading_enabled else "false"
     if payload.total_balance_usd is not None:
@@ -289,7 +306,6 @@ def update_fast5m_settings(payload: SettingsUpdate):
         pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
         updates["take_profit_dollar"] = str(round(pos_size * (payload.take_profit_pct / 100.0), 2))
     if payload.stop_loss_pct is not None:
-        # Pure unclamped user-defined stop loss %
         updates["stop_loss_pct"] = str(payload.stop_loss_pct)
         pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
         updates["stop_loss_dollar"] = str(round(pos_size * (payload.stop_loss_pct / 100.0), 2))
@@ -318,6 +334,38 @@ def update_fast5m_settings(payload: SettingsUpdate):
     if payload.min_liquidity_usd is not None:
         updates["min_liquidity_usd"] = str(payload.min_liquidity_usd)
 
+    # Slippage Circuit Breaker on Exit
+    if payload.exit_circuit_breaker_enabled is not None:
+        updates["exit_circuit_breaker_enabled"] = "true" if payload.exit_circuit_breaker_enabled else "false"
+    if payload.max_exit_slippage_pct is not None:
+        updates["max_exit_slippage_pct"] = str(payload.max_exit_slippage_pct)
+
+    # Dedicated Per-Asset Spread & Liquidity Thresholds
+    for asset in ["btc", "eth", "sol", "xrp", "doge", "bnb", "hype"]:
+        spr = getattr(payload, f"max_spread_{asset}", None)
+        if spr is not None:
+            updates[f"max_spread_{asset}"] = str(spr)
+        liq = getattr(payload, f"min_liquidity_usd_{asset}", None)
+        if liq is not None:
+            updates[f"min_liquidity_usd_{asset}"] = str(liq)
+
+    if payload.per_asset_controls:
+        for a_key, a_cfg in payload.per_asset_controls.items():
+            if isinstance(a_cfg, dict):
+                a_lower = str(a_key).lower()
+                if "max_spread" in a_cfg:
+                    updates[f"max_spread_{a_lower}"] = str(a_cfg["max_spread"])
+                if "min_liquidity_usd" in a_cfg:
+                    updates[f"min_liquidity_usd_{a_lower}"] = str(a_cfg["min_liquidity_usd"])
+
+    return updates
+
+
+@router.post("/settings")
+def update_fast5m_settings(payload: SettingsUpdate):
+    """Update Fast 5M settings and optionally persist as permanent custom default baseline."""
+    updates = _extract_settings_from_payload(payload)
+
     if payload.save_as_default:
         saved_defaults = fast_executor.save_as_default(updates)
         return {
@@ -334,77 +382,7 @@ def update_fast5m_settings(payload: SettingsUpdate):
 @router.post("/settings/default")
 def save_settings_as_default(payload: Optional[SettingsUpdate] = None):
     """Save current or specified settings as custom default baseline."""
-    updates = {}
-    if payload:
-        if payload.take_profit_dollar is not None:
-            updates["take_profit_dollar"] = str(payload.take_profit_dollar)
-        if payload.stop_loss_dollar is not None:
-            updates["stop_loss_dollar"] = str(payload.stop_loss_dollar)
-        if payload.risk_reward_ratio is not None:
-            updates["risk_reward_ratio"] = str(round(payload.risk_reward_ratio, 2))
-        if payload.take_profit_pct is not None:
-            updates["take_profit_pct"] = str(payload.take_profit_pct)
-            pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
-            updates["take_profit_dollar"] = str(round(pos_size * (payload.take_profit_pct / 100.0), 2))
-        if payload.stop_loss_pct is not None:
-            updates["stop_loss_pct"] = str(payload.stop_loss_pct)
-            pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
-            updates["stop_loss_dollar"] = str(round(pos_size * (payload.stop_loss_pct / 100.0), 2))
-        if payload.buffer_timer_sec is not None:
-            updates["buffer_timer_sec"] = str(max(1.0, min(30.0, payload.buffer_timer_sec)))
-        if payload.position_size_usd is not None:
-            updates["position_size_usd"] = str(payload.position_size_usd)
-        if payload.confidence_threshold is not None:
-            updates["confidence_threshold"] = str(payload.confidence_threshold)
-        if payload.max_active_pools is not None:
-            updates["max_active_pools"] = str(payload.max_active_pools)
-        if payload.multi_pair_min_score is not None:
-            updates["multi_pair_min_score"] = str(payload.multi_pair_min_score)
-        if payload.strategy_direction is not None:
-            updates["strategy_direction"] = str(payload.strategy_direction).upper()
-        if payload.min_profit_to_lock is not None:
-            updates["min_profit_to_lock"] = str(payload.min_profit_to_lock)
-        if payload.reversal_giveback_dollar is not None:
-            updates["reversal_giveback_dollar"] = str(payload.reversal_giveback_dollar)
-        if payload.trailing_lock_enabled is not None:
-            updates["trailing_lock_enabled"] = "true" if payload.trailing_lock_enabled else "false"
-        if payload.trailing_stop_activation_pct is not None:
-            updates["trailing_stop_activation_pct"] = str(payload.trailing_stop_activation_pct)
-        if payload.trailing_stop_distance_pct is not None:
-            updates["trailing_stop_distance_pct"] = str(payload.trailing_stop_distance_pct)
-        if payload.max_portfolio_margin_pct is not None:
-            updates["max_portfolio_margin_pct"] = str(payload.max_portfolio_margin_pct)
-        if payload.filter_delta_enabled is not None:
-            updates["filter_delta_enabled"] = "true" if payload.filter_delta_enabled else "false"
-        if payload.filter_delta_weight is not None:
-            updates["filter_delta_weight"] = str(payload.filter_delta_weight)
-        if payload.filter_obi_enabled is not None:
-            updates["filter_obi_enabled"] = "true" if payload.filter_obi_enabled else "false"
-        if payload.filter_obi_weight is not None:
-            updates["filter_obi_weight"] = str(payload.filter_obi_weight)
-        if payload.filter_momentum_enabled is not None:
-            updates["filter_momentum_enabled"] = "true" if payload.filter_momentum_enabled else "false"
-        if payload.filter_momentum_weight is not None:
-            updates["filter_momentum_weight"] = str(payload.filter_momentum_weight)
-        if payload.filter_rsi_enabled is not None:
-            updates["filter_rsi_enabled"] = "true" if payload.filter_rsi_enabled else "false"
-        if payload.filter_bb_enabled is not None:
-            updates["filter_bb_enabled"] = "true" if payload.filter_bb_enabled else "false"
-        if payload.filter_ema_macd_enabled is not None:
-            updates["filter_ema_macd_enabled"] = "true" if payload.filter_ema_macd_enabled else "false"
-        if payload.max_spread is not None:
-            updates["max_spread"] = str(payload.max_spread)
-        if payload.min_liquidity_usd is not None:
-            updates["min_liquidity_usd"] = str(payload.min_liquidity_usd)
-        if payload.filter_bb_enabled is not None:
-            updates["filter_bb_enabled"] = "true" if payload.filter_bb_enabled else "false"
-        if payload.filter_ema_macd_enabled is not None:
-            updates["filter_ema_macd_enabled"] = "true" if payload.filter_ema_macd_enabled else "false"
-        if payload.max_spread is not None:
-            updates["max_spread"] = str(payload.max_spread)
-        if payload.min_liquidity_usd is not None:
-            updates["min_liquidity_usd"] = str(payload.min_liquidity_usd)
-
+    updates = _extract_settings_from_payload(payload) if payload else {}
     defaults = fast_executor.save_as_default(updates if updates else None)
     return {
         "status": "success",

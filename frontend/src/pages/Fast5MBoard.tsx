@@ -149,6 +149,18 @@ export default function Fast5MBoard() {
   const [minTimeRemaining, setMinTimeRemaining] = useState<number>(20);
   const [maxTimeRemaining, setMaxTimeRemaining] = useState<number>(280);
 
+  // Slippage Circuit Breaker on Exit
+  const [exitCircuitBreakerEnabled, setExitCircuitBreakerEnabled] = useState<boolean>(true);
+  const [maxExitSlippagePct, setMaxExitSlippagePct] = useState<number>(5.0);
+
+  // Dedicated Per-Asset Spread & Liquidity Controls
+  const [perAssetSpread, setPerAssetSpread] = useState<Record<string, number>>({
+    BTC: 6, ETH: 6, SOL: 8, XRP: 10, DOGE: 10, BNB: 8, HYPE: 8
+  });
+  const [perAssetLiquidity, setPerAssetLiquidity] = useState<Record<string, number>>({
+    BTC: 150, ETH: 150, SOL: 120, XRP: 100, DOGE: 100, BNB: 100, HYPE: 150
+  });
+
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [savingAsDefault, setSavingAsDefault] = useState<boolean>(false);
   const [restoringDefaults, setRestoringDefaults] = useState<boolean>(false);
@@ -240,6 +252,23 @@ export default function Fast5MBoard() {
           if (s.min_liquidity_usd) setMinLiquidityUsd(parseFloat(s.min_liquidity_usd));
           if (s.min_time_remaining) setMinTimeRemaining(parseFloat(s.min_time_remaining));
           if (s.max_time_remaining) setMaxTimeRemaining(parseFloat(s.max_time_remaining));
+          if (s.exit_circuit_breaker_enabled !== undefined) setExitCircuitBreakerEnabled(s.exit_circuit_breaker_enabled !== 'false');
+          if (s.max_exit_slippage_pct) setMaxExitSlippagePct(parseFloat(s.max_exit_slippage_pct));
+
+          const updatedSpreads: Record<string, number> = {};
+          const updatedLiqs: Record<string, number> = {};
+          ['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'HYPE'].forEach(asset => {
+            const low = asset.toLowerCase();
+            if (s[`max_spread_${low}`]) updatedSpreads[asset] = Math.round(parseFloat(s[`max_spread_${low}`]) * 100);
+            if (s[`min_liquidity_usd_${low}`]) updatedLiqs[asset] = parseFloat(s[`min_liquidity_usd_${low}`]);
+          });
+          if (Object.keys(updatedSpreads).length > 0) {
+            setPerAssetSpread(prev => ({ ...prev, ...updatedSpreads }));
+          }
+          if (Object.keys(updatedLiqs).length > 0) {
+            setPerAssetLiquidity(prev => ({ ...prev, ...updatedLiqs }));
+          }
+
           if (s.custom_defaults_saved_at) setDefaultSavedTime(s.custom_defaults_saved_at);
         }
         if (res.data.wallet) {
@@ -399,6 +428,22 @@ export default function Fast5MBoard() {
         min_liquidity_usd: minLiquidityUsd,
         min_time_remaining: minTimeRemaining,
         max_time_remaining: maxTimeRemaining,
+        exit_circuit_breaker_enabled: exitCircuitBreakerEnabled,
+        max_exit_slippage_pct: maxExitSlippagePct,
+        max_spread_btc: (perAssetSpread['BTC'] ?? 6) / 100,
+        min_liquidity_usd_btc: perAssetLiquidity['BTC'] ?? 150,
+        max_spread_eth: (perAssetSpread['ETH'] ?? 6) / 100,
+        min_liquidity_usd_eth: perAssetLiquidity['ETH'] ?? 150,
+        max_spread_sol: (perAssetSpread['SOL'] ?? 8) / 100,
+        min_liquidity_usd_sol: perAssetLiquidity['SOL'] ?? 120,
+        max_spread_xrp: (perAssetSpread['XRP'] ?? 10) / 100,
+        min_liquidity_usd_xrp: perAssetLiquidity['XRP'] ?? 100,
+        max_spread_doge: (perAssetSpread['DOGE'] ?? 10) / 100,
+        min_liquidity_usd_doge: perAssetLiquidity['DOGE'] ?? 100,
+        max_spread_bnb: (perAssetSpread['BNB'] ?? 8) / 100,
+        min_liquidity_usd_bnb: perAssetLiquidity['BNB'] ?? 100,
+        max_spread_hype: (perAssetSpread['HYPE'] ?? 8) / 100,
+        min_liquidity_usd_hype: perAssetLiquidity['HYPE'] ?? 150,
       });
       lastSettingEditTime.current = Date.now();
       setSaveSuccessMsg('Configuration synchronized across all Squad workers with 0ms latency!');
@@ -446,6 +491,22 @@ export default function Fast5MBoard() {
         min_liquidity_usd: minLiquidityUsd,
         min_time_remaining: minTimeRemaining,
         max_time_remaining: maxTimeRemaining,
+        exit_circuit_breaker_enabled: exitCircuitBreakerEnabled,
+        max_exit_slippage_pct: maxExitSlippagePct,
+        max_spread_btc: (perAssetSpread['BTC'] ?? 6) / 100,
+        min_liquidity_usd_btc: perAssetLiquidity['BTC'] ?? 150,
+        max_spread_eth: (perAssetSpread['ETH'] ?? 6) / 100,
+        min_liquidity_usd_eth: perAssetLiquidity['ETH'] ?? 150,
+        max_spread_sol: (perAssetSpread['SOL'] ?? 8) / 100,
+        min_liquidity_usd_sol: perAssetLiquidity['SOL'] ?? 120,
+        max_spread_xrp: (perAssetSpread['XRP'] ?? 10) / 100,
+        min_liquidity_usd_xrp: perAssetLiquidity['XRP'] ?? 100,
+        max_spread_doge: (perAssetSpread['DOGE'] ?? 10) / 100,
+        min_liquidity_usd_doge: perAssetLiquidity['DOGE'] ?? 100,
+        max_spread_bnb: (perAssetSpread['BNB'] ?? 8) / 100,
+        min_liquidity_usd_bnb: perAssetLiquidity['BNB'] ?? 100,
+        max_spread_hype: (perAssetSpread['HYPE'] ?? 8) / 100,
+        min_liquidity_usd_hype: perAssetLiquidity['HYPE'] ?? 150,
       });
       if (res.data?.defaults?.custom_defaults_saved_at) {
         setDefaultSavedTime(res.data.defaults.custom_defaults_saved_at);
@@ -917,6 +978,9 @@ export default function Fast5MBoard() {
             </span>
             <span className="flex items-center gap-1 font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
               <Shield className="w-3 h-3 text-blue-500" /> Micro-Profit Lock: +$0.15+ (Anti-Reversal)
+            </span>
+            <span className="flex items-center gap-1 font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+              <Shield className="w-3 h-3 text-amber-600" /> Circuit Breaker: {exitCircuitBreakerEnabled ? `Active (Max ${maxExitSlippagePct}% Slip)` : 'Bypassed'}
             </span>
             <span className="flex items-center gap-1">
               <Lock className="w-3 h-3 text-purple-500" /> Single-Position Lock
@@ -1587,6 +1651,56 @@ export default function Fast5MBoard() {
                     </div>
                   </div>
                 </div>
+
+                {/* 4. EXECUTION SLIPPAGE CIRCUIT BREAKER */}
+                <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-slate-800 font-bold flex items-center gap-1.5 cursor-pointer">
+                      <Shield className="w-3.5 h-3.5 text-amber-600" />
+                      <span>4. Slippage Circuit Breaker on Exit</span>
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={exitCircuitBreakerEnabled}
+                      onChange={(e) => {
+                        markSettingEdited();
+                        setExitCircuitBreakerEnabled(e.target.checked);
+                      }}
+                      className="w-4 h-4 accent-amber-600 cursor-pointer"
+                    />
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    🛡️ <strong>Catastrophic Drawdown Protection:</strong> Blocks reckless stop-loss market dumps when orderbook bid depth collapses (e.g. illiquid vacuum books on low-liquidity pairs like HYPE). Holds position with adaptive limit defense until liquidity replenishes or round expiry.
+                  </p>
+
+                  <div className="bg-white p-2.5 rounded-xl border border-slate-200 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-700">Max Allowed Exit Slippage:</span>
+                      <span className="text-xs font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        {maxExitSlippagePct.toFixed(1)}% Beyond SL
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1.0"
+                      max="15.0"
+                      step="0.5"
+                      disabled={!exitCircuitBreakerEnabled}
+                      value={maxExitSlippagePct}
+                      onChange={(e) => {
+                        markSettingEdited();
+                        setMaxExitSlippagePct(Number(e.target.value));
+                      }}
+                      className="w-full accent-amber-600 cursor-pointer disabled:opacity-40"
+                    />
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                      <span>Strict (1% - 3%)</span>
+                      <span>Balanced (5%)</span>
+                      <span>Permissive (10%+)</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-200/60 text-[10px] text-slate-400 font-mono flex items-center justify-between">
@@ -1762,6 +1876,90 @@ export default function Fast5MBoard() {
                         className="w-full pl-5 pr-2 py-1 bg-white border border-slate-200 rounded-lg font-mono text-xs font-bold"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* Dedicated Per-Asset Spread & Liquidity Controls */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-blue-600" />
+                        Dedicated Per-Asset Controls
+                      </span>
+                      <span className="text-[10px] text-slate-400 block">
+                        Individual liquidity & spread filters to protect thin pairs (HYPE, DOGE, XRP)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        markSettingEdited();
+                        setPerAssetSpread({ BTC: 6, ETH: 6, SOL: 8, XRP: 10, DOGE: 10, BNB: 8, HYPE: 8 });
+                        setPerAssetLiquidity({ BTC: 150, ETH: 150, SOL: 120, XRP: 100, DOGE: 100, BNB: 100, HYPE: 150 });
+                      }}
+                      className="text-[10px] text-blue-600 hover:text-blue-800 font-semibold underline cursor-pointer"
+                    >
+                      Reset Defaults
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                    {['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'HYPE'].map((asset) => {
+                      const spreadVal = perAssetSpread[asset] ?? 8;
+                      const liqVal = perAssetLiquidity[asset] ?? 100;
+                      const isThin = ['HYPE', 'DOGE', 'XRP'].includes(asset);
+                      return (
+                        <div key={asset} className={`p-2 rounded-lg border text-[11px] space-y-1.5 ${isThin ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-slate-900 flex items-center gap-1">
+                              {asset}
+                              {isThin && <span className="text-[8px] px-1 py-0.2 rounded bg-amber-200 text-amber-900 font-bold uppercase">Safeguard</span>}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-500">
+                              Spread: {spreadVal}% | Liq: ${liqVal}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div>
+                              <span className="text-[9px] text-slate-400 block">Max Spread:</span>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="2"
+                                  max="30"
+                                  step="1"
+                                  value={spreadVal}
+                                  onChange={(e) => {
+                                    markSettingEdited();
+                                    setPerAssetSpread(prev => ({ ...prev, [asset]: Number(e.target.value) }));
+                                  }}
+                                  className="w-full px-1.5 py-0.5 bg-white border border-slate-200 rounded font-mono text-[11px] font-bold"
+                                />
+                                <span className="absolute right-1.5 top-0.5 text-slate-400 font-mono text-[10px]">%</span>
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 block">Min Liq ($):</span>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="20"
+                                  max="2000"
+                                  step="25"
+                                  value={liqVal}
+                                  onChange={(e) => {
+                                    markSettingEdited();
+                                    setPerAssetLiquidity(prev => ({ ...prev, [asset]: Number(e.target.value) }));
+                                  }}
+                                  className="w-full px-1.5 py-0.5 bg-white border border-slate-200 rounded font-mono text-[11px] font-bold"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -2492,7 +2690,12 @@ export default function Fast5MBoard() {
                               {tr.outcome === 'UP' ? '▲ UP' : '▼ DOWN'}
                             </span>
                           </div>
-                          {tr.is_in_buffer ? (
+                          {tr.circuit_breaker_active ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 animate-pulse flex items-center gap-1" title={tr.circuit_breaker_reason || 'Circuit breaker defense active'}>
+                              <Shield className="w-3 h-3 text-amber-400" />
+                              <span>⚡ CB Defense Active</span>
+                            </span>
+                          ) : tr.is_in_buffer ? (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/40 animate-pulse flex items-center gap-1">
                               <Timer className="w-3 h-3" />
                               <span>{tr.buffer_remaining_sec ?? 4.0}s Buffer</span>
@@ -2500,7 +2703,7 @@ export default function Fast5MBoard() {
                           ) : (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
                               <Shield className="w-3 h-3" />
-                              <span>3% SL Cap</span>
+                              <span>{stopLossPct}% Dynamic SL</span>
                             </span>
                           )}
                         </div>
@@ -2905,15 +3108,17 @@ export default function Fast5MBoard() {
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                             isOpen
                               ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : t.resolution === 'CIRCUIT_BREAKER_SL_FILLED'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
                               : isWin
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                               : 'bg-rose-100 text-rose-800 border border-rose-200'
                           }`}>
-                            {t.resolution || t.status}
+                            {t.resolution === 'CIRCUIT_BREAKER_SL_FILLED' ? '🛡️ CB SL FILLED' : (t.resolution || t.status)}
                           </span>
-                          {t.buffer_status && t.buffer_status.includes('ACTIVE') && (
-                            <span className="block text-[9px] text-cyan-600 font-mono mt-0.5">
-                              Buffer: {t.buffer_status}
+                          {t.buffer_status && (t.buffer_status.includes('ACTIVE') || t.buffer_status.includes('CIRCUIT_BREAKER')) && (
+                            <span className={`block text-[9px] font-mono mt-0.5 ${t.buffer_status.includes('CIRCUIT_BREAKER') ? 'text-amber-600 font-bold' : 'text-cyan-600'}`}>
+                              {t.buffer_status}
                             </span>
                           )}
                         </td>

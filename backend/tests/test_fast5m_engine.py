@@ -213,4 +213,182 @@ def test_emergency_stop_start_and_demo_reset():
         db.close()
 
 
+def test_per_asset_filter_controls():
+    from app.fast5m.discovery import FastMarketInfo
+    from app.fast5m.oracle import AssetOracleState
+    from app.fast5m.scorer import FastScorer
+
+    scorer = FastScorer()
+    mock_oracle = AssetOracleState(symbol="HYPE", strike_price=25.0)
+    mock_oracle.live_price = 25.5
+    mock_oracle.delta = 0.5
+    mock_oracle.delta_pct = 2.0
+    mock_oracle.velocity_10s = 0.01
+
+    from datetime import datetime, timedelta, timezone
+    now_dt = datetime.now(timezone.utc)
+
+    # Market with 9% spread and $120 liquidity
+    market = FastMarketInfo(
+        asset="HYPE",
+        condition_id="hype_mkt_1",
+        question="HYPE Up?",
+        epoch_bucket=12345,
+        up_token_id="tok_up",
+        down_token_id="tok_down",
+        start_time=now_dt,
+        end_time=now_dt + timedelta(minutes=5),
+        up_ask=0.55,
+        down_ask=0.54,
+        spread=0.09,
+        total_liquidity=120.0,
+        time_remaining_sec=150.0
+    )
+
+    # 1. With global settings (max_spread=0.20, min_liquidity=100), HYPE would pass
+    settings_global = {"max_spread": "0.20", "min_liquidity_usd": "100.0"}
+    scored_global = scorer._score_single_asset("HYPE", mock_oracle, market, threshold=50.0, settings=settings_global)
+    assert scored_global.is_tradable is True
+
+    # 2. With dedicated HYPE controls (max_spread_hype=0.08), 9% spread is blocked!
+    settings_per_asset = {
+        "max_spread": "0.20",
+        "min_liquidity_usd": "100.0",
+        "max_spread_hype": "0.08",
+        "min_liquidity_usd_hype": "150.0"
+    }
+    scored_per_asset = scorer._score_single_asset("HYPE", mock_oracle, market, threshold=50.0, settings=settings_per_asset)
+    assert scored_per_asset.is_tradable is False
+    assert "spread too wide" in scored_per_asset.rejection_reason.lower()
+
+    # 3. If spread tightens to 5%, but liquidity is $120 < min_liquidity_usd_hype ($150), it is blocked!
+    market.spread = 0.05
+    scored_liq = scorer._score_single_asset("HYPE", mock_oracle, market, threshold=50.0, settings=settings_per_asset)
+    assert scored_liq.is_tradable is False
+    assert "liquidity too low" in scored_liq.rejection_reason.lower()
+
+    # 4. Once liquidity reaches $200 and spread is 5%, HYPE is tradable!
+    market.total_liquidity = 200.0
+    scored_ok = scorer._score_single_asset("HYPE", mock_oracle, market, threshold=50.0, settings=settings_per_asset)
+    assert scored_ok.is_tradable is True
+
+
+def test_slippage_circuit_breaker_on_exit():
+    import asyncio
+    import time
+    from datetime import datetime, timedelta, timezone
+    from app.fast5m.executor import FastExecutor
+    from app.fast5m.discovery import fast_markets, FastMarketInfo
+    from app.fast5m.oracle import fast_oracle
+    from app.db.session import SessionLocal
+    from app.db.models import Fast5MTrade
+
+    now_dt = datetime.now(timezone.utc)
+    executor = FastExecutor()
+    executor.settings.update({
+        "stop_loss_pct": "3.0",
+        "exit_circuit_breaker_enabled": "true",
+        "max_exit_slippage_pct": "5.0", # Max 5% slippage beyond target SL
+    })
+
+    # Register mock market in fast_markets
+    mock_market = FastMarketInfo(
+        asset="HYPE",
+        condition_id="hype_cb_mkt",
+        question="HYPE Up?",
+        epoch_bucket=99999,
+        up_token_id="tok_up",
+        down_token_id="tok_down",
+        start_time=now_dt,
+        end_time=now_dt + timedelta(minutes=5),
+        up_bid=0.25, # Vacuum bid!
+        up_ask=0.55,
+        down_bid=0.45,
+        down_ask=0.50,
+        spread=0.04,
+        total_liquidity=500.0,
+        time_remaining_sec=120.0
+    )
+    fast_markets.markets["HYPE"] = mock_market
+
+    # Seed mock trade in DB
+    db = SessionLocal()
+    try:
+        trade_rec = Fast5MTrade(
+            asset="HYPE",
+            market_id="hype_cb_mkt",
+            question="HYPE Up?",
+            epoch_bucket=99999,
+            side="BUY",
+            outcome="UP",
+            token_id="tok_up",
+            entry_price=0.50,
+            shares=20.0,
+            cost=10.0,
+            strike_price=25.0,
+            entry_oracle_price=25.0,
+            delta_at_entry=0.0,
+            confidence_score=90.0,
+            status="OPEN",
+            account_mode="demo"
+        )
+        db.add(trade_rec)
+        db.commit()
+        db.refresh(trade_rec)
+        t_id = trade_rec.id
+    finally:
+        db.close()
+
+    # Setup oracle state for HYPE
+    state_hype = fast_oracle.get_asset_state("HYPE")
+    state_hype.live_price = 25.0
+    state_hype.strike_price = 25.0
+
+    mock_trade = {
+        "id": t_id,
+        "asset": "HYPE",
+        "outcome": "UP",
+        "token_id": "tok_up",
+        "entry_price": 0.50,
+        "shares": 20.0,
+        "cost": 10.0,
+        "strike_price": 25.0,
+        "entry_ts": time.time() - 10.0, # Buffer expired
+        "peak_pnl": 0.0,
+        "current_pnl": 0.0,
+        "account_mode": "demo"
+    }
+    executor.active_trades[t_id] = mock_trade
+
+    # Target SL is entry (0.50) * 0.97 = 0.485.
+    # Vacuum bid is 0.25 (a 50% loss!).
+    # Circuit breaker tolerance: min acceptable bid is ~0.460.
+    asyncio.run(executor._check_single_trade_exit(mock_trade))
+
+    # 1. VERIFY: Trade was NOT market dumped into the 0.25 vacuum bid!
+    assert t_id in executor.active_trades
+    assert mock_trade.get("circuit_breaker_active") is True
+    assert mock_trade.get("circuit_breaker_min_acceptable") == 0.460
+
+    # 2. Simulate liquidity replenishment: orderbook bid recovers to 0.475
+    mock_market.up_bid = 0.475
+    asyncio.run(executor._check_single_trade_exit(mock_trade))
+
+    # 3. VERIFY: Position now safely filled at 0.475 under CIRCUIT_BREAKER_SL_FILLED
+    assert t_id not in executor.active_trades
+
+    db = SessionLocal()
+    try:
+        closed_trade = db.query(Fast5MTrade).filter(Fast5MTrade.id == t_id).first()
+        assert closed_trade.status == "CLOSED"
+        assert closed_trade.resolution == "CIRCUIT_BREAKER_SL_FILLED"
+        assert closed_trade.exit_price == 0.475
+        assert closed_trade.pnl == -0.50 # Realized loss only -$0.50 (-5%), NOT -$5.00 (-50%)!
+    finally:
+        db.query(Fast5MTrade).filter(Fast5MTrade.id == t_id).delete()
+        db.commit()
+        db.close()
+
+
+
 

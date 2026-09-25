@@ -48,6 +48,24 @@ DEFAULT_SETTINGS = {
     "min_liquidity_usd": "100.0",
     "min_time_remaining": "20.0",
     "max_time_remaining": "280.0",
+    # Slippage Circuit Breaker on Exit
+    "exit_circuit_breaker_enabled": "true",
+    "max_exit_slippage_pct": "5.0",       # Max allowed slippage % beyond target SL (prevents vacuum dumps)
+    # Dedicated Per-Asset Spread & Liquidity Thresholds
+    "max_spread_btc": "0.06",
+    "min_liquidity_usd_btc": "150.0",
+    "max_spread_eth": "0.06",
+    "min_liquidity_usd_eth": "150.0",
+    "max_spread_sol": "0.08",
+    "min_liquidity_usd_sol": "120.0",
+    "max_spread_xrp": "0.10",
+    "min_liquidity_usd_xrp": "100.0",
+    "max_spread_doge": "0.10",
+    "min_liquidity_usd_doge": "100.0",
+    "max_spread_bnb": "0.08",
+    "min_liquidity_usd_bnb": "100.0",
+    "max_spread_hype": "0.08",
+    "min_liquidity_usd_hype": "150.0",
     # Active Quantitative Filters & Indicator Weights
     "filter_delta_enabled": "true",
     "filter_delta_weight": "40.0",
@@ -460,6 +478,27 @@ class FastExecutor:
         if not market:
             return
 
+        # Pre-trade entry validation against dedicated per-asset thresholds
+        asset_lower = top_asset.asset.lower()
+        raw_spread = self.settings.get(f"max_spread_{asset_lower}")
+        asset_max_spread = float(raw_spread) if raw_spread is not None and float(raw_spread) > 0 else float(self.settings.get("max_spread", 0.20))
+        raw_liq = self.settings.get(f"min_liquidity_usd_{asset_lower}")
+        asset_min_liq = float(raw_liq) if raw_liq is not None and float(raw_liq) > 0 else float(self.settings.get("min_liquidity_usd", 100.0))
+
+        if market.spread > asset_max_spread:
+            logger.warning(
+                f"[Fast5M Executor] ⛔ PRE-TRADE ENTRY BLOCKED for {top_asset.asset}: "
+                f"Live spread {market.spread*100:.1f}% exceeds dedicated asset threshold {asset_max_spread*100:.1f}%"
+            )
+            return
+
+        if market.total_liquidity < asset_min_liq:
+            logger.warning(
+                f"[Fast5M Executor] ⛔ PRE-TRADE ENTRY BLOCKED for {top_asset.asset}: "
+                f"Live liquidity ${market.total_liquidity:.1f} below dedicated asset threshold ${asset_min_liq:.1f}"
+            )
+            return
+
         outcome = top_asset.direction # "UP" or "DOWN"
         if outcome == "UP":
             entry_price = market.up_ask if market.up_ask > 0 else 0.50
@@ -706,10 +745,43 @@ class FastExecutor:
 
         # Strict Hard Stop-Loss Hit (Strictly checked ONLY after grace period buffer expires)
         elif not should_close and not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_pct_setting):
-            should_close = True
-            resolution = "HARD_STOP_LOSS"
-            exit_price = current_share_price
-            # Realized PnL reflects actual orderbook exit fill, exposing real slippage without artificial clamping
+            # Target theoretical Stop-Loss exit price
+            if sl_pct_setting > 0:
+                theoretical_sl_exit_price = max(0.01, round(entry_price * (1.0 - (sl_pct_setting / 100.0)), 4))
+            else:
+                theoretical_sl_exit_price = max(0.01, round((cost - sl_limit) / shares, 4))
+
+            cb_enabled = self.settings.get("exit_circuit_breaker_enabled", "true").lower() in ("true", "1", "yes")
+            max_slippage_pct = float(self.settings.get("max_exit_slippage_pct", 5.0))
+            max_allowed_drop = entry_price * (max_slippage_pct / 100.0)
+            min_acceptable_bid = max(0.01, round(theoretical_sl_exit_price - max_allowed_drop, 4))
+
+            # Slippage Circuit Breaker: check if available top bid depth results in slippage exceeding tolerance
+            if cb_enabled and current_share_price < min_acceptable_bid:
+                # RECKLESS MARKET DUMP BLOCKED!
+                trade["circuit_breaker_active"] = True
+                trade["circuit_breaker_min_acceptable"] = min_acceptable_bid
+                trade["circuit_breaker_target_sl"] = theoretical_sl_exit_price
+                trade["circuit_breaker_reason"] = (
+                    f"Top bid ${current_share_price:.4f} exceeds slippage tolerance "
+                    f"(target SL ${theoretical_sl_exit_price:.4f}, min acceptable ${min_acceptable_bid:.4f})"
+                )
+                logger.warning(
+                    f"[Fast5M Executor] ⚡ SLIPPAGE CIRCUIT BREAKER ENGAGED: #{trade['id']} {asset} {outcome} | "
+                    f"Target SL=${theoretical_sl_exit_price:.4f} | Vacuum Bid=${current_share_price:.4f} | "
+                    f"Slippage={abs(current_share_price - theoretical_sl_exit_price)/entry_price*100:.1f}% > Max Tolerance={max_slippage_pct:.1f}%. "
+                    f"RECKLESS DUMP BLOCKED! Holding adaptive limit defense at ${min_acceptable_bid:.4f} until liquidity replenishes or epoch expiry."
+                )
+                # Keep position open in adaptive limit defense instead of dumping into an empty book
+            else:
+                should_close = True
+                resolution = "CIRCUIT_BREAKER_SL_FILLED" if trade.get("circuit_breaker_active") else "HARD_STOP_LOSS"
+                exit_price = current_share_price
+                if trade.get("circuit_breaker_active"):
+                    logger.info(
+                        f"[Fast5M Executor] 🛡️ CIRCUIT BREAKER EXIT FILLED: #{trade['id']} {asset} {outcome} "
+                        f"filled safely at ${exit_price:.4f} as liquidity replenished (min acceptable was ${min_acceptable_bid:.4f})"
+                    )
 
         # Log buffer protection if stop loss threshold is touched during grace period
         elif not should_close and is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_pct_setting):
@@ -729,7 +801,7 @@ class FastExecutor:
             else:
                 exit_price = 0.00
                 unrealized_pnl = -round(cost, 2)
-                resolution = "LOST"
+                resolution = "LOST_CIRCUIT_BREAKER_EXPIRED" if trade.get("circuit_breaker_active") else "LOST"
 
         if should_close:
             actual_exit_bid = round(float(exit_price), 4)
@@ -751,13 +823,13 @@ class FastExecutor:
             # Calculate execution slippage against theoretical trigger target
             if resolution == "TAKE_PROFIT":
                 theoretical_price = round((cost + tp_target) / shares_exact, 4)
-            elif resolution == "HARD_STOP_LOSS":
+            elif resolution in ("HARD_STOP_LOSS", "CIRCUIT_BREAKER_SL_FILLED"):
                 theoretical_price = round((cost - sl_limit) / shares_exact, 4)
             elif resolution == "AGGRESSIVE_TRAILING_LOCK":
                 theoretical_price = round((cost + trade.get("trailing_floor", 0.02)) / shares_exact, 4)
             elif resolution == "WON":
                 theoretical_price = 1.00
-            elif resolution == "LOST":
+            elif resolution in ("LOST", "LOST_CIRCUIT_BREAKER_EXPIRED"):
                 theoretical_price = 0.00
             else:
                 theoretical_price = actual_exit_bid
@@ -772,7 +844,9 @@ class FastExecutor:
             else:
                 tx_hash = "SIMULATED_CLOB_ORDERBOOK"
 
-            buffer_status_str = "EXPIRED (CLEARED)" if not is_in_buffer else f"ACTIVE ({trade['buffer_remaining_sec']}s)"
+            base_buffer_str = "EXPIRED (CLEARED)" if not is_in_buffer else f"ACTIVE ({trade['buffer_remaining_sec']}s)"
+            cb_tag = " [CIRCUIT_BREAKER_DEFENSE]" if trade.get("circuit_breaker_active") else ""
+            buffer_status_str = f"{base_buffer_str}{cb_tag}"
 
             db: Session = SessionLocal()
             try:

@@ -142,8 +142,14 @@ class FastScorer:
         bb_enabled = str(cfg.get("filter_bb_enabled", "true")).lower() in ("true", "1", "yes")
         ema_macd_enabled = str(cfg.get("filter_ema_macd_enabled", "true")).lower() in ("true", "1", "yes")
 
-        max_spread = float(cfg.get("max_spread", 0.20))
-        min_liquidity = float(cfg.get("min_liquidity_usd", 100.0))
+        # Per-Asset Spread & Liquidity Controls with fallback to global values
+        asset_lower = asset.lower()
+        raw_asset_spread = cfg.get(f"max_spread_{asset_lower}")
+        max_spread = float(raw_asset_spread) if raw_asset_spread is not None and float(raw_asset_spread) > 0 else float(cfg.get("max_spread", 0.20))
+
+        raw_asset_liq = cfg.get(f"min_liquidity_usd_{asset_lower}")
+        min_liquidity = float(raw_asset_liq) if raw_asset_liq is not None and float(raw_asset_liq) > 0 else float(cfg.get("min_liquidity_usd", 100.0))
+
         min_time = float(cfg.get("min_time_remaining", 20.0))
         max_time = float(cfg.get("max_time_remaining", 280.0))
 
@@ -302,10 +308,10 @@ class FastScorer:
             rejection_reason = f"Waiting for round to mature ({time_rem:.0f}s > {max_time:.0f}s)"
         elif spread > max_spread:
             is_tradable = False
-            rejection_reason = f"Spread too wide ({spread*100:.1f}% > {max_spread*100:.1f}%)"
+            rejection_reason = f"{asset} spread too wide ({spread*100:.1f}% > {max_spread*100:.1f}%)"
         elif liquidity < min_liquidity:
             is_tradable = False
-            rejection_reason = f"Liquidity too low (${liquidity:.0f} < ${min_liquidity:.0f})"
+            rejection_reason = f"{asset} liquidity too low (${liquidity:.0f} < ${min_liquidity:.0f})"
         elif confidence < threshold:
             is_tradable = False
             rejection_reason = f"Confidence {confidence:.1f} < threshold {threshold:.1f}"
