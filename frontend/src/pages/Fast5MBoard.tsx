@@ -372,7 +372,10 @@ export default function Fast5MBoard() {
     try {
       const activeTf = tf || selectedTimeframe;
       const activeMode = mode !== undefined ? mode : accountMode;
-      const res = await axios.get(`/api/fast5m/trades?timeframe=${activeTf}&account_mode=${activeMode}`);
+      const token = localStorage.getItem('token');
+      const res = await axios.get(`/api/fast5m/trades?timeframe=${activeTf}&account_mode=${activeMode}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (res.data) {
         if (res.data.trades) {
           setTrades(res.data.trades);
