@@ -621,8 +621,35 @@ class FastExecutor:
         if entry_price <= 0.01 or entry_price >= 0.99:
             return
 
+        # ── SECONDARY ORACLE-ANCHORED ENTRY PRICE SANITY GUARD ───────────────────
+        # Even if a dust/outlier CLOB ask slips through the discovery clamping,
+        # reject any fill where the entry_price deviates more than 5% from the
+        # oracle-anchored fair_mid. This prevents fake +1000%+ PnL from $0.02 fills.
+        oracle_state = None
+        try:
+            oracle_state = fast_oracle.get_asset_state(top_asset.asset)
+        except Exception:
+            pass
+        if oracle_state:
+            oracle_delta_pct = oracle_state.delta_pct if hasattr(oracle_state, 'delta_pct') else 0.0
+            fair_mid = min(0.88, max(0.12, 0.50 + (oracle_delta_pct * 1.5)))
+            MAX_ENTRY_DEVIATION = 0.05  # 5% absolute deviation from oracle fair_mid
+            if abs(entry_price - fair_mid) > MAX_ENTRY_DEVIATION:
+                logger.warning(
+                    f"[Fast5M Executor] ⛔ ENTRY PRICE SANITY GUARD BLOCKED {top_asset.asset} {outcome}: "
+                    f"entry_price=${entry_price:.4f} deviates {abs(entry_price - fair_mid):.4f} from "
+                    f"oracle fair_mid=${fair_mid:.4f} (max allowed: {MAX_ENTRY_DEVIATION:.2f}). "
+                    f"Aborting trade to prevent fake PnL."
+                )
+                return
+            # Clamp entry_price to oracle fair zone as a final safety net
+            entry_price = round(min(fair_mid + MAX_ENTRY_DEVIATION, max(fair_mid - MAX_ENTRY_DEVIATION, entry_price)), 4)
+
         cost = max(0.50, round(cost, 2))
-        shares = max(0.01, round(cost / entry_price, 4))
+        # Clamp shares: max 200 shares per $10 notional (equivalent to a $0.05 min fill price)
+        # This guards against absurd share quantities (e.g. 500 shares for $10 at $0.02 entry)
+        max_shares = round(cost / 0.05, 4)
+        shares = max(0.01, min(max_shares, round(cost / entry_price, 4)))
         epoch_key = (user_id, top_asset.asset, market.epoch_bucket)
 
         from app.fast5m.wallet import wallet_manager
@@ -742,7 +769,25 @@ class FastExecutor:
 
         # Real Polymarket CLOB Top-of-Book Bid Valuation
         # When exiting an UP position, we sell at up_bid; when exiting DOWN, we sell at down_bid.
-        real_book_bid = market.up_bid if outcome == "UP" else market.down_bid
+        raw_exit_bid = market.up_bid if outcome == "UP" else market.down_bid
+
+        # ── ORACLE-ANCHORED EXIT BID SANITY CLAMP ────────────────────────────────
+        # Reject exit bids that are dust/outlier prices far from oracle fair value.
+        # This prevents a legitimate $0.39 entry from being "exited" at a $0.02 dust bid.
+        oracle_delta_pct_exit = getattr(oracle, 'delta_pct', 0.0)
+        fair_mid_exit = min(0.88, max(0.12, 0.50 + (oracle_delta_pct_exit * 1.5)))
+        MAX_EXIT_BID_DEVIATION = 0.08  # 8% from fair_mid
+
+        real_book_bid = None
+        if raw_exit_bid and raw_exit_bid > 0.01 and abs(raw_exit_bid - fair_mid_exit) <= MAX_EXIT_BID_DEVIATION:
+            real_book_bid = raw_exit_bid
+        elif raw_exit_bid and raw_exit_bid > 0.01:
+            logger.warning(
+                f"[Fast5M Executor] ⚠️ OUTLIER EXIT BID CLAMPED for #{trade.get('id')} {asset} {outcome}: "
+                f"raw_bid=${raw_exit_bid:.4f} deviates {abs(raw_exit_bid - fair_mid_exit):.4f} from "
+                f"fair_mid=${fair_mid_exit:.4f}. Falling back to oracle-estimated exit price."
+            )
+
         if real_book_bid and real_book_bid > 0.01:
             current_share_price = round(real_book_bid, 4)
             orderbook_bid_val = round(real_book_bid, 4)

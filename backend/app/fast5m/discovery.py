@@ -229,16 +229,36 @@ class FastMarketTracker:
                 raw_bid = float(sorted_bids[0]["price"]) if sorted_bids else 0.0
                 raw_ask = float(sorted_asks[0]["price"]) if sorted_asks else 0.0
 
-                # Use genuine Polymarket CLOB orderbook quotes whenever available
-                if raw_bid > 0.001:
+                # ── ORACLE-ANCHORED SANITY CLAMP ──────────────────────────────────────────
+                # Reject any CLOB quote that deviates more than 8% from the oracle fair_mid.
+                # This prevents dust/outlier orders (e.g. $0.02 when market is at $0.39) from
+                # being used as actual fill prices, which would generate fake +1000%+ PnL.
+                MAX_QUOTE_DEVIATION = 0.08  # 8% absolute deviation from fair_mid
+
+                # Use genuine Polymarket CLOB orderbook quotes whenever available AND sane
+                if raw_bid > 0.001 and abs(raw_bid - fair_mid) <= MAX_QUOTE_DEVIATION:
                     up_bid = raw_bid
                 else:
+                    # Fallback to oracle-synthetic quote — safer than an outlier dust price
                     up_bid = round(max(0.01, fair_mid - 0.02), 4)
+                    if raw_bid > 0.001:
+                        logger.warning(
+                            f"[Fast5M Discovery] ⚠️ OUTLIER BID CLAMPED for {market.asset}: "
+                            f"raw_bid=${raw_bid:.4f} deviated {abs(raw_bid - fair_mid):.4f} from fair_mid=${fair_mid:.4f}. "
+                            f"Using synthetic bid=${up_bid:.4f} instead."
+                        )
 
-                if raw_ask > 0.001:
+                if raw_ask > 0.001 and abs(raw_ask - fair_mid) <= MAX_QUOTE_DEVIATION:
                     up_ask = raw_ask
                 else:
+                    # Fallback to oracle-synthetic quote
                     up_ask = round(min(0.99, fair_mid + 0.02), 4)
+                    if raw_ask > 0.001:
+                        logger.warning(
+                            f"[Fast5M Discovery] ⚠️ OUTLIER ASK CLAMPED for {market.asset}: "
+                            f"raw_ask=${raw_ask:.4f} deviated {abs(raw_ask - fair_mid):.4f} from fair_mid=${fair_mid:.4f}. "
+                            f"Using synthetic ask=${up_ask:.4f} instead."
+                        )
 
                 up_mid = round((up_bid + up_ask) / 2.0, 3)
                 
