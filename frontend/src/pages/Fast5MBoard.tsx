@@ -1038,7 +1038,7 @@ export default function Fast5MBoard() {
         <div className="flex items-center gap-2">
           <span className="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Size:</span>
           <div className="flex items-center gap-1">
-            {[10, 25, 50].map((sz) => (
+            {[1, 10, 25, 50].map((sz) => (
               <button
                 key={sz}
                 type="button"
@@ -2016,8 +2016,8 @@ export default function Fast5MBoard() {
                   <label className="text-xs text-slate-600 font-semibold mb-1.5 block">
                     Execution Size per Prediction:
                   </label>
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    {[10, 25, 50].map((sz) => (
+                  <div className="grid grid-cols-4 gap-2 mb-2">
+                    {[1, 10, 25, 50].map((sz) => (
                       <button
                         key={sz}
                         type="button"

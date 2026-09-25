@@ -408,6 +408,10 @@ class FastExecutor:
         if available_slots <= 0:
             return
 
+        min_time = float(self.settings.get("min_time_remaining", 20.0))
+        max_time = float(self.settings.get("max_time_remaining", 280.0))
+        base_size = float(self.settings.get("position_size_usd", 10.0))
+
         # Position Sizing & Exposure Safeguard:
         total_balance = float(self.settings.get("total_balance_usd", 300.0))
         max_margin_pct = float(self.settings.get("max_portfolio_margin_pct", 30.0))
@@ -415,7 +419,8 @@ class FastExecutor:
         current_exposure = sum(t["cost"] for t in self.active_trades.values())
         available_exposure = max(0.0, max_total_exposure - current_exposure)
 
-        if available_exposure < 5.0:
+        min_req_exposure = max(0.50, min(base_size, 5.0))
+        if available_exposure < min_req_exposure:
             return
 
         # Score all 7 assets
@@ -424,9 +429,6 @@ class FastExecutor:
             return
 
         strat_dir = self.settings.get("strategy_direction", "BOTH").upper()
-        min_time = float(self.settings.get("min_time_remaining", 20.0))
-        max_time = float(self.settings.get("max_time_remaining", 280.0))
-        base_size = float(self.settings.get("position_size_usd", 10.0))
 
         active_assets = {t["asset"] for t in self.active_trades.values()}
         qualified_candidates: List[ScoredAsset] = []
@@ -467,7 +469,7 @@ class FastExecutor:
         # Exposure Safeguard: partition available margin safely
         num_new_trades = len(qualified_candidates)
         safe_per_trade_cost = min(base_size, round(available_exposure / num_new_trades, 2))
-        if safe_per_trade_cost < 3.0:
+        if safe_per_trade_cost < 0.50:
             return
 
         # Open qualified pairs concurrently without skipping or waiting
@@ -681,13 +683,13 @@ class FastExecutor:
         user_sl_dollar = float(self.settings.get("stop_loss_dollar", 0.50))
         # Determine dollar stop loss: prioritize user percentage if set, else dollar setting
         pct_sl_dollar = round(cost * (sl_pct_setting / 100.0), 2) if sl_pct_setting > 0 else user_sl_dollar
-        sl_limit = pct_sl_dollar if sl_pct_setting > 0 else user_sl_dollar
+        sl_limit = max(0.02, min(cost * 0.50, pct_sl_dollar if sl_pct_setting > 0 else user_sl_dollar))
 
         # Take-Profit Target (Dynamic based on R:R ratio or take_profit_pct)
         tp_pct_setting = float(self.settings.get("take_profit_pct", 3.0))
         pct_tp_dollar = round(cost * (tp_pct_setting / 100.0), 2) if tp_pct_setting > 0 else 0.50
         user_tp_dollar = float(self.settings.get("take_profit_dollar", 0.50))
-        tp_target = pct_tp_dollar if tp_pct_setting > 0 else user_tp_dollar
+        tp_target = max(0.02, pct_tp_dollar if tp_pct_setting > 0 else user_tp_dollar)
 
         trade_peak_pnl = max(trade.get("peak_pnl", 0.0), unrealized_pnl)
         trade["peak_pnl"] = round(trade_peak_pnl, 2)
@@ -708,8 +710,8 @@ class FastExecutor:
         #    Under NO circumstances can AGGRESSIVE_TRAILING_LOCK close a trade at a negative loss!
         trailing_act_pct = float(self.settings.get("trailing_stop_activation_pct", 1.0))
         trailing_dist_pct = float(self.settings.get("trailing_stop_distance_pct", 0.5))
-        min_gain_for_trailing = round(cost * (trailing_act_pct / 100.0), 2) # e.g. +$0.10 on $10
-        tight_giveback = max(0.02, round(cost * (trailing_dist_pct / 100.0), 2)) # 0.5% or $0.02
+        min_gain_for_trailing = max(0.01, round(cost * (trailing_act_pct / 100.0), 2))
+        tight_giveback = max(0.01, round(cost * (trailing_dist_pct / 100.0), 2))
 
         trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
         reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
@@ -774,7 +776,7 @@ class FastExecutor:
         # ─────────────────────────────────────────────────────────────
         if not should_close and trade.get("reversal_defense_active"):
             hold_elapsed = time.time() - (trade.get("reversal_defense_start_ts") or time.time())
-            max_reversal_dd = min(0.60, max(0.40, round(cost * 0.06, 2))) # -$0.60 or 6% of margin
+            max_reversal_dd = min(0.60, max(0.04, round(cost * 0.06, 2))) # -$0.60 or 6% of margin
 
             # Boundary 1: Late-Round Circuit Breaker Lock (Time >= 03:30 / time_rem <= 90s)
             if time_rem <= 90.0:
@@ -864,7 +866,7 @@ class FastExecutor:
                     )
 
                     # Strict Boundary check immediately: drawdown cannot exceed -$0.60 (or 6% of margin)
-                    max_reversal_dd = min(0.60, max(0.40, round(cost * 0.06, 2)))
+                    max_reversal_dd = min(0.60, max(0.04, round(cost * 0.06, 2)))
 
                     if (has_absorption or has_divergence) and unrealized_pnl > -max_reversal_dd:
                         # Engage Reversal Defense Hold
