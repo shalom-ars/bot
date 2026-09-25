@@ -31,11 +31,12 @@ DEFAULT_SETTINGS = {
     "max_active_pools": "3",              # Max Active Pools: up to 2 to 3 pairs simultaneously
     "multi_pair_min_score": "90.0",       # Minimum score for multi-pair concurrent execution (90%+)
     "strategy_direction": "BOTH",         # Strategy Direction: BOTH (Up/Down), UP_ONLY, DOWN_ONLY
-    "take_profit_dollar": "0.50",         # Strict 1:1 RR: Target Profit $0.50 (50 cents)
-    "stop_loss_dollar": "0.50",           # Strict 1:1 RR: Stop Loss $0.50 (50 cents)
+    "take_profit_dollar": "0.50",         # Target Profit dollar amount
+    "stop_loss_dollar": "0.50",           # Stop Loss dollar amount
+    "risk_reward_ratio": "1.0",           # Configurable Risk-to-Reward Ratio (e.g. 1.0, 1.5, 2.0)
     "buffer_timer_sec": "4.0",            # 3 to 5 second Grace Period Buffer immediately after trade entry
     "take_profit_pct": "3.0",             # Base Take-Profit target: 1.5% - 3.0%
-    "stop_loss_pct": "3.0",               # Strict Hard Stop-Loss capped at maximum 3% loss
+    "stop_loss_pct": "3.0",               # Stop-Loss % trigger threshold
     "trailing_lock_enabled": "true",      # Dynamic micro-profit lock
     "trailing_stop_activation_pct": "1.0",# Aggressive trailing stop activates at +1.0% to +1.5% profit
     "trailing_stop_distance_pct": "0.5",  # Tight trailing distance: 0.5% or $0.02 giveback locks profit immediately
@@ -614,19 +615,18 @@ class FastExecutor:
         trade["buffer_remaining_sec"] = buffer_remaining
         trade["buffer_status"] = f"ACTIVE ({buffer_remaining}s)" if is_in_buffer else "CLEARED"
 
-        # 2. Strict Risk-to-Reward & Loss Limit Settings
+        # 2. Dynamic Risk-to-Reward & Loss Limit Settings (Unclamped)
         sl_pct_setting = float(self.settings.get("stop_loss_pct", 3.0))
-        sl_cap_pct = min(3.0, max(0.5, sl_pct_setting))
-        hard_sl_dollar = round(cost * (sl_cap_pct / 100.0), 2)
-
-        # Base Take-Profit Target (1.5% - 3.0%)
-        tp_pct_setting = float(self.settings.get("take_profit_pct", 3.0))
-        pct_tp_dollar = round(cost * (tp_pct_setting / 100.0), 2)
-        user_tp_dollar = float(self.settings.get("take_profit_dollar", 0.50))
-        tp_target = max(pct_tp_dollar, user_tp_dollar)
-
         user_sl_dollar = float(self.settings.get("stop_loss_dollar", 0.50))
-        sl_limit = min(hard_sl_dollar, user_sl_dollar)
+        # Determine dollar stop loss: prioritize user percentage if set, else dollar setting
+        pct_sl_dollar = round(cost * (sl_pct_setting / 100.0), 2) if sl_pct_setting > 0 else user_sl_dollar
+        sl_limit = pct_sl_dollar if sl_pct_setting > 0 else user_sl_dollar
+
+        # Take-Profit Target (Dynamic based on R:R ratio or take_profit_pct)
+        tp_pct_setting = float(self.settings.get("take_profit_pct", 3.0))
+        pct_tp_dollar = round(cost * (tp_pct_setting / 100.0), 2) if tp_pct_setting > 0 else 0.50
+        user_tp_dollar = float(self.settings.get("take_profit_dollar", 0.50))
+        tp_target = pct_tp_dollar if tp_pct_setting > 0 else user_tp_dollar
 
         trade_peak_pnl = max(trade.get("peak_pnl", 0.0), unrealized_pnl)
         trade["peak_pnl"] = round(trade_peak_pnl, 2)
@@ -705,14 +705,14 @@ class FastExecutor:
             exit_price = current_share_price
 
         # Strict Hard Stop-Loss Hit (Strictly checked ONLY after grace period buffer expires)
-        elif not should_close and not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
+        elif not should_close and not is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_pct_setting):
             should_close = True
             resolution = "HARD_STOP_LOSS"
             exit_price = current_share_price
             # Realized PnL reflects actual orderbook exit fill, exposing real slippage without artificial clamping
 
         # Log buffer protection if stop loss threshold is touched during grace period
-        elif not should_close and is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_cap_pct):
+        elif not should_close and is_in_buffer and (unrealized_pnl <= -sl_limit or (unrealized_pnl / cost) * 100.0 <= -sl_pct_setting):
             logger.info(
                 f"[Fast5M Executor] 🛡️ GRACE PERIOD BUFFER SUPPRESSION: #{trade['id']} {asset} {outcome} "
                 f"Micro-dip PnL=${unrealized_pnl:.2f} held (Buffer active for {trade['buffer_remaining_sec']}s)"
@@ -735,21 +735,18 @@ class FastExecutor:
             actual_exit_bid = round(float(exit_price), 4)
             shares_exact = round(cost / entry_price, 4) if (entry_price and entry_price > 0) else shares
             
-            # ── 100% PURE CLOB / ORDERBOOK REALIZED PNL CALCULATION ──
-            # Exact formulas:
-            #   shares = cost / entry_price
-            #   realized_pnl = round((shares * actual_exit_bid) - cost, 2)
-            #   pnl_pct = round((realized_pnl / cost) * 100, 2)
+            # ── 100% PURE UNCLAMPED CLOB REALIZED PNL CALCULATION ──
             if resolution == "WON":
                 actual_exit_bid = 1.00
-                realized_pnl = round((shares_exact * 1.00) - cost, 2)
             elif resolution == "LOST":
                 actual_exit_bid = 0.00
-                realized_pnl = -round(cost, 2)
-            else:
-                realized_pnl = round((shares_exact * actual_exit_bid) - cost, 2)
 
-            pnl_pct = round((realized_pnl / cost) * 100.0, 2) if cost > 0 else 0.0
+            # Pure orderbook execution math
+            realized_pnl = round((actual_exit_bid - entry_price) * shares_exact, 2)
+            if entry_price > 0:
+                pnl_pct = round(((actual_exit_bid - entry_price) / entry_price) * 100.0, 2)
+            else:
+                pnl_pct = 0.0
             
             # Calculate execution slippage against theoretical trigger target
             if resolution == "TAKE_PROFIT":

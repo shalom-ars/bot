@@ -118,6 +118,7 @@ export default function Fast5MBoard() {
   const [stopLossDollar, setStopLossDollar] = useState<number>(0.30);
   const [takeProfitPct, setTakeProfitPct] = useState<number>(3.0);
   const [stopLossPct, setStopLossPct] = useState<number>(3.0);
+  const [riskRewardRatio, setRiskRewardRatio] = useState<number>(1.0);
   const [bufferTimerSec, setBufferTimerSec] = useState<number>(4.0);
   const [trailingLockEnabled, setTrailingLockEnabled] = useState<boolean>(true);
   const [trailingStopActivationPct, setTrailingStopActivationPct] = useState<number>(1.0);
@@ -126,6 +127,12 @@ export default function Fast5MBoard() {
   const [reversalLockEnabled, setReversalLockEnabled] = useState<boolean>(true);
   const [minProfitToLock, setMinProfitToLock] = useState<number>(0.10);
   const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.03);
+
+  // Settings input protection lock (prevents polling from reverting user inputs during modification)
+  const lastSettingEditTime = useRef<number>(0);
+  const markSettingEdited = () => {
+    lastSettingEditTime.current = Date.now();
+  };
 
   // Active Quantitative Filters & Indicator Flags
   const [filterDeltaEnabled, setFilterDeltaEnabled] = useState<boolean>(true);
@@ -193,7 +200,8 @@ export default function Fast5MBoard() {
         });
 
         setBoard(res.data);
-        if (res.data.settings) {
+        const userRecentlyEdited = (Date.now() - lastSettingEditTime.current) < 30000;
+        if (res.data.settings && !userRecentlyEdited && activeTab !== 'settings') {
           const s = res.data.settings;
           if (s.confidence_threshold) setConfidenceThreshold(parseFloat(s.confidence_threshold));
           if (s.position_size_usd) setPositionSize(parseFloat(s.position_size_usd));
@@ -204,6 +212,12 @@ export default function Fast5MBoard() {
           if (s.stop_loss_dollar) setStopLossDollar(parseFloat(s.stop_loss_dollar));
           if (s.take_profit_pct) setTakeProfitPct(parseFloat(s.take_profit_pct));
           if (s.stop_loss_pct) setStopLossPct(parseFloat(s.stop_loss_pct));
+          if (s.risk_reward_ratio) setRiskRewardRatio(parseFloat(s.risk_reward_ratio));
+          else if (s.take_profit_pct && s.stop_loss_pct) {
+            const sl = parseFloat(s.stop_loss_pct);
+            const tp = parseFloat(s.take_profit_pct);
+            if (sl > 0) setRiskRewardRatio(Number((tp / sl).toFixed(2)));
+          }
           if (s.buffer_timer_sec) setBufferTimerSec(parseFloat(s.buffer_timer_sec));
           if (s.min_profit_to_lock) setMinProfitToLock(parseFloat(s.min_profit_to_lock));
           if (s.reversal_giveback_dollar) setReversalGivebackDollar(parseFloat(s.reversal_giveback_dollar));
@@ -361,9 +375,10 @@ export default function Fast5MBoard() {
         confidence_threshold: confidenceThreshold,
         buffer_timer_sec: bufferTimerSec,
         take_profit_pct: takeProfitPct,
-        stop_loss_pct: Math.min(3.0, Math.max(0.5, stopLossPct)),
+        stop_loss_pct: stopLossPct,
+        risk_reward_ratio: riskRewardRatio,
         take_profit_dollar: takeProfitDollar,
-        stop_loss_dollar: Math.min(Number((positionSize * 0.03).toFixed(2)), stopLossDollar),
+        stop_loss_dollar: stopLossDollar,
         trailing_lock_enabled: trailingLockEnabled,
         trailing_stop_activation_pct: trailingStopActivationPct,
         trailing_stop_distance_pct: trailingStopDistancePct,
@@ -385,6 +400,7 @@ export default function Fast5MBoard() {
         min_time_remaining: minTimeRemaining,
         max_time_remaining: maxTimeRemaining,
       });
+      lastSettingEditTime.current = Date.now();
       setSaveSuccessMsg('Configuration synchronized across all Squad workers with 0ms latency!');
       setTimeout(() => setSaveSuccessMsg(''), 4500);
       await fetchBoard();
@@ -406,9 +422,10 @@ export default function Fast5MBoard() {
         confidence_threshold: confidenceThreshold,
         buffer_timer_sec: bufferTimerSec,
         take_profit_pct: takeProfitPct,
-        stop_loss_pct: Math.min(3.0, Math.max(0.5, stopLossPct)),
+        stop_loss_pct: stopLossPct,
+        risk_reward_ratio: riskRewardRatio,
         take_profit_dollar: takeProfitDollar,
-        stop_loss_dollar: Math.min(Number((positionSize * 0.03).toFixed(2)), stopLossDollar),
+        stop_loss_dollar: stopLossDollar,
         trailing_lock_enabled: trailingLockEnabled,
         trailing_stop_activation_pct: trailingStopActivationPct,
         trailing_stop_distance_pct: trailingStopDistancePct,
@@ -857,7 +874,9 @@ export default function Fast5MBoard() {
                 {[10, 25, 50].map((sz) => (
                   <button
                     key={sz}
+                    type="button"
                     onClick={() => {
+                      markSettingEdited();
                       setPositionSize(sz);
                       handleSaveSettings(confidenceThreshold, sz);
                     }}
@@ -870,13 +889,31 @@ export default function Fast5MBoard() {
                     ${sz}
                   </button>
                 ))}
+                <div className="relative flex items-center ml-1">
+                  <span className="absolute left-1.5 text-slate-400 font-mono text-[11px]">$</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="Custom"
+                    value={positionSize}
+                    onChange={(e) => {
+                      markSettingEdited();
+                      const val = Math.max(1, Number(e.target.value));
+                      setPositionSize(val);
+                    }}
+                    onBlur={() => handleSaveSettings(confidenceThreshold, positionSize)}
+                    className="w-16 pl-4 pr-1 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-bold font-mono text-slate-800 focus:outline-hidden focus:border-blue-500"
+                    title="Enter any custom position size in USD"
+                  />
+                </div>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3 text-slate-500 text-[11px] flex-wrap">
             <span className="flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-              <Zap className="w-3 h-3 text-emerald-600" /> Strict 1:1 RR: +$0.50 TP / -$0.50 SL
+              <Zap className="w-3 h-3 text-emerald-600" /> {riskRewardRatio}:1 R:R (+{takeProfitPct}% TP / -{stopLossPct}% SL)
             </span>
             <span className="flex items-center gap-1 font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
               <Shield className="w-3 h-3 text-blue-500" /> Micro-Profit Lock: +$0.15+ (Anti-Reversal)
@@ -1224,16 +1261,77 @@ export default function Fast5MBoard() {
                     <Scale className="w-4 h-4 text-blue-600" /> Risk—to—Reward Ratio
                   </span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                      <Shield className="w-3 h-3 text-emerald-600" /> 3% SL Cap
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-300 flex items-center gap-1">
+                      <Scale className="w-3 h-3 text-blue-600" /> Dynamic R:R
                     </span>
                     <span className={`text-xs font-mono font-black px-2.5 py-0.5 rounded-full border ${
-                      (takeProfitPct / (stopLossPct || 0.01)) >= 1.0
-                        ? 'bg-blue-100 text-blue-800 border-blue-300'
+                      riskRewardRatio >= 1.0
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                         : 'bg-amber-100 text-amber-800 border-amber-300'
                     }`}>
-                      {stopLossPct > 0 ? (takeProfitPct / stopLossPct).toFixed(2) : '1.00'} : 1.00 R:R
+                      {riskRewardRatio.toFixed(2)} : 1.00 R:R
                     </span>
+                  </div>
+                </div>
+
+                {/* MANUAL RISK-TO-REWARD RATIO INPUT FIELD */}
+                <div className="bg-white p-3.5 rounded-xl border border-blue-200/80 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Scale className="w-4 h-4 text-blue-600" />
+                      <span>Manual Risk-to-Reward Ratio</span>
+                    </label>
+                    <span className="text-xs font-mono font-black px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                      {riskRewardRatio.toFixed(2)} : 1.00 R:R
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.2"
+                        max="10.0"
+                        value={riskRewardRatio}
+                        onChange={(e) => {
+                          markSettingEdited();
+                          const r = Math.max(0.1, Number(e.target.value));
+                          setRiskRewardRatio(r);
+                          const newTp = Number((stopLossPct * r).toFixed(2));
+                          setTakeProfitPct(newTp);
+                          setTakeProfitDollar(Number(((positionSize * newTp) / 100).toFixed(2)));
+                        }}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono text-slate-900 focus:outline-hidden focus:border-blue-500"
+                        placeholder="e.g. 1.0, 1.5, 2.0"
+                      />
+                    </div>
+                    <span className="text-xs text-slate-400 font-mono font-bold">: 1</span>
+                  </div>
+                  {/* Quick R:R Preset Buttons */}
+                  <div className="grid grid-cols-5 gap-1.5 pt-1">
+                    {[1.0, 1.5, 2.0, 2.5, 3.0].map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => {
+                          markSettingEdited();
+                          setRiskRewardRatio(r);
+                          const newTp = Number((stopLossPct * r).toFixed(2));
+                          setTakeProfitPct(newTp);
+                          setTakeProfitDollar(Number(((positionSize * newTp) / 100).toFixed(2)));
+                        }}
+                        className={`py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                          Math.abs(riskRewardRatio - r) < 0.05
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {r.toFixed(1)}:1
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-slate-500 leading-relaxed bg-blue-50/50 p-2 rounded-lg border border-blue-100">
+                    ⚖️ <strong>Linked Risk/Reward:</strong> Setting the ratio automatically calculates your Take Profit target based on Stop Loss.
                   </div>
                 </div>
 
@@ -1250,48 +1348,54 @@ export default function Fast5MBoard() {
                   </div>
                   <input
                     type="range"
-                    min="2.0"
-                    max="10.0"
+                    min="1.0"
+                    max="15.0"
                     step="0.5"
                     value={bufferTimerSec}
-                    onChange={(e) => setBufferTimerSec(Number(e.target.value))}
+                    onChange={(e) => {
+                      markSettingEdited();
+                      setBufferTimerSec(Number(e.target.value));
+                    }}
                     className="w-full accent-blue-600 cursor-pointer"
                   />
                   <div className="flex items-center justify-between gap-1.5">
-                    {[3.0, 4.0, 5.0].map((sec) => (
+                    {[2.0, 3.0, 4.0, 5.0, 6.0].map((sec) => (
                       <button
                         key={sec}
                         type="button"
-                        onClick={() => setBufferTimerSec(sec)}
+                        onClick={() => {
+                          markSettingEdited();
+                          setBufferTimerSec(sec);
+                        }}
                         className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
                           Math.abs(bufferTimerSec - sec) < 0.1
                             ? 'bg-blue-600 text-white shadow-xs'
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                       >
-                        {sec.toFixed(1)}s {sec === 4.0 ? 'Default' : ''}
+                        {sec.toFixed(1)}s
                       </button>
                     ))}
                   </div>
                   <div className="text-[10px] text-slate-500 leading-relaxed bg-blue-50/50 p-2 rounded-lg border border-blue-100">
-                    🛡️ <strong className="text-blue-900">Noise Immunity Window:</strong> During the initial {bufferTimerSec}s after entry, micro-spread fluctuations are ignored so the trade has time to settle before Stop-Loss activates.
+                    🛡️ <strong className="text-blue-900">Noise Immunity Window:</strong> Micro-spread noise is suppressed during the first {bufferTimerSec}s so trades don't trigger stop loss instantly on spread widening.
                   </div>
                 </div>
 
-                {/* 2. STRICT RISK-TO-REWARD PRESETS & LIMITS */}
+                {/* 2. RISK-TO-REWARD PRESETS */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-[11px] text-slate-500 font-semibold block">
                       Quick Risk:Reward Presets:
                     </label>
-                    <span className="text-[10px] text-slate-400 font-mono">Max SL: 3.0%</span>
+                    <span className="text-[10px] text-slate-400 font-mono">Unclamped Dynamic SL</span>
                   </div>
                   <div className="grid grid-cols-4 gap-1.5">
                     {[
-                      { label: '1:1 Strict', tp: 3.0, sl: 3.0 },
-                      { label: '1.5:1 High', tp: 3.0, sl: 2.0 },
-                      { label: '2:1 Edge',   tp: 3.0, sl: 1.5 },
-                      { label: '1:1 Base',   tp: 1.5, sl: 1.5 },
+                      { label: '1:1 Strict', tp: 3.0, sl: 3.0, rr: 1.0 },
+                      { label: '1.5:1 High', tp: 4.5, sl: 3.0, rr: 1.5 },
+                      { label: '2:1 Edge',   tp: 6.0, sl: 3.0, rr: 2.0 },
+                      { label: '3:1 Pro',    tp: 9.0, sl: 3.0, rr: 3.0 },
                     ].map((p) => {
                       const isActive = Math.abs(takeProfitPct - p.tp) < 0.1 && Math.abs(stopLossPct - p.sl) < 0.1;
                       return (
@@ -1299,8 +1403,10 @@ export default function Fast5MBoard() {
                           key={p.label}
                           type="button"
                           onClick={() => {
+                            markSettingEdited();
                             setTakeProfitPct(p.tp);
                             setStopLossPct(p.sl);
+                            setRiskRewardRatio(p.rr);
                             setTakeProfitDollar(Number(((positionSize * p.tp) / 100).toFixed(2)));
                             setStopLossDollar(Number(((positionSize * p.sl) / 100).toFixed(2)));
                           }}
@@ -1318,9 +1424,9 @@ export default function Fast5MBoard() {
                   </div>
                 </div>
 
-                {/* Manual Take Profit & Hard Stop Loss Targets */}
+                {/* Manual Take Profit & Stop Loss Targets */}
                 <div className="grid grid-cols-2 gap-3 pt-1">
-                  {/* Take Profit Target (1.5% - 3.0% Base) */}
+                  {/* Take Profit Target */}
                   <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1">
                     <div className="flex items-center justify-between mb-0.5">
                       <label className="text-[11px] text-slate-700 font-bold">Take Profit %:</label>
@@ -1332,30 +1438,34 @@ export default function Fast5MBoard() {
                       <input
                         type="number"
                         step="0.5"
-                        min="1.0"
-                        max="10.0"
+                        min="0.5"
+                        max="50.0"
                         value={takeProfitPct}
                         onChange={(e) => {
-                          const pct = Math.max(0.5, Number(e.target.value));
+                          markSettingEdited();
+                          const pct = Math.max(0.1, Number(e.target.value));
                           setTakeProfitPct(pct);
                           setTakeProfitDollar(Number(((positionSize * pct) / 100).toFixed(2)));
+                          if (stopLossPct > 0) {
+                            setRiskRewardRatio(Number((pct / stopLossPct).toFixed(2)));
+                          }
                         }}
                         className="w-full pr-7 pl-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono text-emerald-700 focus:outline-hidden focus:border-blue-500"
                       />
                       <span className="absolute right-2.5 top-2 text-emerald-600 font-bold text-xs">%</span>
                     </div>
-                    <span className="text-[9px] text-slate-400 block">Base target: 1.5% – 3.0%</span>
+                    <span className="text-[9px] text-slate-400 block">Target gain %</span>
                   </div>
 
-                  {/* Strict Hard Stop Loss % (Strictly Capped at Max 3.0%) */}
+                  {/* Stop Loss % (Pure Unclamped) */}
                   <div className="bg-white p-3 rounded-xl border border-rose-200 space-y-1">
                     <div className="flex items-center justify-between mb-0.5">
                       <label className="text-[11px] text-rose-800 font-bold flex items-center gap-1">
                         <Shield className="w-3 h-3 text-rose-600" />
-                        <span>Hard Stop Loss %:</span>
+                        <span>Stop Loss %:</span>
                       </label>
                       <span className="text-[10px] text-rose-600 font-mono font-bold">
-                        -${((positionSize * Math.min(3.0, stopLossPct)) / 100).toFixed(2)}
+                        -${((positionSize * stopLossPct) / 100).toFixed(2)}
                       </span>
                     </div>
                     <div className="relative">
@@ -1363,26 +1473,32 @@ export default function Fast5MBoard() {
                         type="number"
                         step="0.5"
                         min="0.5"
-                        max="3.0"
+                        max="50.0"
                         value={stopLossPct}
                         onChange={(e) => {
-                          const pct = Math.min(3.0, Math.max(0.5, Number(e.target.value)));
+                          markSettingEdited();
+                          const pct = Math.max(0.1, Number(e.target.value));
                           setStopLossPct(pct);
                           setStopLossDollar(Number(((positionSize * pct) / 100).toFixed(2)));
+                          if (pct > 0 && riskRewardRatio > 0) {
+                            const newTp = Number((pct * riskRewardRatio).toFixed(2));
+                            setTakeProfitPct(newTp);
+                            setTakeProfitDollar(Number(((positionSize * newTp) / 100).toFixed(2)));
+                          }
                         }}
                         className="w-full pr-7 pl-3 py-1.5 bg-rose-50/40 border border-rose-200 rounded-lg text-xs font-bold font-mono text-rose-700 focus:outline-hidden focus:border-rose-500"
                       />
                       <span className="absolute right-2.5 top-2 text-rose-600 font-bold text-xs">%</span>
                     </div>
-                    <span className="text-[9px] text-rose-600 font-semibold block">Max 3.0% hard limit</span>
+                    <span className="text-[9px] text-slate-400 block">Max allowed loss %</span>
                   </div>
                 </div>
 
-                {/* Hard Stop Guarantee Notice */}
-                <div className="bg-rose-50/70 border border-rose-200 p-2.5 rounded-xl text-[10px] text-rose-900 leading-snug flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-rose-600 shrink-0" />
+                {/* Genuine Fill Notice */}
+                <div className="bg-emerald-50/70 border border-emerald-200 p-2.5 rounded-xl text-[10px] text-emerald-900 leading-snug flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>
-                    <strong>Strict Loss Limit Guarantee:</strong> Hard Stop-Loss is strictly enforced at maximum 3.0% (-${(positionSize * 0.03).toFixed(2)} on ${positionSize}). No trade will ever reach -10% or -15% drawdowns.
+                    <strong>100% Genuine Market Fills:</strong> All stop-loss exits are now settled against the real CLOB. Trade PnL reflects explicit market liquidity and pure orderbook slippage.
                   </span>
                 </div>
 
@@ -1677,7 +1793,10 @@ export default function Fast5MBoard() {
                       <button
                         key={sz}
                         type="button"
-                        onClick={() => setPositionSize(sz)}
+                        onClick={() => {
+                          markSettingEdited();
+                          setPositionSize(sz);
+                        }}
                         className={`py-2 text-center rounded-xl text-xs font-black font-mono transition-all cursor-pointer ${
                           positionSize === sz
                             ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
@@ -1694,16 +1813,22 @@ export default function Fast5MBoard() {
                       <span className="absolute left-3 top-2 text-slate-400 font-mono text-xs">$</span>
                       <input
                         type="number"
-                        min="5"
-                        max="100"
+                        min="1"
                         step="1"
                         value={positionSize}
-                        onChange={(e) => setPositionSize(Math.max(1, Number(e.target.value)))}
+                        onChange={(e) => {
+                          markSettingEdited();
+                          setPositionSize(Math.max(1, Number(e.target.value)));
+                        }}
                         className="w-full pl-6 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono text-slate-800 focus:outline-hidden focus:border-blue-500"
+                        placeholder="Enter any amount"
                       />
                     </div>
                     <span className="text-xs text-slate-400 font-mono">USD</span>
                   </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Enter any custom amount for your prediction position size without preset restrictions.
+                  </p>
                 </div>
 
                 {/* Strategy Direction */}

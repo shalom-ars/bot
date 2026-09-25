@@ -562,8 +562,8 @@ async def test_position_drop_0497_to_044_records_real_mathematical_loss():
     assert mock_db_trade.resolution == "HARD_STOP_LOSS"
     assert mock_db_trade.exit_price == 0.44
 
-    expected_pnl = round((shares * 0.44) - cost, 2)  # -5.73
-    expected_pct = round((expected_pnl / cost) * 100.0, 2)  # -11.46%
+    expected_pnl = round((0.44 - entry_p) * shares, 2)  # -5.73
+    expected_pct = round(((0.44 - entry_p) / entry_p) * 100.0, 2)  # -11.47%
 
     # PROVE IT IS NOT THE ARTIFICIAL -$0.50 (-1%)
     assert mock_db_trade.pnl != -0.50, \
