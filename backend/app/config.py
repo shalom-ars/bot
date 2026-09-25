@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     server_port: int = 8000
     backend_url: str = "http://13.140.56.78:8000"
 
+    # Admin & Authentication Configuration
+    admin_email: str = "shalombinrasheed@gmail.com"
+    google_client_id: str = "249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com"
+
     class Config:
         env_file = ".env"
         extra = "allow"

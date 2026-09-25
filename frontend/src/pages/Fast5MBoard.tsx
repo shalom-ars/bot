@@ -145,10 +145,8 @@ export default function Fast5MBoard() {
     auth_provider?: string;
   }
   const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
-  const isAdmin = userProfile?.email?.toLowerCase() === 'shalombinrasheed@gmail.com' ||
-    userProfile?.role === 'SUPER_ADMIN' ||
-    localStorage.getItem('user_role') === 'SUPER_ADMIN' ||
-    localStorage.getItem('user_email')?.toLowerCase() === 'shalombinrasheed@gmail.com';
+  const currentEmail = (userProfile?.email || localStorage.getItem('user_email') || '').trim().toLowerCase();
+  const isAdmin = currentEmail === 'shalombinrasheed@gmail.com';
 
   // Settings input protection lock (prevents polling from reverting user inputs during modification)
   const lastSettingEditTime = useRef<number>(0);
@@ -1017,7 +1015,7 @@ export default function Fast5MBoard() {
             >
               Trades ({trades.length})
             </button>
-            {userProfile?.email?.toLowerCase() === 'shalombinrasheed@gmail.com' && (
+            {isAdmin && (
               <button
                 type="button"
                 onClick={() => setActiveTab('admin')}
@@ -3817,7 +3815,7 @@ export default function Fast5MBoard() {
       )}
 
       {/* 7. ADMIN CONSOLE TAB */}
-      {activeTab === 'admin' && userProfile?.email?.toLowerCase() === 'shalombinrasheed@gmail.com' && (
+      {activeTab === 'admin' && isAdmin && (
         <AdminConsoleTab />
       )}
 

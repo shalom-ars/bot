@@ -532,8 +532,12 @@ def get_fast5m_wallet():
 
 
 @router.post("/wallet/connect")
-def connect_fast5m_wallet(req: WalletConnectRequest):
-    """Connect a real Polygon wallet and configure signing credentials."""
+def connect_fast5m_wallet(
+    req: WalletConnectRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """Connect a real Polygon wallet and configure signing credentials. Exclusively links to real account."""
     from app.fast5m.wallet import wallet_manager
     res = wallet_manager.connect(
         address=req.address,
@@ -545,6 +549,32 @@ def connect_fast5m_wallet(req: WalletConnectRequest):
     )
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Failed to connect wallet"))
+
+    clean_addr = req.address.strip().lower()
+    # Web3 wallet exclusively connects to real account mode
+    wallet_manager.set_mode("live")
+
+    if current_user:
+        current_user.wallet_address = clean_addr
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+        if vault:
+            vault.wallet_address = clean_addr
+            vault.account_mode = "live"
+        else:
+            vault = Fast5MUserVault(
+                user_id=current_user.id,
+                wallet_address=clean_addr,
+                account_mode="live",
+                allocated_balance=0.0,
+                initial_deposit=0.0,
+                total_deposited=0.0,
+                total_withdrawn=0.0
+            )
+            db.add(vault)
+        db.commit()
+
+    res["wallet"] = wallet_manager.get_status()
+    res["account_mode"] = "live"
     return res
 
 
@@ -593,10 +623,21 @@ def set_fast5m_wallet_mode(
 
 
 @router.post("/wallet/disconnect")
-def disconnect_fast5m_wallet():
+def disconnect_fast5m_wallet(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
     """Disconnect wallet, wipe credentials, and safely revert to demo mode."""
     from app.fast5m.wallet import wallet_manager
-    return wallet_manager.disconnect()
+    res = wallet_manager.disconnect()
+    if current_user:
+        current_user.wallet_address = None
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+        if vault:
+            vault.wallet_address = None
+            vault.account_mode = "demo"
+            db.commit()
+    return res
 
 
 @router.post("/wallet/refresh")

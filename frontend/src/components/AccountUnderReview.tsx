@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Clock, RefreshCw, LogOut, CheckCircle2 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
@@ -12,6 +12,47 @@ interface AccountUnderReviewProps {
 export default function AccountUnderReview({ email, onApproved, onLogout }: AccountUnderReviewProps) {
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const isApprovedRef = useRef(false);
+
+  const checkStatusSilent = async () => {
+    if (isApprovedRef.current) return;
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const res = await axios.get('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data?.status === 'APPROVED') {
+        isApprovedRef.current = true;
+        localStorage.setItem('user_status', 'APPROVED');
+        if (res.data.role) localStorage.setItem('user_role', res.data.role);
+        if (res.data.allowed_mode) localStorage.setItem('allowed_mode', res.data.allowed_mode);
+        setMessage('Your account has been approved by the Administrator! Launching terminal...');
+        setTimeout(() => {
+          if (onApproved) {
+            onApproved();
+          } else {
+            window.location.reload();
+          }
+        }, 1000);
+      }
+    } catch (e) {
+      console.debug('Silent status poll note', e);
+    }
+  };
+
+  useEffect(() => {
+    // Check immediately upon mount
+    checkStatusSilent();
+
+    // Auto-poll approval status every 4 seconds
+    const interval = setInterval(() => {
+      checkStatusSilent();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const handleCheckStatus = async () => {
     setChecking(true);
@@ -23,6 +64,7 @@ export default function AccountUnderReview({ email, onApproved, onLogout }: Acco
       });
 
       if (res.data?.status === 'APPROVED') {
+        isApprovedRef.current = true;
         localStorage.setItem('user_status', 'APPROVED');
         if (res.data.role) localStorage.setItem('user_role', res.data.role);
         if (res.data.allowed_mode) localStorage.setItem('allowed_mode', res.data.allowed_mode);

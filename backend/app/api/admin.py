@@ -99,7 +99,9 @@ def update_user_status(
         raise HTTPException(status_code=404, detail=f"User #{user_id} not found.")
 
     # Protect primary super admin account from demotion/suspension
-    if user.email == "arsandhuthree@gmail.com" and target_status != "APPROVED":
+    from app.config import settings
+    admin_email = getattr(settings, "admin_email", "shalombinrasheed@gmail.com").strip().lower()
+    if user.email.lower() == admin_email and target_status != "APPROVED":
         raise HTTPException(status_code=400, detail="Cannot alter status of primary Super Administrator account.")
 
     old_status = getattr(user, "status", "PENDING")
@@ -154,7 +156,9 @@ def update_user_mode(
         raise HTTPException(status_code=404, detail=f"User #{user_id} not found.")
 
     # Protect primary super admin account
-    if user.email == "arsandhuthree@gmail.com" and target_mode != "REAL_AND_DEMO":
+    from app.config import settings
+    admin_email = getattr(settings, "admin_email", "shalombinrasheed@gmail.com").strip().lower()
+    if user.email.lower() == admin_email and target_mode != "REAL_AND_DEMO":
         raise HTTPException(status_code=400, detail="Cannot restrict trading mode of primary Super Administrator account.")
 
     old_mode = getattr(user, "allowed_mode", "DEMO_ONLY")

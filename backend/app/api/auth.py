@@ -33,6 +33,7 @@ class GoogleAuth(BaseModel):
     name: Optional[str] = None
     credential: Optional[str] = None
     id_token: Optional[str] = None
+    access_token: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -84,7 +85,9 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     
     # 1. Create User
     clean_email = user_in.email.strip().lower()
-    is_super_admin = (clean_email == "shalombinrasheed@gmail.com")
+    from app.config import settings
+    configured_admin = getattr(settings, "admin_email", "shalombinrasheed@gmail.com").strip().lower()
+    is_super_admin = (clean_email == configured_admin)
     new_user = User(
         email=clean_email,
         hashed_password=get_password_hash(user_in.password),
@@ -106,8 +109,8 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         sub = Subscription(user_id=new_user.id, plan="PRO")
         db.add(sub)
     if not db.query(UserSetting).filter(UserSetting.user_id == new_user.id).first():
-        settings = UserSetting(user_id=new_user.id)
-        db.add(settings)
+        settings_record = UserSetting(user_id=new_user.id)
+        db.add(settings_record)
     
     vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == new_user.id).first()
     if not vault:
@@ -142,6 +145,21 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
+    
+    # Verify email against registered admin email
+    from app.config import settings
+    configured_admin = getattr(settings, "admin_email", "shalombinrasheed@gmail.com").strip().lower()
+    clean_email = user.email.strip().lower()
+    if clean_email == configured_admin:
+        user.role = "SUPER_ADMIN"
+        user.status = "APPROVED"
+        user.allowed_mode = "REAL_AND_DEMO"
+        db.commit()
+        db.refresh(user)
+    elif getattr(user, "role", "USER") == "SUPER_ADMIN":
+        user.role = "USER"
+        db.commit()
+        db.refresh(user)
     
     vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == user.id).first()
     if not vault:
@@ -253,48 +271,103 @@ def wallet_auth(auth_in: WalletAuth, db: Session = Depends(get_db)):
         "user": _get_user_dict(user, vault)
     }
 
-def _verify_google_token(credential: str) -> Dict[str, Any]:
+def _verify_google_token(credential: Optional[str] = None, access_token: Optional[str] = None) -> Dict[str, Any]:
     """
-    Verify Google ID token via Google tokeninfo endpoint,
+    Verify Google ID token or Access Token via Google API endpoints,
     with graceful offline JWT payload decoding fallback.
     """
     import json
     import base64
     import httpx
     
-    # 1. Attempt official Google tokeninfo verification
-    try:
-        resp = httpx.get(
-            f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}",
-            timeout=4.0
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            return {
-                "email": data.get("email"),
-                "sub": data.get("sub"),
-                "name": data.get("name"),
-                "verified": True
-            }
-    except Exception:
-        pass
+    # 1. If access_token provided, verify via userinfo
+    if access_token:
+        try:
+            resp = httpx.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=5.0
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "email": data.get("email"),
+                    "sub": data.get("sub"),
+                    "name": data.get("name"),
+                    "verified": True
+                }
+        except Exception:
+            pass
 
-    # 2. Fallback: Base64 URL-safe decode of JWT payload
-    try:
-        parts = credential.split(".")
-        if len(parts) >= 2:
-            padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(padded))
-            return {
-                "email": payload.get("email"),
-                "sub": payload.get("sub"),
-                "name": payload.get("name"),
-                "verified": False
-            }
-    except Exception:
-        pass
+    # 2. If credential/id_token passed, verify via tokeninfo
+    if credential:
+        try:
+            resp = httpx.get(
+                f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}",
+                timeout=4.0
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "email": data.get("email"),
+                    "sub": data.get("sub"),
+                    "name": data.get("name"),
+                    "verified": True
+                }
+        except Exception:
+            pass
+
+        # 3. Fallback: Base64 URL-safe decode of JWT payload
+        try:
+            parts = credential.split(".")
+            if len(parts) >= 2:
+                padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+                payload = json.loads(base64.urlsafe_b64decode(padded))
+                return {
+                    "email": payload.get("email"),
+                    "sub": payload.get("sub"),
+                    "name": payload.get("name"),
+                    "verified": False
+                }
+        except Exception:
+            pass
 
     return {}
+
+@router.get("/google/oauth-config")
+def get_google_oauth_config():
+    """Return Google OAuth configuration enforcing prompt=select_account."""
+    from app.config import settings
+    return {
+        "client_id": getattr(settings, "google_client_id", "249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com"),
+        "prompt": "select_account",
+        "scope": "openid email profile",
+        "admin_email": getattr(settings, "admin_email", "shalombinrasheed@gmail.com")
+    }
+
+@router.get("/google/url")
+def get_google_oauth_url(redirect_uri: Optional[str] = None):
+    """
+    Generate Google OAuth 2.0 authorization URL enforcing prompt=select_account
+    so users are always prompted to choose their Google account.
+    """
+    import urllib.parse
+    import secrets
+    from app.config import settings
+    client_id = getattr(settings, "google_client_id", "249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com")
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri or "http://localhost:5173/login",
+        "response_type": "token id_token",
+        "scope": "openid email profile",
+        "prompt": "select_account",
+        "nonce": secrets.token_hex(8),
+    }
+    return {
+        "auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}",
+        "prompt": "select_account",
+        "client_id": client_id
+    }
 
 @router.post("/google", response_model=Token)
 @router.post("/google-login", response_model=Token)
@@ -303,9 +376,10 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
     sub_id = None
 
     cred = auth_in.credential or auth_in.id_token
-    # If Google ID Token credential passed, verify token
-    if cred:
-        verified_data = _verify_google_token(cred)
+    access_tok = auth_in.access_token
+    # If Google credential or access token passed, verify token
+    if cred or access_tok:
+        verified_data = _verify_google_token(credential=cred, access_token=access_tok)
         if verified_data.get("email"):
             clean_email = verified_data["email"].strip().lower()
             sub_id = verified_data.get("sub")
@@ -315,8 +389,10 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
     if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Please enter a valid Gmail address (e.g. user@gmail.com)")
 
-    # Strict Super Admin configuration: shalombinrasheed@gmail.com is automatically SUPER_ADMIN & APPROVED & REAL_AND_DEMO
-    is_super_admin = (clean_email == "shalombinrasheed@gmail.com")
+    # Strict Super Admin verification against registered admin email
+    from app.config import settings
+    configured_admin = getattr(settings, "admin_email", "shalombinrasheed@gmail.com").strip().lower()
+    is_super_admin = (clean_email == configured_admin)
 
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:
@@ -363,6 +439,10 @@ def google_auth(auth_in: GoogleAuth, db: Session = Depends(get_db)):
             user.role = "SUPER_ADMIN"
             user.status = "APPROVED"
             user.allowed_mode = "REAL_AND_DEMO"
+        else:
+            # Enforce non-admin accounts cannot have SUPER_ADMIN role
+            if getattr(user, "role", "USER") == "SUPER_ADMIN":
+                user.role = "USER"
         db.commit()
         db.refresh(user)
 

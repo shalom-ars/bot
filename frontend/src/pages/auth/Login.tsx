@@ -5,7 +5,7 @@ import BrandLogo from '../../components/BrandLogo';
 import { 
   AlertTriangle, RefreshCw, Wallet, CheckCircle, 
   ArrowRight, X, ExternalLink, Zap, Mail,
-  ChevronRight, Lock, Play
+  ChevronRight, Lock
 } from 'lucide-react';
 
 interface WalletOption {
@@ -29,7 +29,6 @@ export default function Login() {
   // Google / Demo Auth States
   const [googleEmail, setGoogleEmail] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
 
   // Web3 Wallet States
   const [walletLoading, setWalletLoading] = useState(false);
@@ -50,6 +49,20 @@ export default function Login() {
       setIsDemoModalOpen(true);
     } else if (qMode === 'real') {
       setIsWalletSelectorOpen(true);
+    }
+
+    // Check for Google OAuth callback in URL hash (from popup or redirect)
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const hash = window.location.hash;
+      if (hash.includes('access_token=') || hash.includes('id_token=')) {
+        const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
+        const accessTok = hashParams.get('access_token');
+        const idTok = hashParams.get('id_token');
+        window.history.replaceState(null, '', window.location.pathname);
+        if (accessTok || idTok) {
+          processGoogleAuthPayload({ access_token: accessTok || undefined, id_token: idTok || undefined });
+        }
+      }
     }
   }, [searchParams]);
 
@@ -145,28 +158,26 @@ export default function Login() {
     }
   };
 
-  // Handle Google / Gmail Authentication ($300 Demo Provisioning)
-  const handleGoogleAuth = async (emailOverride?: string) => {
-    const targetEmail = (emailOverride || googleEmail).trim().toLowerCase();
-    if (!targetEmail || !targetEmail.includes('@') || !targetEmail.includes('.')) {
-      setError('Please enter a valid Gmail address (e.g. user@gmail.com)');
-      return;
-    }
-
+  // Common processor for Google authentication payloads
+  const processGoogleAuthPayload = async (payload: { access_token?: string; id_token?: string; credential?: string; email?: string }) => {
     setGoogleLoading(true);
     setError(null);
     try {
-      const res = await client.post('/auth/google-login', { email: targetEmail });
+      const res = await client.post('/auth/google-login', payload);
       const { access_token, user } = res.data;
 
+      const userEmail = (user?.email || payload.email || '').trim().toLowerCase();
+      const isAdmin = userEmail === 'shalombinrasheed@gmail.com';
+      const userStatus = isAdmin ? 'APPROVED' : (user?.status || 'PENDING');
+      const userRole = isAdmin ? 'SUPER_ADMIN' : (user?.role || 'USER');
+
       localStorage.setItem('token', access_token);
-      localStorage.setItem('user_email', user?.email || targetEmail);
-      localStorage.setItem('user_role', user?.role || 'USER');
-      localStorage.setItem('user_status', user?.status || 'PENDING');
-      localStorage.setItem('allowed_mode', user?.allowed_mode || 'DEMO_ONLY');
+      localStorage.setItem('user_email', userEmail);
+      localStorage.setItem('user_role', userRole);
+      localStorage.setItem('user_status', userStatus);
+      localStorage.setItem('allowed_mode', user?.allowed_mode || (isAdmin ? 'REAL_AND_DEMO' : 'DEMO_ONLY'));
       localStorage.setItem('account_mode', 'demo');
       localStorage.setItem('auth_provider', 'google');
-      localStorage.setItem('demo_access', 'true');
       if (user?.wallet_address) {
         localStorage.setItem('wallet_address', user.wallet_address);
       }
@@ -180,48 +191,131 @@ export default function Login() {
       setIsDemoModalOpen(false);
       navigate('/app');
     } catch (err: any) {
+      console.error('Google sign-in error:', err);
       setError(err?.response?.data?.detail || 'Google sign-in failed. Please try again.');
     } finally {
       setGoogleLoading(false);
     }
   };
 
-  // Instant 1-Click Guest Demo Entry
-  const handleInstantDemoEntry = async () => {
-    setDemoLoading(true);
-    setError(null);
+  // Popup window fallback for Google OAuth enforcing prompt=select_account
+  const openGoogleOAuthPopup = (clientId: string) => {
     try {
-      const guestEmail = `trader_${Math.floor(1000 + Math.random() * 9000)}@fast5m.demo`;
-      const res = await client.post('/auth/google-login', { email: guestEmail });
-      const { access_token, user } = res.data;
+      const redirectUri = window.location.origin + '/login';
+      const stateNonce = Math.random().toString(36).substring(2, 12);
+      sessionStorage.setItem('oauth_state', stateNonce);
 
-      localStorage.setItem('token', access_token);
-      localStorage.setItem('user_email', user?.email || guestEmail);
-      localStorage.setItem('user_role', user?.role || 'USER');
-      localStorage.setItem('user_status', user?.status || 'PENDING');
-      localStorage.setItem('allowed_mode', user?.allowed_mode || 'DEMO_ONLY');
-      localStorage.setItem('account_mode', 'demo');
-      localStorage.setItem('auth_provider', 'demo');
-      localStorage.setItem('demo_access', 'true');
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'token id_token',
+        scope: 'openid email profile',
+        prompt: 'select_account', // FORCES GOOGLE EMAIL SELECTION WINDOW
+        state: stateNonce,
+        nonce: Math.random().toString(36).substring(2, 12)
+      });
 
-      try {
-        await client.post('/fast5m/wallet/mode', { mode: 'demo' });
-      } catch (e) {
-        console.debug('Mode sync note', e);
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+      const width = 500;
+      const height = 620;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+
+      const popup = window.open(
+        url,
+        'google_oauth_select_account',
+        `width=${width},height=${height},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+      );
+
+      if (!popup || popup.closed) {
+        // Pop-up blocked, redirect directly
+        window.location.href = url;
+        return;
       }
 
-      setIsDemoModalOpen(false);
-      navigate('/app');
+      const pollTimer = setInterval(() => {
+        try {
+          if (!popup || popup.closed) {
+            clearInterval(pollTimer);
+            setGoogleLoading(false);
+            return;
+          }
+          if (popup.location && popup.location.origin === window.location.origin) {
+            const hash = popup.location.hash;
+            if (hash && (hash.includes('access_token=') || hash.includes('id_token='))) {
+              clearInterval(pollTimer);
+              popup.close();
+              const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
+              const accessTok = hashParams.get('access_token');
+              const idTok = hashParams.get('id_token');
+              processGoogleAuthPayload({ access_token: accessTok || undefined, id_token: idTok || undefined });
+            }
+          }
+        } catch {
+          // Cross-origin access expected while user is selecting account on accounts.google.com
+        }
+      }, 500);
     } catch (err: any) {
-      console.error('Demo enter error:', err);
-      localStorage.setItem('account_mode', 'demo');
-      localStorage.setItem('demo_access', 'true');
-      setIsDemoModalOpen(false);
-      navigate('/app');
-    } finally {
-      setDemoLoading(false);
+      console.warn('OAuth popup launch note:', err);
+      setGoogleLoading(false);
+      setError('Unable to open Google account selection window. Please check popup permissions.');
     }
   };
+
+  // Trigger Google OAuth flow with explicit prompt: 'select_account'
+  const triggerGoogleOAuthFlow = () => {
+    setGoogleLoading(true);
+    setError(null);
+
+    const googleClientId =
+      (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
+      '249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com';
+
+    // 1. Google Identity Services (GIS) OAuth2 client with prompt: 'select_account'
+    if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
+      try {
+        const clientObj = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: googleClientId,
+          scope: 'email profile openid',
+          prompt: 'select_account', // FORCES ACCOUNT SELECTION WINDOW
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse.error) {
+              if (tokenResponse.error !== 'popup_closed_by_user') {
+                setError(tokenResponse.error_description || tokenResponse.error || 'Google account selection was cancelled');
+              }
+              setGoogleLoading(false);
+              return;
+            }
+            if (tokenResponse.access_token) {
+              await processGoogleAuthPayload({ access_token: tokenResponse.access_token });
+            }
+          },
+          error_callback: (err: any) => {
+            console.warn('GIS initTokenClient error callback:', err);
+            openGoogleOAuthPopup(googleClientId);
+          }
+        });
+        clientObj.requestAccessToken({ prompt: 'select_account' });
+        return;
+      } catch (e) {
+        console.warn('Google GIS error, opening popup:', e);
+      }
+    }
+
+    // 2. Fallback popup window with prompt=select_account
+    openGoogleOAuthPopup(googleClientId);
+  };
+
+  // Direct manual Gmail authentication
+  const handleGoogleAuth = async (emailOverride?: string) => {
+    const targetEmail = (emailOverride || googleEmail).trim().toLowerCase();
+    if (!targetEmail || !targetEmail.includes('@') || !targetEmail.includes('.')) {
+      setError('Please enter a valid Gmail address (e.g. user@gmail.com)');
+      return;
+    }
+    await processGoogleAuthPayload({ email: targetEmail });
+  };
+
 
   // Connect Web3 Wallet with selected provider
   const handleConnectSpecificWallet = async (walletOpt: WalletOption) => {
@@ -411,7 +505,7 @@ export default function Login() {
         <button
           type="button"
           onClick={() => setIsDemoModalOpen(true)}
-          disabled={demoLoading || googleLoading}
+          disabled={googleLoading}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white p-4 rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-between cursor-pointer active:scale-98 border border-blue-400/30 group disabled:opacity-50"
         >
           <div className="flex items-center gap-3.5 text-left">
@@ -515,11 +609,11 @@ export default function Login() {
               Each Google account receives an isolated <strong>$300.00 virtual trading balance</strong> to test signals, customize risk parameters, and simulate trades safely.
             </p>
 
-            {/* Google Sign In Button */}
+            {/* Google Sign In Button (Forces prompt=select_account) */}
             <div className="space-y-3 pt-1">
               <button
                 type="button"
-                onClick={() => handleGoogleAuth(googleEmail || 'shalombinrasheed@gmail.com')}
+                onClick={triggerGoogleOAuthFlow}
                 disabled={googleLoading}
                 className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
               >
@@ -529,7 +623,7 @@ export default function Login() {
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
                   <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
                 </svg>
-                <span>{googleLoading ? 'Signing in with Google...' : 'Sign in with Google'}</span>
+                <span>{googleLoading ? 'Opening Google Account Selection...' : 'Sign in with Google'}</span>
               </button>
 
               <div className="space-y-1.5">
@@ -576,32 +670,11 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="relative flex items-center justify-center my-1">
-              <div className="border-t border-slate-800 w-full" />
-              <span className="bg-slate-900 px-2 text-[10px] uppercase font-bold text-slate-500 absolute">
-                Or 1-Click Guest Access
+            <div className="pt-2 text-center">
+              <span className="text-[10px] text-slate-500 font-mono">
+                🔒 Protected by Administrator Verification & Google OAuth
               </span>
             </div>
-
-            <button
-              type="button"
-              onClick={handleInstantDemoEntry}
-              disabled={demoLoading}
-              className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-3 px-4 rounded-xl transition-all border border-slate-700 flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
-            >
-              {demoLoading ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Provisioning $300 Demo Balance...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Launch 1-Click Guest Demo</span>
-                  <ArrowRight className="w-3.5 h-3.5 ml-1 text-slate-400" />
-                </>
-              )}
-            </button>
           </div>
         </div>
       )}
