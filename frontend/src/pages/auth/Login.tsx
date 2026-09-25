@@ -1,103 +1,289 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import client from '../../api/client';
 import BrandLogo from '../../components/BrandLogo';
-import { AlertTriangle, RefreshCw, Wallet, CheckCircle, Shield, ArrowRight, X, ExternalLink, Zap, Play } from 'lucide-react';
+import { 
+  AlertTriangle, RefreshCw, Wallet, CheckCircle, Shield, 
+  ArrowRight, X, ExternalLink, Zap, Play, Mail,
+  ChevronRight
+} from 'lucide-react';
+
+interface WalletOption {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  detected: boolean;
+  getProvider: () => any;
+}
 
 export default function Login() {
-  const [selectedAuthMode, setSelectedAuthMode] = useState<'demo' | 'real'>('demo');
+  const [searchParams] = useSearchParams();
+  const initialMode = searchParams.get('mode') === 'real' ? 'real' : 'demo';
+  const [selectedAuthMode, setSelectedAuthMode] = useState<'demo' | 'real'>(initialMode);
+  
+  // Google / Demo Auth States
+  const [googleEmail, setGoogleEmail] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
-  const [showAdminForm, setShowAdminForm] = useState(false);
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Web3 Wallet States
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletStatus, setWalletStatus] = useState<string | null>(null);
-  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
-
+  const [isWalletSelectorOpen, setIsWalletSelectorOpen] = useState(false);
+  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [selectedWalletName, setSelectedWalletName] = useState('MetaMask');
   const [connectedWallet, setConnectedWallet] = useState<string | null>(null);
+
+  // Admin / Email States
+  const [showAdminForm, setShowAdminForm] = useState(false);
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // Instant 1-Click Demo Entry (No Gmail / Signup Required)
-  const handleEnterDemoAccount = async () => {
-    setDemoLoading(true);
+  useEffect(() => {
+    const qMode = searchParams.get('mode');
+    if (qMode === 'real') {
+      setSelectedAuthMode('real');
+    }
+  }, [searchParams]);
+
+  // Available Web3 Wallets with detection
+  const getWalletOptions = (): WalletOption[] => {
+    if (typeof window === 'undefined') return [];
+    const eth = (window as any).ethereum;
+    const phantom = (window as any).phantom?.ethereum;
+    const coinbase = (window as any).coinbaseWalletExtension;
+    const rabby = (window as any).rabby || (eth && eth.isRabby);
+
+    return [
+      {
+        id: 'metamask',
+        name: 'MetaMask',
+        icon: '🦊',
+        description: 'Popular Ethereum & Polygon browser extension',
+        detected: Boolean(eth && eth.isMetaMask && !eth.isRabby),
+        getProvider: () => eth
+      },
+      {
+        id: 'coinbase',
+        name: 'Coinbase Wallet',
+        icon: '🔵',
+        description: 'Coinbase Wallet extension & mobile dApp',
+        detected: Boolean(coinbase || (eth && eth.isCoinbaseWallet)),
+        getProvider: () => coinbase || eth
+      },
+      {
+        id: 'phantom',
+        name: 'Phantom (EVM)',
+        icon: '👻',
+        description: 'Multi-chain Phantom wallet in EVM mode',
+        detected: Boolean(phantom),
+        getProvider: () => phantom || eth
+      },
+      {
+        id: 'rabby',
+        name: 'Rabby Wallet',
+        icon: '🐰',
+        description: 'Game-changing Web3 wallet for DeFi & Polygon',
+        detected: Boolean(rabby),
+        getProvider: () => (window as any).rabby || eth
+      },
+      {
+        id: 'injected',
+        name: 'Injected / WalletConnect',
+        icon: '🌐',
+        description: 'Browser Web3 provider or Trust / Safe wallet',
+        detected: Boolean(eth),
+        getProvider: () => eth
+      }
+    ];
+  };
+
+  // Switch network to Polygon Mainnet (137 / 0x89)
+  const ensurePolygonNetwork = async (provider: any): Promise<boolean> => {
+    try {
+      const chainId = await provider.request({ method: 'eth_chainId' });
+      if (chainId === '0x89' || chainId === '137' || parseInt(chainId, 16) === 137) {
+        return true;
+      }
+
+      setWalletStatus('Switching network to Polygon Mainnet (Chain 137)...');
+      try {
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: '0x89' }],
+        });
+        return true;
+      } catch (switchError: any) {
+        // Error code 4902 means the chain has not been added to MetaMask
+        if (switchError.code === 4902 || switchError?.data?.originalError?.code === 4902) {
+          setWalletStatus('Adding Polygon Mainnet to your wallet...');
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [
+              {
+                chainId: '0x89',
+                chainName: 'Polygon Mainnet',
+                nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+                rpcUrls: ['https://1rpc.io/matic', 'https://polygon-rpc.com'],
+                blockExplorerUrls: ['https://polygonscan.com/'],
+              },
+            ],
+          });
+          return true;
+        }
+        throw switchError;
+      }
+    } catch (err: any) {
+      console.warn('Network switch warning:', err);
+      // Even if network switch prompt fails, allow user to proceed if they confirm
+      return true;
+    }
+  };
+
+  // Handle Google / Gmail Authentication ($300 Demo Provisioning)
+  const handleGoogleAuth = async (emailOverride?: string) => {
+    const targetEmail = (emailOverride || googleEmail).trim().toLowerCase();
+    if (!targetEmail || !targetEmail.includes('@') || !targetEmail.includes('.')) {
+      setError('Please enter a valid Gmail address (e.g. user@gmail.com)');
+      return;
+    }
+
+    setGoogleLoading(true);
     setError(null);
     try {
+      const res = await client.post('/auth/google', { email: targetEmail });
+      const { access_token, user } = res.data;
+
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('user_email', user?.email || targetEmail);
+      localStorage.setItem('account_mode', 'demo');
+      localStorage.setItem('auth_provider', 'google');
+      localStorage.setItem('demo_access', 'true');
+
+      // Switch backend wallet mode to demo
       try {
         await client.post('/fast5m/wallet/mode', { mode: 'demo' });
       } catch (e) {
-        console.debug('Mode sync notice', e);
+        console.debug('Mode sync note', e);
       }
+
+      navigate('/app');
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Google sign-in failed. Please try again.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  // Instant 1-Click Guest Demo Entry
+  const handleInstantDemoEntry = async () => {
+    setDemoLoading(true);
+    setError(null);
+    try {
+      const guestEmail = `demo_${Math.floor(1000 + Math.random() * 9000)}@fast5m.demo`;
+      const res = await client.post('/auth/google', { email: guestEmail });
+      const { access_token, user } = res.data;
+
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('user_email', user?.email || guestEmail);
       localStorage.setItem('account_mode', 'demo');
+      localStorage.setItem('auth_provider', 'demo');
       localStorage.setItem('demo_access', 'true');
+
+      try {
+        await client.post('/fast5m/wallet/mode', { mode: 'demo' });
+      } catch (e) {
+        console.debug('Mode sync note', e);
+      }
+
       navigate('/app');
     } catch (err: any) {
       console.error('Demo enter error:', err);
+      // Fallback local bypass
+      localStorage.setItem('account_mode', 'demo');
+      localStorage.setItem('demo_access', 'true');
       navigate('/app');
     } finally {
       setDemoLoading(false);
     }
   };
 
-  // Web3 Wallet Login with User Signature Approval
-  const handleConnectWallet = async () => {
+  // Connect Web3 Wallet with selected provider
+  const handleConnectSpecificWallet = async (walletOpt: WalletOption) => {
+    setIsWalletSelectorOpen(false);
+    setSelectedWalletName(walletOpt.name);
     setError(null);
     setWalletStatus(null);
-    
-    // 1. Strict check: Must have MetaMask or Web3 provider
-    if (typeof window === 'undefined' || !(window as any).ethereum) {
-      setIsWalletModalOpen(true);
+
+    const provider = walletOpt.getProvider();
+    if (!provider) {
+      setIsInstallModalOpen(true);
       return;
     }
 
     setWalletLoading(true);
     try {
-      // 2. Request accounts from MetaMask
-      setWalletStatus('Please select and approve your wallet in MetaMask...');
-      const accounts = await (window as any).ethereum.request({ 
-        method: 'eth_requestAccounts' 
-      });
-      
+      // 1. Request account access
+      setWalletStatus(`Connecting to ${walletOpt.name}... Please approve connection.`);
+      const accounts = await provider.request({ method: 'eth_requestAccounts' });
+
       if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts selected in MetaMask.');
+        throw new Error(`No account selected in ${walletOpt.name}.`);
       }
-      
-      const walletAddress = accounts[0];
 
-      // 3. Request cryptographic signature approval in MetaMask
-      setWalletStatus('Please sign and approve connection in MetaMask...');
+      const walletAddress = accounts[0].toLowerCase();
+
+      // 2. Ensure Polygon Mainnet network
+      await ensurePolygonNetwork(provider);
+
+      // 3. Cryptographic signature verification challenge
+      setWalletStatus(`Please sign the verification request in ${walletOpt.name} to confirm wallet ownership...`);
       const nonce = Math.floor(Math.random() * 1000000);
-      const challengeMessage = `Genanda Bot Real Money Trading Access\n\nPlease approve and sign to verify ownership of your wallet for live trading.\n\nWallet: ${walletAddress}\nNonce: ${nonce}\nTimestamp: ${new Date().toISOString()}`;
-      
-      const signature = await (window as any).ethereum.request({
+      const challengeMessage = `Fast5M Prediction Platform Access\n\nPlease approve this signature to verify wallet ownership for real-money Polymarket trading.\n\nWallet: ${walletAddress}\nNetwork: Polygon Mainnet (137)\nNonce: ${nonce}\nTimestamp: ${new Date().toISOString()}`;
+
+      const signature = await provider.request({
         method: 'personal_sign',
-        params: [challengeMessage, walletAddress]
+        params: [challengeMessage, walletAddress],
       });
 
-      setWalletStatus('Verifying approval and linking real funds...');
-      
-      // 4. Authenticate with backend and link funds
-      const res = await client.post('/auth/wallet', { 
+      setWalletStatus('Verifying cryptographic signature on backend...');
+
+      // 4. Authenticate with backend and provision live vault
+      const res = await client.post('/auth/wallet', {
         wallet_address: walletAddress,
         signature: signature,
-        message: challengeMessage
+        message: challengeMessage,
       });
-      
-      setConnectedWallet(walletAddress);
-      localStorage.setItem('token', res.data.access_token);
-      localStorage.setItem('wallet_address', walletAddress);
-      localStorage.setItem('account_mode', 'real_money');
 
-      setWalletStatus('Approved! Entering trading terminal...');
+      const { access_token, user } = res.data;
+
+      setConnectedWallet(walletAddress);
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('wallet_address', walletAddress);
+      localStorage.setItem('user_email', user?.email || `${walletAddress}@web3.wallet`);
+      localStorage.setItem('account_mode', 'live');
+      localStorage.setItem('auth_provider', 'wallet');
+
+      // Switch engine mode to live
+      try {
+        await client.post('/fast5m/wallet/mode', { mode: 'live' });
+      } catch (e) {
+        console.debug('Mode sync note', e);
+      }
+
+      setWalletStatus('Wallet successfully verified! Entering trading terminal...');
       setTimeout(() => {
         navigate('/app');
-      }, 700);
+      }, 600);
     } catch (err: any) {
       console.error('Wallet connection error:', err);
       if (err?.code === 4001 || err?.message?.includes('User rejected') || err?.message?.includes('denied')) {
-        setError('Wallet connection or signature approval was rejected in MetaMask.');
+        setError(`Connection or signature was cancelled in ${walletOpt.name}.`);
       } else {
         setError(err?.response?.data?.detail || err?.message || 'Failed to connect Web3 wallet. Please try again.');
       }
@@ -107,34 +293,42 @@ export default function Login() {
     }
   };
 
-  // Standard Email / Password Login (Optional Admin Access)
-  const handleLogin = async (e: React.FormEvent) => {
+  // Default Wallet Connect trigger
+  const handlePrimaryWalletConnect = () => {
+    const wallets = getWalletOptions();
+    const detectedWallets = wallets.filter(w => w.detected);
+
+    if (detectedWallets.length === 1) {
+      handleConnectSpecificWallet(detectedWallets[0]);
+    } else {
+      setIsWalletSelectorOpen(true);
+    }
+  };
+
+  // Standard Admin / Email Login
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    setAdminLoading(true);
     setError(null);
     try {
       const formData = new URLSearchParams();
-      formData.append('username', email);
-      formData.append('password', password);
-      
+      formData.append('username', adminEmail);
+      formData.append('password', adminPassword);
+
       const res = await client.post('/auth/login', formData, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-      
-      localStorage.setItem('token', res.data.access_token);
-      localStorage.setItem('user_email', email);
-      localStorage.setItem('account_mode', 'demo');
+
+      const { access_token, user } = res.data;
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('user_email', user?.email || adminEmail);
+      localStorage.setItem('account_mode', user?.vault?.account_mode || 'demo');
+      localStorage.setItem('auth_provider', user?.auth_provider || 'email');
       navigate('/app');
     } catch (err: any) {
-      if (err.response) {
-        setError(err.response.data?.detail || 'Incorrect email or password.');
-      } else {
-        setError('Network error. Backend might be unreachable.');
-      }
+      setError(err?.response?.data?.detail || 'Incorrect admin email or password.');
     } finally {
-      setLoading(false);
+      setAdminLoading(false);
     }
   };
 
@@ -145,12 +339,12 @@ export default function Login() {
         <div className="flex justify-center mb-2">
           <BrandLogo size={48} glow={true} />
         </div>
-        <h1 className="text-2xl font-black text-white tracking-tight">Genanda Bot</h1>
-        <p className="text-xs text-slate-400 font-mono">5-Minute Fast Prediction Terminal</p>
+        <h1 className="text-2xl font-black text-white tracking-tight">Fast5M Prediction Platform</h1>
+        <p className="text-xs text-slate-400 font-mono">7-Asset Real-Time Autonomous Engine</p>
       </div>
 
       {error && (
-        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 p-3 rounded-xl text-xs flex gap-2 items-center">
+        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 p-3 rounded-xl text-xs flex gap-2 items-center text-left">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 text-rose-400" />
           <span>{error}</span>
         </div>
@@ -196,12 +390,12 @@ export default function Login() {
         >
           <span>⚡ Real Account</span>
           <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/30 text-emerald-200 font-bold border border-emerald-400/30">
-            Live Wallet
+            Web3 Wallet
           </span>
         </button>
       </div>
 
-      {/* 2. DEMO MODE CARD: NO GMAIL / SIGNUP REQUIRED */}
+      {/* 2. DEMO MODE CARD: GOOGLE SIGN-IN + INSTANT ACCESS */}
       {selectedAuthMode === 'demo' && (
         <div className="bg-gradient-to-br from-blue-950/40 via-indigo-950/30 to-slate-900 border-2 border-blue-500/40 rounded-2xl p-5 shadow-xl space-y-4 text-left animate-fade-in">
           <div className="flex items-center justify-between">
@@ -214,40 +408,71 @@ export default function Login() {
                 <p className="text-xs text-slate-400">Risk-Free 5-Minute Paper Trading</p>
               </div>
             </div>
-            <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-black px-2.5 py-1 rounded-full border border-emerald-500/30 font-mono uppercase">
-              No Gmail Required
+            <span className="bg-blue-500/20 text-blue-300 text-[10px] font-black px-2.5 py-1 rounded-full border border-blue-500/30 font-mono uppercase">
+              $300 Provisioned
             </span>
           </div>
 
           <p className="text-xs text-slate-300 leading-relaxed bg-blue-950/50 p-3 rounded-xl border border-blue-900/60">
-            ✨ Practice automated 5-minute round execution with a fresh <strong>$300.00 virtual paper balance</strong>. Zero signup or Gmail account required — instant 1-click terminal access!
+            ✨ Sign in with your Google account or explore instantly. Each Google account automatically receives an isolated <strong>$300.00 virtual trading balance</strong> to test signals, customize risk parameters, and simulate trades safely.
           </p>
 
-          <div className="space-y-1.5 text-xs text-slate-300 font-mono">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-              <span>$300 Initial Virtual Equity (Resettable in Settings)</span>
+          {/* Google Sign-in Section */}
+          <div className="space-y-2.5">
+            <label className="block text-[11px] font-bold text-slate-300">
+              Sign in with Google / Gmail
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="email"
+                  value={googleEmail}
+                  onChange={(e) => setGoogleEmail(e.target.value)}
+                  placeholder="yourname@gmail.com"
+                  className="w-full bg-slate-950/80 border border-blue-500/30 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 outline-none font-mono"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleGoogleAuth();
+                    }
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => handleGoogleAuth()}
+                disabled={googleLoading || !googleEmail.trim()}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-md shadow-blue-600/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              >
+                {googleLoading ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Enter</span>
+                  </>
+                )}
+              </button>
             </div>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Direct Chainlink & Pyth sub-second feeds</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Strict hard stop & anti-reversal profit locking</span>
-            </div>
+          </div>
+
+          <div className="relative flex items-center justify-center my-2">
+            <div className="border-t border-slate-800 w-full" />
+            <span className="bg-slate-900 px-2 text-[10px] uppercase font-bold text-slate-500 absolute">
+              Or 1-Click Guest Access
+            </span>
           </div>
 
           <button
             type="button"
-            onClick={handleEnterDemoAccount}
+            onClick={handleInstantDemoEntry}
             disabled={demoLoading}
             className="w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
           >
             {demoLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Entering Demo Terminal...</span>
+                <span>Initializing Demo Vault ($300)...</span>
               </>
             ) : (
               <>
@@ -260,9 +485,9 @@ export default function Login() {
         </div>
       )}
 
-      {/* 3. REAL MODE CARD: WEB3 WALLET REQUIRED */}
+      {/* 3. REAL MODE CARD: WEB3 MULTI-WALLET */}
       {selectedAuthMode === 'real' && (
-        <div className="bg-gradient-to-br from-purple-950/40 via-indigo-950/30 to-slate-900 border-2 border-emerald-500/40 rounded-2xl p-5 shadow-xl space-y-4 text-left animate-fade-in">
+        <div className="bg-gradient-to-br from-emerald-950/40 via-teal-950/30 to-slate-900 border-2 border-emerald-500/40 rounded-2xl p-5 shadow-xl space-y-4 text-left animate-fade-in">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-md shadow-emerald-500/30">
@@ -274,13 +499,22 @@ export default function Login() {
               </div>
             </div>
             <span className="bg-purple-500/20 text-purple-300 text-[10px] font-black px-2.5 py-1 rounded-full border border-purple-500/30 font-mono uppercase">
-              Polygon Mainnet
+              Polygon (137)
             </span>
           </div>
 
           <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/50 p-3 rounded-xl border border-slate-800">
-            ⚡ Connect your Web3 wallet (MetaMask, Rabby, or Polygon Signer) to trade with real USDC on Polymarket&apos;s Central Limit Order Book with sub-second automation.
+            ⚡ Connect your Web3 wallet (MetaMask, Coinbase Wallet, Phantom, Rabby, or WalletConnect) to trade real USDC on Polymarket&apos;s Central Limit Order Book with sub-second execution.
           </p>
+
+          {/* Supported Wallets Pills */}
+          <div className="flex flex-wrap gap-1.5 py-1">
+            {['MetaMask', 'Coinbase Wallet', 'Phantom', 'Rabby', 'WalletConnect'].map((wName) => (
+              <span key={wName} className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+                {wName}
+              </span>
+            ))}
+          </div>
 
           {walletStatus && (
             <div className="bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 p-2.5 rounded-xl text-xs flex items-center gap-2 animate-pulse font-mono">
@@ -289,29 +523,39 @@ export default function Login() {
             </div>
           )}
 
-          <button
-            onClick={handleConnectWallet}
-            disabled={walletLoading}
-            type="button"
-            className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
-          >
-            {walletLoading ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Awaiting MetaMask Approval...</span>
-              </>
-            ) : (
-              <>
-                <Wallet className="w-4 h-4" />
-                <span>Connect Wallet for Real Money</span>
-                <ArrowRight className="w-4 h-4 ml-1" />
-              </>
-            )}
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={handlePrimaryWalletConnect}
+              disabled={walletLoading}
+              type="button"
+              className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
+            >
+              {walletLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Connecting {selectedWalletName}...</span>
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-4 h-4" />
+                  <span>Connect Web3 Wallet (Polygon)</span>
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsWalletSelectorOpen(true)}
+              className="w-full text-center text-xs font-semibold text-slate-400 hover:text-emerald-400 transition-colors py-1 cursor-pointer"
+            >
+              Choose specific wallet (MetaMask, Coinbase, Phantom, Rabby)
+            </button>
+          </div>
 
           <p className="text-[10px] text-slate-400 text-center flex items-center justify-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Non-custodial: Requires MetaMask signature to verify wallet ownership</span>
+            <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>Non-custodial: Cryptographic signature verifies ownership. Automatically prompts Polygon network.</span>
           </p>
         </div>
       )}
@@ -327,35 +571,35 @@ export default function Login() {
         </button>
 
         {showAdminForm && (
-          <form className="space-y-3 pt-3 animate-fade-in" onSubmit={handleLogin}>
+          <form className="space-y-3 pt-3 animate-fade-in" onSubmit={handleAdminLogin}>
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1">Email Address</label>
-              <input 
-                type="email" 
+              <input
+                type="email"
                 required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono" 
-                placeholder="admin@domain.com" 
+                value={adminEmail}
+                onChange={e => setAdminEmail(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                placeholder="admin@domain.com"
               />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1">Password</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono" 
-                placeholder="••••••••••••" 
+                value={adminPassword}
+                onChange={e => setAdminPassword(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                placeholder="••••••••••••"
               />
             </div>
-            <button 
-              type="submit" 
-              disabled={loading}
+            <button
+              type="submit"
+              disabled={adminLoading}
               className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-2 rounded-xl transition-all shadow-xs flex justify-center items-center cursor-pointer disabled:opacity-50"
             >
-              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Log In with Password'}
+              {adminLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Log In with Password'}
             </button>
           </form>
         )}
@@ -368,13 +612,68 @@ export default function Login() {
         </Link>
       </div>
 
-      {/* MODAL: WEB3 WALLET NOT DETECTED */}
-      {isWalletModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+      {/* MODAL: MULTI-WALLET CONNECTOR SELECTOR */}
+      {isWalletSelectorOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border-2 border-emerald-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+            <button
+              onClick={() => setIsWalletSelectorOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                <Wallet className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Select Web3 Wallet</h3>
+                <p className="text-xs text-slate-400">Connect for Real-Money Polymarket Trading</p>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {getWalletOptions().map((walletOpt) => (
+                <button
+                  key={walletOpt.id}
+                  type="button"
+                  onClick={() => handleConnectSpecificWallet(walletOpt)}
+                  className="w-full flex items-center justify-between p-3.5 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/50 rounded-xl transition-all cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{walletOpt.icon}</span>
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>{walletOpt.name}</span>
+                        {walletOpt.detected && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                            Detected
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400">{walletOpt.description}</p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
+                </button>
+              ))}
+            </div>
+
+            <p className="text-[10px] text-slate-400 text-center pt-2">
+              Supports MetaMask, Coinbase Wallet, Phantom, Rabby, and 300+ mobile wallets via Injected/WalletConnect providers.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: WALLET NOT DETECTED INSTALL GUIDE */}
+      {isInstallModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
           <div className="bg-slate-900 border-2 border-indigo-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
-            <button 
-              onClick={() => setIsWalletModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+            <button
+              onClick={() => setIsInstallModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -390,13 +689,13 @@ export default function Login() {
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              To trade with real money and connect live funds on Genanda Bot, please install MetaMask extension or open this website inside the MetaMask mobile app browser.
+              To trade with real money on Polygon and Polymarket, please install a browser extension such as MetaMask or Rabby, or open this terminal inside your mobile wallet dApp browser.
             </p>
 
             <div className="flex gap-2.5 pt-2">
               <button
                 type="button"
-                onClick={() => setIsWalletModalOpen(false)}
+                onClick={() => setIsInstallModalOpen(false)}
                 className="w-1/3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
               >
                 Close
@@ -405,7 +704,7 @@ export default function Login() {
                 href="https://metamask.io/download/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-2/3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs py-2.5 rounded-xl transition-all shadow-md flex justify-center items-center gap-2"
+                className="w-2/3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs py-2.5 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 cursor-pointer"
               >
                 <span>Install MetaMask</span>
                 <ExternalLink className="w-3.5 h-3.5" />

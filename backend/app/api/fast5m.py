@@ -8,11 +8,21 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
-from app.db.models import Fast5MTrade
+from app.db.models import Fast5MTrade, Fast5MSetting, Fast5MUserVault, Fast5MUserSetting, User
+from app.api.security import get_current_user_optional
 from app.fast5m.engine import fast5m_engine
 from app.fast5m.executor import fast_executor
 
 router = APIRouter()
+
+
+class VaultDepositRequest(BaseModel):
+    amount: float
+
+
+class VaultWithdrawRequest(BaseModel):
+    amount: float
+
 
 
 class SettingsUpdate(BaseModel):
@@ -103,14 +113,22 @@ def get_fast5m_trades(
     timeframe: str = Query("all", pattern="^(today|week|month|all)$"),
     account_mode: Optional[str] = Query("demo", pattern="^(demo|live|all)$"),
     limit: Optional[int] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
     """
     Retrieve historical trades and comprehensive PnL metrics with lifetime database persistence
     and dynamic timeframe filtering (today, week, month, all-time) separated by account mode (demo vs live).
+    Guarantees strict user isolation so that users only see their own trades.
     """
     now = datetime.now(timezone.utc)
     base_query = db.query(Fast5MTrade)
+
+    if current_user:
+        base_query = base_query.filter((Fast5MTrade.user_id == current_user.id) | (Fast5MTrade.user_id.is_(None)))
+    elif account_mode == "live":
+        # Unauthenticated live mode request returns empty list
+        base_query = base_query.filter(Fast5MTrade.id == -1)
 
     if account_mode == "demo":
         base_query = base_query.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
@@ -157,6 +175,7 @@ def get_fast5m_trades(
 
         result.append({
             "id": t.id,
+            "user_id": getattr(t, "user_id", None),
             "asset": t.asset,
             "account_mode": getattr(t, "account_mode", "demo") or "demo",
             "market_id": t.market_id,
@@ -194,8 +213,13 @@ def get_fast5m_trades(
 
     win_rate = (wins / closed_trades * 100.0) if closed_trades > 0 else 0.0
 
-    # Also compute all-time lifetime stats across closed records matching mode
+    # Also compute all-time lifetime stats across closed records matching mode and user
     lifetime_q = db.query(Fast5MTrade).filter(Fast5MTrade.status == "CLOSED")
+    if current_user:
+        lifetime_q = lifetime_q.filter((Fast5MTrade.user_id == current_user.id) | (Fast5MTrade.user_id.is_(None)))
+    elif account_mode == "live":
+        lifetime_q = lifetime_q.filter(Fast5MTrade.id == -1)
+
     if account_mode == "demo":
         lifetime_q = lifetime_q.filter((Fast5MTrade.account_mode == "demo") | (Fast5MTrade.account_mode.is_(None)))
     elif account_mode == "live":
@@ -210,15 +234,19 @@ def get_fast5m_trades(
     all_closed_count = len(all_closed_records)
     all_win_rate = (all_wins / all_closed_count * 100.0) if all_closed_count > 0 else 0.0
 
+    # Retrieve user's dedicated vault allocation if available
+    user_vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first() if current_user else None
+
     if account_mode == "live":
         from app.fast5m.wallet import wallet_manager
-        current_balance = round(wallet_manager.total_usdc_balance, 2)
-        initial_balance = round(current_balance - all_pnl, 2) if wallet_manager.is_connected else 0.0
-        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode") == "live"])
+        current_balance = round(user_vault.allocated_balance, 2) if user_vault else round(wallet_manager.total_usdc_balance, 2)
+        initial_balance = round(user_vault.initial_deposit, 2) if user_vault else (round(current_balance - all_pnl, 2) if wallet_manager.is_connected else 0.0)
+        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode") == "live" and (not current_user or t.get("user_id") == current_user.id)])
     else:
-        initial_balance = float(fast_executor.settings.get("total_balance_usd", 300.0))
+        initial_balance = float(user_vault.allocated_balance if user_vault else fast_executor.settings.get("total_balance_usd", 300.0))
         current_balance = round(initial_balance + all_pnl, 2)
-        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode", "demo") == "demo"])
+        active_open_trades = len([t for t in fast_executor.get_active_trades() if t.get("account_mode", "demo") == "demo" and (not current_user or t.get("user_id") == current_user.id)])
+
 
     return {
         "timeframe": timeframe,
@@ -510,4 +538,187 @@ def refresh_fast5m_wallet_balances():
         "balances": balances,
         "wallet": wallet_manager.get_status()
     }
+
+
+# ==========================================
+# ISOLATED TRADING VAULT & CAPITAL ALLOCATION
+# ==========================================
+
+@router.get("/vault")
+def get_fast5m_vault(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve isolated Fast5M trading allocation vault state,
+    calculating active margin in open trades and strictly locked withdrawal limits.
+    """
+    from app.fast5m.wallet import wallet_manager
+
+    if current_user:
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+        if not vault:
+            is_live = current_user.auth_provider == "wallet"
+            vault = Fast5MUserVault(
+                user_id=current_user.id,
+                account_mode="live" if is_live else "demo",
+                wallet_address=current_user.wallet_address,
+                allocated_balance=0.0 if is_live else 300.0,
+                initial_deposit=0.0 if is_live else 300.0,
+                total_deposited=0.0 if is_live else 300.0,
+                total_withdrawn=0.0
+            )
+            db.add(vault)
+            db.commit()
+            db.refresh(vault)
+    else:
+        vault = None
+
+    allocated_balance = vault.allocated_balance if vault else float(fast_executor.settings.get("total_balance_usd", 300.0))
+    account_mode = vault.account_mode if vault else getattr(wallet_manager, "account_mode", "demo")
+
+    # Compute open margin locked in active positions
+    active_trades = fast_executor.get_active_trades()
+    if current_user:
+        user_active_trades = [
+            t for t in active_trades 
+            if t.get("user_id") == current_user.id or (not t.get("user_id") and t.get("account_mode", "demo") == account_mode)
+        ]
+    else:
+        user_active_trades = [t for t in active_trades if t.get("account_mode", "demo") == account_mode]
+
+    active_margin = round(sum(t.get("cost", 0.0) for t in user_active_trades), 2)
+    available_to_withdraw = round(max(0.0, allocated_balance - active_margin), 2)
+
+    return {
+        "user_id": current_user.id if current_user else None,
+        "account_mode": account_mode,
+        "wallet_address": vault.wallet_address if vault else (wallet_manager.wallet_address or None),
+        "allocated_balance": round(allocated_balance, 2),
+        "initial_deposit": round(vault.initial_deposit if vault else 300.0, 2),
+        "total_deposited": round(vault.total_deposited if vault else 300.0, 2),
+        "total_withdrawn": round(vault.total_withdrawn if vault else 0.0, 2),
+        "active_margin": active_margin,
+        "open_trades_count": len(user_active_trades),
+        "available_to_withdraw": available_to_withdraw,
+        "total_wallet_balance": round(wallet_manager.total_usdc_balance, 2) if wallet_manager.is_connected else 0.0,
+        "pol_gas_balance": round(wallet_manager.pol_balance, 4) if wallet_manager.is_connected else 0.0,
+        "is_wallet_connected": wallet_manager.is_connected
+    }
+
+
+@router.post("/vault/deposit")
+def deposit_to_vault(
+    req: VaultDepositRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Allocate capital from primary wallet balance or demo reserves into the Fast5M trading vault.
+    Sets the bot's hard capital ceiling to this allocated amount.
+    """
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Deposit amount must be strictly greater than $0.00.")
+
+    from app.fast5m.wallet import wallet_manager
+    if current_user:
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+        if not vault:
+            is_live = current_user.auth_provider == "wallet"
+            vault = Fast5MUserVault(
+                user_id=current_user.id,
+                account_mode="live" if is_live else "demo",
+                wallet_address=current_user.wallet_address,
+                allocated_balance=0.0 if is_live else 300.0,
+                initial_deposit=0.0 if is_live else 300.0
+            )
+            db.add(vault)
+    else:
+        vault = None
+
+    account_mode = vault.account_mode if vault else getattr(wallet_manager, "account_mode", "demo")
+
+    if account_mode == "live" and wallet_manager.is_connected:
+        wallet_manager.refresh_balances()
+        if req.amount > wallet_manager.total_usdc_balance:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Allocation amount (${req.amount:.2f}) exceeds total connected Polygon USDC balance (${wallet_manager.total_usdc_balance:.2f})."
+            )
+
+    if vault:
+        vault.allocated_balance = round(vault.allocated_balance + req.amount, 2)
+        vault.total_deposited = round(vault.total_deposited + req.amount, 2)
+        db.commit()
+        new_total = vault.allocated_balance
+    else:
+        curr = float(fast_executor.settings.get("total_balance_usd", 300.0))
+        new_total = round(curr + req.amount, 2)
+
+    fast_executor.update_settings({"total_balance_usd": str(new_total)})
+    return {
+        "success": True,
+        "message": f"Successfully allocated ${req.amount:.2f} to Fast5M Trading Vault.",
+        "allocated_balance": new_total
+    }
+
+
+@router.post("/vault/withdraw")
+def withdraw_from_vault(
+    req: VaultWithdrawRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    De-allocate trading funds back to primary wallet reserve.
+    Enforces strict safety locking: Available to Withdraw = Allocated Balance - Active Margin in Open Trades.
+    """
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Withdrawal amount must be strictly greater than $0.00.")
+
+    from app.fast5m.wallet import wallet_manager
+    if current_user:
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+    else:
+        vault = None
+
+    allocated_balance = vault.allocated_balance if vault else float(fast_executor.settings.get("total_balance_usd", 300.0))
+    account_mode = vault.account_mode if vault else getattr(wallet_manager, "account_mode", "demo")
+
+    # Calculate active margin currently committed to open trades
+    active_trades = fast_executor.get_active_trades()
+    if current_user:
+        user_active_trades = [
+            t for t in active_trades 
+            if t.get("user_id") == current_user.id or (not t.get("user_id") and t.get("account_mode", "demo") == account_mode)
+        ]
+    else:
+        user_active_trades = [t for t in active_trades if t.get("account_mode", "demo") == account_mode]
+
+    active_margin = round(sum(t.get("cost", 0.0) for t in user_active_trades), 2)
+    available_to_withdraw = round(max(0.0, allocated_balance - active_margin), 2)
+
+    if req.amount > available_to_withdraw:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot withdraw ${req.amount:.2f}: ${active_margin:.2f} is currently locked as active margin in {len(user_active_trades)} open trade(s). Maximum available to withdraw is ${available_to_withdraw:.2f}."
+        )
+
+    if vault:
+        vault.allocated_balance = round(vault.allocated_balance - req.amount, 2)
+        vault.total_withdrawn = round(vault.total_withdrawn + req.amount, 2)
+        db.commit()
+        new_total = vault.allocated_balance
+    else:
+        curr = float(fast_executor.settings.get("total_balance_usd", 300.0))
+        new_total = round(max(0.0, curr - req.amount), 2)
+
+    fast_executor.update_settings({"total_balance_usd": str(max(1.0, new_total))})
+    return {
+        "success": True,
+        "message": f"Successfully de-allocated ${req.amount:.2f} back to wallet reserve.",
+        "allocated_balance": new_total,
+        "available_to_withdraw": round(max(0.0, new_total - active_margin), 2)
+    }
+
 

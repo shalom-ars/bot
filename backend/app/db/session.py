@@ -135,19 +135,41 @@ def ensure_btc5m_schema(db_engine):
 
 def ensure_fast5m_schema(db_engine):
     """
-    Ensures that fast5m_trades and fast5m_settings tables exist
-    and have all scoring breakdown columns.
+    Ensures that fast5m_trades, fast5m_settings, fast5m_user_vaults, and fast5m_user_settings tables exist
+    and have all scoring breakdown, user isolation, and multi-wallet columns.
     """
     from sqlalchemy import text, inspect
-    from app.db.models import Fast5MTrade, Fast5MSetting
+    from app.db.models import Fast5MTrade, Fast5MSetting, Fast5MUserVault, Fast5MUserSetting, User
 
     Fast5MTrade.__table__.create(db_engine, checkfirst=True)
     Fast5MSetting.__table__.create(db_engine, checkfirst=True)
+    Fast5MUserVault.__table__.create(db_engine, checkfirst=True)
+    Fast5MUserSetting.__table__.create(db_engine, checkfirst=True)
 
     inspector = inspect(db_engine)
+
+    # 1. Migrate users table columns if present
+    if "users" in inspector.get_table_names():
+        user_cols = {col["name"] for col in inspector.get_columns("users")}
+        with db_engine.connect() as conn:
+            if "wallet_address" not in user_cols:
+                try:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN wallet_address VARCHAR(66)"))
+                    conn.commit()
+                except Exception:
+                    pass
+            if "auth_provider" not in user_cols:
+                try:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN auth_provider VARCHAR(32) DEFAULT 'email'"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+    # 2. Migrate fast5m_trades columns
     if "fast5m_trades" in inspector.get_table_names():
         existing_cols = {col["name"] for col in inspector.get_columns("fast5m_trades")}
         fast_cols = [
+            ("user_id", "INTEGER"),
             ("delta_score", "FLOAT DEFAULT 0.0"),
             ("obi_score", "FLOAT DEFAULT 0.0"),
             ("momentum_score", "FLOAT DEFAULT 0.0"),
@@ -172,4 +194,5 @@ def ensure_fast5m_schema(db_engine):
                 conn.commit()
             except Exception:
                 pass
+
 

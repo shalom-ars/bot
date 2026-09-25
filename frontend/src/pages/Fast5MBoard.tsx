@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { 
   Zap, Shield, RefreshCw, 
@@ -6,8 +7,10 @@ import {
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
   BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
-  Eye, EyeOff, Key, AlertTriangle, Check, Copy, Link2, Unlink, X
+  Eye, EyeOff, Key, AlertTriangle, Check, Copy, Link2, Unlink, X,
+  LogOut, ArrowDownToLine, ArrowUpFromLine, User as UserIcon
 } from 'lucide-react';
+
 
 interface AssetData {
   asset: string;
@@ -193,13 +196,92 @@ export default function Fast5MBoard() {
   const [resettingDemo, setResettingDemo] = useState<boolean>(false);
   const [accountMode, setAccountMode] = useState<'demo' | 'live' | 'all'>('demo');
 
+  // Multi-User Profile & Session
+  const navigate = useNavigate();
+  const [userProfile, setUserProfile] = useState<{ email?: string; wallet_address?: string; auth_provider?: string } | null>(null);
+
+  // Isolated Trading Vault (Deposit & Withdraw) State
+  const [vaultInfo, setVaultInfo] = useState<any | null>(null);
+  const [vaultModalOpen, setVaultModalOpen] = useState<boolean>(false);
+  const [vaultTab, setVaultTab] = useState<'deposit' | 'withdraw'>('deposit');
+  const [vaultAmountInput, setVaultAmountInput] = useState<string>('50');
+  const [vaultLoading, setVaultLoading] = useState<boolean>(false);
+  const [vaultMsg, setVaultMsg] = useState<string>('');
+  const [vaultError, setVaultError] = useState<string>('');
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_email');
+    localStorage.removeItem('wallet_address');
+    localStorage.removeItem('demo_access');
+    localStorage.removeItem('account_mode');
+    localStorage.removeItem('auth_provider');
+    navigate('/login');
+  };
+
+  const fetchVault = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.get('/api/fast5m/vault', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (res.data) setVaultInfo(res.data);
+    } catch (e) {
+      console.debug('Vault fetch note', e);
+    }
+  };
+
+  const handleVaultDeposit = async (amt: number) => {
+    if (amt <= 0) return;
+    setVaultLoading(true);
+    setVaultError('');
+    setVaultMsg('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/vault/deposit', { amount: amt }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      setVaultMsg(res.data?.message || `Successfully allocated $${amt.toFixed(2)} to trading vault.`);
+      await fetchVault();
+      await fetchBoard();
+    } catch (err: any) {
+      setVaultError(err?.response?.data?.detail || 'Failed to allocate deposit.');
+    } finally {
+      setVaultLoading(false);
+    }
+  };
+
+  const handleVaultWithdraw = async (amt: number) => {
+    if (amt <= 0) return;
+    setVaultLoading(true);
+    setVaultError('');
+    setVaultMsg('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/vault/withdraw', { amount: amt }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      setVaultMsg(res.data?.message || `Successfully de-allocated $${amt.toFixed(2)} back to wallet reserve.`);
+      await fetchVault();
+      await fetchBoard();
+    } catch (err: any) {
+      setVaultError(err?.response?.data?.detail || 'Failed to withdraw from vault.');
+    } finally {
+      setVaultLoading(false);
+    }
+  };
+
   const prevPrices = useRef<Record<string, number>>({});
   const flashStates = useRef<Record<string, 'up' | 'down' | null>>({});
 
   // Fetch Board and Trades
   const fetchBoard = async () => {
     try {
-      const res = await axios.get('/api/fast5m/board');
+      const token = localStorage.getItem('token');
+      const res = await axios.get('/api/fast5m/board', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
       if (res.data) {
         // Track price changes for micro-flashing
         res.data.assets?.forEach((a: AssetData) => {
@@ -316,10 +398,24 @@ export default function Fast5MBoard() {
   };
 
   useEffect(() => {
+    const storedEmail = localStorage.getItem('user_email');
+    const storedWallet = localStorage.getItem('wallet_address');
+    const storedProvider = localStorage.getItem('auth_provider');
+    if (storedEmail || storedWallet) {
+      setUserProfile({
+        email: storedEmail || undefined,
+        wallet_address: storedWallet || undefined,
+        auth_provider: storedProvider || undefined
+      });
+    }
+
     fetchBoard();
+    fetchVault();
     fetchTrades(selectedTimeframe, accountMode);
+
     const interval = setInterval(() => {
       fetchBoard();
+      fetchVault();
     }, 1000); // 1-second real-time poll
     const tradeInterval = setInterval(() => {
       fetchTrades(selectedTimeframe, accountMode);
@@ -329,6 +425,7 @@ export default function Fast5MBoard() {
       clearInterval(tradeInterval);
     };
   }, [selectedTimeframe, accountMode]);
+
 
   const handleEmergencyStop = async () => {
     setToggling(true);
@@ -755,6 +852,67 @@ export default function Fast5MBoard() {
 
           {/* Engine Controls & Epoch Countdown */}
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* User Session Profile Badge */}
+            {userProfile && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl shadow-xs">
+                <span className="p-1 rounded-lg bg-blue-100 text-blue-700">
+                  <UserIcon className="w-3.5 h-3.5" />
+                </span>
+                <div className="text-left font-mono">
+                  <div className="text-[9px] uppercase font-bold text-slate-500">
+                    {userProfile.auth_provider === 'wallet' ? 'Web3 Wallet' : (userProfile.auth_provider === 'google' ? 'Google Account' : 'Account')}
+                  </div>
+                  <div className="text-xs font-bold text-slate-800 truncate max-w-[130px]" title={userProfile.email || userProfile.wallet_address}>
+                    {userProfile.wallet_address ? `${userProfile.wallet_address.slice(0, 6)}...${userProfile.wallet_address.slice(-4)}` : userProfile.email}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  title="Log Out / Disconnect Session"
+                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-rose-600 rounded-md transition-colors cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Trading Vault Allocation Badge */}
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl shadow-xs">
+              <Lock className="w-4 h-4 text-indigo-600" />
+              <div className="text-left font-mono">
+                <div className="text-[9px] uppercase font-bold text-indigo-700 flex items-center gap-1">
+                  <span>Trading Vault</span>
+                  {vaultInfo?.active_margin > 0 && (
+                    <span className="text-[8px] bg-indigo-200/80 text-indigo-900 px-1 rounded font-bold">
+                      ${vaultInfo.active_margin.toFixed(0)} Locked
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs font-black text-indigo-950">
+                  ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 ml-0.5">
+                <button
+                  type="button"
+                  onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
+                  className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold shadow-xs cursor-pointer transition-colors"
+                  title="Allocate additional capital to trading vault"
+                >
+                  + Deposit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setVaultTab('withdraw'); setVaultModalOpen(true); }}
+                  className="px-2 py-1 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-300 rounded-lg text-[10px] font-bold cursor-pointer transition-colors"
+                  title="De-allocate funds back to wallet reserve"
+                >
+                  Withdraw
+                </button>
+              </div>
+            </div>
+
             {/* Total Balance Badge */}
             <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl shadow-xs">
               <Wallet className="w-4 h-4 text-emerald-600" />
@@ -767,6 +925,7 @@ export default function Fast5MBoard() {
                 </div>
               </div>
             </div>
+
 
             {/* Real Wallet Quick Status & Modal Trigger */}
             {walletInfo?.is_connected ? (
@@ -3720,6 +3879,262 @@ export default function Fast5MBoard() {
         </div>
       )}
 
+      {/* 9. ISOLATED TRADING VAULT ALLOCATION MODAL (DEPOSIT / WITHDRAW) */}
+      {vaultModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fade-in text-left">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 relative overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="p-2.5 rounded-2xl bg-indigo-100 text-indigo-700 shrink-0">
+                  <Lock className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Trading Capital Vault</h3>
+                  <p className="text-xs text-slate-500">Isolated Sub-Wallet Allocation & Risk Bounds</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVaultModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Notification messages */}
+            {vaultMsg && (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded-xl text-xs flex items-center gap-2 font-medium">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{vaultMsg}</span>
+              </div>
+            )}
+            {vaultError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-2.5 rounded-xl text-xs flex items-center gap-2 font-medium">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{vaultError}</span>
+              </div>
+            )}
+
+            {/* Mode & Tab Switcher */}
+            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold gap-1">
+              <button
+                type="button"
+                onClick={() => { setVaultTab('deposit'); setVaultError(''); setVaultMsg(''); }}
+                className={`flex-1 py-2 px-3 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  vaultTab === 'deposit' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>Deposit / Allocate</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setVaultTab('withdraw'); setVaultError(''); setVaultMsg(''); }}
+                className={`flex-1 py-2 px-3 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  vaultTab === 'withdraw' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ArrowUpFromLine className="w-3.5 h-3.5" />
+                <span>Withdraw to Wallet</span>
+              </button>
+            </div>
+
+            {/* TAB 1: DEPOSIT / ALLOCATE CAPITAL */}
+            {vaultTab === 'deposit' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Primary Wallet Reserve</span>
+                    <span className="text-sm font-black text-slate-800 font-mono">
+                      ${vaultInfo?.account_mode === 'live' 
+                        ? (vaultInfo?.total_wallet_balance != null ? vaultInfo.total_wallet_balance.toFixed(2) : '0.00') 
+                        : '1,000.00'} USDC
+                    </span>
+                  </div>
+                  <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl">
+                    <span className="text-[10px] uppercase font-bold text-indigo-500 block">Currently Allocated</span>
+                    <span className="text-sm font-black text-indigo-950 font-mono">
+                      ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'} USDC
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    Amount to Allocate (USDC):
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">$</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="5"
+                      value={vaultAmountInput}
+                      onChange={(e) => setVaultAmountInput(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:border-indigo-500"
+                      placeholder="50"
+                    />
+                  </div>
+
+                  {/* Preset Allocation Buttons */}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {[50, 100, 250].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setVaultAmountInput(String(preset))}
+                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
+                      >
+                        +${preset}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const bal = vaultInfo?.account_mode === 'live' ? (vaultInfo?.total_wallet_balance || 50) : 300;
+                        setVaultAmountInput(String(Math.max(5, Math.floor(bal * 0.5))));
+                      }}
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
+                    >
+                      50% Balance
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const bal = vaultInfo?.account_mode === 'live' ? (vaultInfo?.total_wallet_balance || 100) : 300;
+                        setVaultAmountInput(String(Math.max(5, Math.floor(bal))));
+                      }}
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
+                    >
+                      100% (Max)
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  🔒 <strong>Hard Execution Bound:</strong> Allocating capital bounds the Fast5M engine&apos;s maximum trading capacity to this amount. The bot cannot commit more margin than your allocated vault limit.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => handleVaultDeposit(parseFloat(vaultAmountInput) || 0)}
+                  disabled={vaultLoading || !(parseFloat(vaultAmountInput) > 0)}
+                  className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
+                >
+                  <ArrowDownToLine className="w-4 h-4" />
+                  <span>{vaultLoading ? 'Allocating Funds...' : `Confirm Deposit of $${parseFloat(vaultAmountInput) || 0} USDC`}</span>
+                </button>
+              </div>
+            )}
+
+            {/* TAB 2: WITHDRAW / DE-ALLOCATE TO WALLET */}
+            {vaultTab === 'withdraw' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Allocated Balance</span>
+                    <span className="text-xs font-black text-slate-800 font-mono">
+                      ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                    <span className="text-[9px] uppercase font-bold text-amber-600 block">Locked Margin</span>
+                    <span className="text-xs font-black text-amber-900 font-mono">
+                      ${vaultInfo?.active_margin != null ? vaultInfo.active_margin.toFixed(2) : '0.00'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                    <span className="text-[9px] uppercase font-bold text-emerald-600 block">Available to Withdraw</span>
+                    <span className="text-xs font-black text-emerald-950 font-mono">
+                      ${vaultInfo?.available_to_withdraw != null ? vaultInfo.available_to_withdraw.toFixed(2) : '300.00'}
+                    </span>
+                  </div>
+                </div>
+
+                {vaultInfo?.active_margin > 0 && (
+                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-800 flex items-start gap-2">
+                    <Shield className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Safety Lock Active:</strong> ${vaultInfo.active_margin.toFixed(2)} is committed in open active trades and is locked until rounds conclude. Available to withdraw: <strong>${vaultInfo.available_to_withdraw.toFixed(2)}</strong>.
+                    </span>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    Amount to Withdraw (USDC):
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">$</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="5"
+                      max={vaultInfo?.available_to_withdraw || 300}
+                      value={vaultAmountInput}
+                      onChange={(e) => setVaultAmountInput(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:border-indigo-500"
+                      placeholder="50"
+                    />
+                  </div>
+
+                  {/* Preset De-allocation Buttons */}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const maxAvail = vaultInfo?.available_to_withdraw ?? 300;
+                        setVaultAmountInput(String(Math.max(1, Number((maxAvail * 0.25).toFixed(2)))));
+                      }}
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
+                    >
+                      25% Available
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const maxAvail = vaultInfo?.available_to_withdraw ?? 300;
+                        setVaultAmountInput(String(Math.max(1, Number((maxAvail * 0.50).toFixed(2)))));
+                      }}
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
+                    >
+                      50% Available
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const maxAvail = vaultInfo?.available_to_withdraw ?? 300;
+                        setVaultAmountInput(String(Number(maxAvail.toFixed(2))));
+                      }}
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
+                    >
+                      100% (All Available)
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleVaultWithdraw(parseFloat(vaultAmountInput) || 0)}
+                  disabled={
+                    vaultLoading || 
+                    !(parseFloat(vaultAmountInput) > 0) || 
+                    parseFloat(vaultAmountInput) > (vaultInfo?.available_to_withdraw ?? 300)
+                  }
+                  className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all flex items-center justify-center gap-2"
+                >
+                  <ArrowUpFromLine className="w-4 h-4" />
+                  <span>{vaultLoading ? 'De-allocating Funds...' : `Withdraw $${parseFloat(vaultAmountInput) || 0} USDC to Reserve`}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+

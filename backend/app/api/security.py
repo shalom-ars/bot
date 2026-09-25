@@ -44,6 +44,7 @@ def get_password_hash(password):
     return f"{salt_hex}:{binascii.hexlify(pwd_hash).decode('ascii')}"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -76,6 +77,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
 
+async def get_current_user_optional(token: Optional[str] = Depends(oauth2_scheme_optional), db: Session = Depends(get_db)) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user and user.is_active:
+            return user
+    except Exception:
+        return None
+    return None
+
 async def get_current_admin(current_user: User = Depends(get_current_user)):
     if current_user.role not in ["ADMIN", "SUPER_ADMIN"]:
         raise HTTPException(
@@ -83,3 +99,4 @@ async def get_current_admin(current_user: User = Depends(get_current_user)):
             detail="The user doesn't have enough privileges"
         )
     return current_user
+

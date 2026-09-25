@@ -390,5 +390,125 @@ def test_slippage_circuit_breaker_on_exit():
         db.close()
 
 
+def test_multi_user_vault_provisioning_and_isolation():
+    from app.db.session import SessionLocal
+    from app.db.models import User, Fast5MUserVault, Fast5MTrade, Subscription, UserPortfolio, UserSetting
+    from app.api.auth import google_auth, GoogleAuth, wallet_auth, WalletAuth
+
+    db = SessionLocal()
+    user_a_email = "test_user_alpha@gmail.com"
+    user_b_wallet = "0x1111222233334444555566667777888899990000"
+
+    try:
+        # Clean previous test users if any
+        existing_users = db.query(User).filter(User.email.in_([user_a_email, f"{user_b_wallet}@web3.wallet"])).all()
+        for u in existing_users:
+            db.query(Subscription).filter(Subscription.user_id == u.id).delete()
+            db.query(UserPortfolio).filter(UserPortfolio.user_id == u.id).delete()
+            db.query(UserSetting).filter(UserSetting.user_id == u.id).delete()
+            db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == u.id).delete()
+            db.delete(u)
+        db.commit()
+
+        # 1. Google OAuth Auth: Should automatically provision dedicated $300 virtual demo balance
+        res_a = google_auth(GoogleAuth(email=user_a_email), db=db)
+        assert "access_token" in res_a
+        assert res_a["user"]["email"] == user_a_email
+        assert res_a["user"]["auth_provider"] == "google"
+        assert res_a["user"]["vault"]["allocated_balance"] == 300.0
+        assert res_a["user"]["vault"]["account_mode"] == "demo"
+
+        # 2. Web3 Wallet Auth: Should provision live account profile
+        res_b = wallet_auth(WalletAuth(wallet_address=user_b_wallet), db=db)
+        assert "access_token" in res_b
+        assert res_b["user"]["wallet_address"] == user_b_wallet
+        assert res_b["user"]["auth_provider"] == "wallet"
+        assert res_b["user"]["vault"]["account_mode"] == "live"
+        assert res_b["user"]["vault"]["allocated_balance"] == 0.0 # Starts at 0 until user deposits
+
+    finally:
+        existing_users = db.query(User).filter(User.email.in_([user_a_email, f"{user_b_wallet}@web3.wallet"])).all()
+        for u in existing_users:
+            db.query(Subscription).filter(Subscription.user_id == u.id).delete()
+            db.query(UserPortfolio).filter(UserPortfolio.user_id == u.id).delete()
+            db.query(UserSetting).filter(UserSetting.user_id == u.id).delete()
+            db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == u.id).delete()
+            db.delete(u)
+        db.commit()
+        db.close()
+
+
+def test_vault_deposit_and_withdrawal_safety_lock():
+    from app.db.session import SessionLocal
+    from app.db.models import User, Fast5MUserVault
+    from app.api.fast5m import deposit_to_vault, withdraw_from_vault, VaultDepositRequest, VaultWithdrawRequest, fast_executor
+    from fastapi import HTTPException
+
+    db = SessionLocal()
+    test_email = "vault_safety_user@gmail.com"
+
+    try:
+        existing_u = db.query(User).filter(User.email == test_email).first()
+        if existing_u:
+            db.query(Subscription).filter(Subscription.user_id == existing_u.id).delete()
+            db.query(UserPortfolio).filter(UserPortfolio.user_id == existing_u.id).delete()
+            db.query(UserSetting).filter(UserSetting.user_id == existing_u.id).delete()
+            db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == existing_u.id).delete()
+            db.delete(existing_u)
+            db.commit()
+
+        user = User(email=test_email, auth_provider="google")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        vault = Fast5MUserVault(
+            user_id=user.id,
+            account_mode="demo",
+            allocated_balance=300.0,
+            initial_deposit=300.0
+        )
+        db.add(vault)
+        db.commit()
+
+        # 1. Deposit $100 -> allocated should become $400
+        dep_res = deposit_to_vault(VaultDepositRequest(amount=100.0), current_user=user, db=db)
+        assert dep_res["success"] is True
+        assert dep_res["allocated_balance"] == 400.0
+
+        # 2. Simulate an active open trade with $25 margin locked
+        mock_trade_id = 99999
+        fast_executor.active_trades[mock_trade_id] = {
+            "id": mock_trade_id,
+            "user_id": user.id,
+            "cost": 25.0,
+            "account_mode": "demo",
+            "status": "OPEN"
+        }
+
+        # 3. Available to withdraw is 400 - 25 = $375.
+        # Attempting to withdraw $380 MUST be blocked by safety lock!
+        with pytest.raises(HTTPException) as exc_info:
+            withdraw_from_vault(VaultWithdrawRequest(amount=380.0), current_user=user, db=db)
+        assert exc_info.value.status_code == 400
+        assert "locked as active margin" in exc_info.value.detail
+
+        # 4. Withdrawing within available limit ($375) succeeds!
+        w_res = withdraw_from_vault(VaultWithdrawRequest(amount=375.0), current_user=user, db=db)
+        assert w_res["success"] is True
+        assert w_res["allocated_balance"] == 25.0 # Exactly equals remaining locked trade margin!
+        assert w_res["available_to_withdraw"] == 0.0
+
+    finally:
+        fast_executor.active_trades.pop(99999, None)
+        u_cleanup = db.query(User).filter(User.email == test_email).first()
+        if u_cleanup:
+            db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == u_cleanup.id).delete()
+            db.delete(u_cleanup)
+            db.commit()
+        db.close()
+
+
+
 
 

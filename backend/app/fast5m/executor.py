@@ -337,6 +337,7 @@ class FastExecutor:
             for open_trade in open_trades:
                 self.active_trades[open_trade.id] = {
                     "id": open_trade.id,
+                    "user_id": getattr(open_trade, "user_id", None),
                     "asset": open_trade.asset,
                     "market_id": open_trade.market_id,
                     "account_mode": getattr(open_trade, "account_mode", "demo") or "demo",
@@ -519,7 +520,23 @@ class FastExecutor:
         # Place trade in DB
         db: Session = SessionLocal()
         try:
+            # Associate user_id based on wallet address or default active user
+            user_id = None
+            try:
+                from app.db.models import User
+                if current_account_mode == "live" and wallet_manager.wallet_address:
+                    matched_user = db.query(User).filter(User.wallet_address == wallet_manager.wallet_address.lower()).first()
+                    if matched_user:
+                        user_id = matched_user.id
+                if not user_id:
+                    first_user = db.query(User).first()
+                    if first_user:
+                        user_id = first_user.id
+            except Exception:
+                pass
+
             trade_record = Fast5MTrade(
+                user_id=user_id,
                 asset=top_asset.asset,
                 market_id=market.condition_id,
                 condition_id=market.condition_id,
@@ -552,6 +569,7 @@ class FastExecutor:
 
             self.active_trades[trade_record.id] = {
                 "id": trade_record.id,
+                "user_id": user_id,
                 "asset": trade_record.asset,
                 "market_id": trade_record.market_id,
                 "account_mode": current_account_mode,

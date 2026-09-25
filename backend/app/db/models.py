@@ -265,6 +265,8 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    wallet_address = Column(String(66), nullable=True, index=True)
+    auth_provider = Column(String(32), default="email") # "email", "google", "wallet"
     role = Column(String, default="USER")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -664,6 +666,7 @@ class Fast5MTrade(Base):
     __tablename__ = "fast5m_trades"
 
     id                  = Column(Integer, primary_key=True, index=True)
+    user_id             = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     asset               = Column(String(16), index=True, nullable=False) # BTC, ETH, SOL, XRP, DOGE, BNB, HYPE
     market_id           = Column(String(128), index=True, nullable=False)
     condition_id        = Column(String(128), index=True, nullable=True)
@@ -707,6 +710,38 @@ class Fast5MSetting(Base):
     key                 = Column(String(64), primary_key=True, index=True)
     value               = Column(String(256), nullable=False)
     updated_at          = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+
+
+class Fast5MUserVault(Base):
+    """
+    Isolated trading allocation vault per user.
+    Separates primary wallet reserve from active bot trading capital.
+    Provides strict allocation ceilings, locked margin tracking, and secure de-allocation.
+    """
+    __tablename__ = "fast5m_user_vaults"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    user_id             = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    account_mode        = Column(String(16), default="demo") # "demo" or "live"
+    wallet_address      = Column(String(66), nullable=True, index=True)
+    allocated_balance   = Column(Float, default=300.0) # Active capital allocated to Fast5M
+    initial_deposit     = Column(Float, default=300.0)
+    total_deposited     = Column(Float, default=300.0)
+    total_withdrawn     = Column(Float, default=0.0)
+    created_at          = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+    updated_at          = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc), onupdate=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+
+
+class Fast5MUserSetting(Base):
+    """Per-user custom risk and parameter settings overrides for Fast 5M."""
+    __tablename__ = "fast5m_user_settings"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    key         = Column(String(64), index=True, nullable=False)
+    value       = Column(String(256), nullable=False)
+    updated_at  = Column(DateTime, default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc), onupdate=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+
 
 
 
