@@ -1031,183 +1031,212 @@ export default function Fast5MBoard() {
           </nav>
         </div>
 
-        {/* Right: "Deposit", "Emergency Stop", and "Wallet" */}
-        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
-          {/* 1. Deposit Button */}
-          <button
-            type="button"
-            onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
-            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1 cursor-pointer"
-            title="Deposit / Allocate Capital to Bot Vault"
-          >
-            <span className="text-sm font-black leading-none">+</span>
-            <span>Deposit</span>
-          </button>
-
-          {/* 2. Emergency Stop Button */}
-          {isAdmin ? (
-            board?.auto_trading_active ? (
-              <button
-                type="button"
-                onClick={handleEmergencyStop}
-                disabled={toggling}
-                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-rose-900/30 transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
-                title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 text-white" />
-                <span>Emergency Stop</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleEmergencyStart}
-                disabled={toggling}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-900/30 transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Resume Engine: Re-arm automated execution"
-              >
-                <Play className="w-3.5 h-3.5 text-white" />
-                <span>Resume Engine</span>
-              </button>
-            )
-          ) : (
-            <div className="px-3 py-1.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs font-mono text-slate-300 flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-              <span>{board?.auto_trading_active ? 'Engine Armed' : 'Engine Paused'}</span>
-            </div>
-          )}
-
-          {/* 3. Wallet Button */}
-          <button
-            type="button"
-            onClick={() => setWalletModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer"
-            title="Open Web3 Wallet Controls & Vault"
-          >
-            <Wallet className="w-3.5 h-3.5 text-blue-400" />
-            <span className="font-bold">Wallet</span>
-            <span className="text-slate-400 text-[11px]">(${currentVaultAllocated.toFixed(0)})</span>
-          </button>
-
-          {/* User Logout */}
-          <button
-            type="button"
-            onClick={handleLogout}
-            title="Log Out / Disconnect Session"
-            className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
-
-      {/* 2. PROMINENT LARGER ROUND TIMER (CENTERED UNDER NAVIGATION BAR) */}
-      <div className="flex justify-center my-1 sm:my-2">
-        <div className="bg-[#161b22] border-2 border-[#30363d] hover:border-blue-500/50 rounded-3xl p-3.5 sm:p-4 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-8 w-full max-w-2xl relative overflow-hidden transition-all group">
-          {/* Subtle glowing ambient backdrops */}
-          <div className="absolute -top-12 -left-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
-          <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
-
-          {/* Left: Round Status and Meta */}
-          <div className="text-center sm:text-left space-y-1">
-            <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#0d1117] border border-[#30363d] text-[11px] font-mono text-slate-300">
-              <span className={`w-2 h-2 rounded-full ${
-                (board?.epoch_remaining_sec ?? 300) <= 10
-                  ? 'bg-rose-500 animate-ping'
-                  : 'bg-emerald-400 animate-pulse'
+        {/* Right: Round Countdown Timer directly above Deposit, Emergency Stop, and Wallet */}
+        <div className="flex flex-col items-start sm:items-end gap-1.5 shrink-0">
+          {/* Round Countdown Timer (placed at the top of the screen directly above Deposit) */}
+          <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-[#0d1117] border border-[#30363d] shadow-sm font-mono text-xs">
+            {/* SVG Circular Ring */}
+            <div className="relative flex items-center justify-center w-6 h-6 shrink-0">
+              <svg className="w-6 h-6 transform -rotate-90">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9.5"
+                  stroke="#21262d"
+                  strokeWidth="2.5"
+                  fill="transparent"
+                />
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9.5"
+                  stroke={(board?.epoch_remaining_sec ?? 300) <= 10 ? '#ef4444' : (board?.epoch_remaining_sec ?? 300) <= 60 ? '#f59e0b' : '#3b82f6'}
+                  strokeWidth="2.5"
+                  strokeDasharray={2 * Math.PI * 9.5}
+                  strokeDashoffset={
+                    2 * Math.PI * 9.5 * (1 - Math.max(0, Math.min(300, (board?.epoch_remaining_sec ?? 300))) / 300)
+                  }
+                  strokeLinecap="round"
+                  fill="transparent"
+                  className="transition-all duration-1000 ease-linear"
+                />
+              </svg>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                (board?.epoch_remaining_sec ?? 300) <= 10 ? 'bg-rose-500 animate-ping' : 'bg-emerald-400 animate-pulse'
               }`} />
-              <span className="font-bold uppercase tracking-wider text-slate-200">
-                {(board?.epoch_remaining_sec ?? 300) <= 10 ? '🚨 HARD AUTO-EXIT (04:50)' : '⚡ 5M PREDICTION ROUND'}
-              </span>
             </div>
-            <h3 className="text-sm font-black text-white tracking-tight">
-              Hyperliquid Oracle & Polymarket Epoch
-            </h3>
-            <p className="text-[10px] text-slate-400 font-mono">
-              Strict 04:50 Rule • Independent 7-Pair Streams
-            </p>
-          </div>
 
-          {/* Center: Prominent Large Circular Countdown Timer */}
-          <div className="relative flex items-center justify-center shrink-0">
-            <svg className="w-24 h-24 sm:w-28 sm:h-28 transform -rotate-90">
-              <circle
-                cx="56"
-                cy="56"
-                r="46"
-                stroke="#21262d"
-                strokeWidth="7"
-                fill="transparent"
-              />
-              <circle
-                cx="56"
-                cy="56"
-                r="46"
-                stroke={(board?.epoch_remaining_sec ?? 300) <= 10 ? '#ef4444' : (board?.epoch_remaining_sec ?? 300) <= 60 ? '#f59e0b' : '#3b82f6'}
-                strokeWidth="7"
-                strokeDasharray={2 * Math.PI * 46}
-                strokeDashoffset={
-                  2 * Math.PI * 46 * (1 - Math.max(0, Math.min(300, (board?.epoch_remaining_sec ?? 300))) / 300)
-                }
-                strokeLinecap="round"
-                fill="transparent"
-                className="transition-all duration-1000 ease-linear"
-              />
-            </svg>
-
-            {/* Inner Round Countdown Display */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-              <span className={`text-2xl sm:text-3xl font-black font-mono tracking-tight ${
+            {/* Countdown Digits & Round Status */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] uppercase font-bold text-slate-400">
+                {(board?.epoch_remaining_sec ?? 300) <= 10 ? '🚨 EXIT' : 'ROUND'}:
+              </span>
+              <span className={`text-sm sm:text-base font-black font-mono tracking-tight ${
                 (board?.epoch_remaining_sec ?? 300) <= 10 ? 'text-rose-400 animate-pulse' : 'text-white'
               }`}>
                 {board ? formatSec(board.epoch_remaining_sec) : '04:31'}
               </span>
-              <span className="text-[9px] uppercase font-bold text-slate-400 font-mono tracking-wider -mt-0.5">
-                Round Timer
-              </span>
+            </div>
+
+            <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+              ({board?.epoch_remaining_sec ?? 300}s)
+            </span>
+          </div>
+
+          {/* Action Buttons: Deposit, Emergency Stop, Wallet, Logout */}
+          <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+            {/* 1. Deposit Button */}
+            <button
+              type="button"
+              onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+              title="Deposit / Allocate Capital to Bot Vault"
+            >
+              <span className="text-sm font-black leading-none">+</span>
+              <span>Deposit</span>
+            </button>
+
+            {/* 2. Emergency Stop Button */}
+            {isAdmin ? (
+              board?.auto_trading_active ? (
+                <button
+                  type="button"
+                  onClick={handleEmergencyStop}
+                  disabled={toggling}
+                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-rose-900/30 transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
+                  title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-white" />
+                  <span>Emergency Stop</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleEmergencyStart}
+                  disabled={toggling}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-900/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Resume Engine: Re-arm automated execution"
+                >
+                  <Play className="w-3.5 h-3.5 text-white" />
+                  <span>Resume Engine</span>
+                </button>
+              )
+            ) : (
+              <div className="px-3 py-1.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs font-mono text-slate-300 flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                <span>{board?.auto_trading_active ? 'Engine Armed' : 'Engine Paused'}</span>
+              </div>
+            )}
+
+            {/* 3. Wallet Button */}
+            <button
+              type="button"
+              onClick={() => setWalletModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-slate-200 transition-colors cursor-pointer"
+              title="Open Web3 Wallet Controls & Vault"
+            >
+              <Wallet className="w-3.5 h-3.5 text-blue-400" />
+              <span className="font-bold">Wallet</span>
+              <span className="text-slate-400 text-[11px]">(${currentVaultAllocated.toFixed(0)})</span>
+            </button>
+
+            {/* User Logout */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Log Out / Disconnect Session"
+              className="p-1.5 hover:bg-[#21262d] text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* 2-LINE TELEMETRY & ROUND CONFIGURATION STRIP */}
+      <div className="bg-[#161b22] border border-[#30363d] rounded-xl px-3.5 py-2 space-y-2 shadow-xs text-xs">
+        {/* LINE 1: ACTIVE VAULT, CONTROLS INSIDE SETTINGS, AND FORMER ROUND TIMER DATA */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+          {/* Left: Active Vault & Controls Note */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Active Vault:</span>
+            <span className="font-mono font-bold text-xs text-white px-2 py-0.5 rounded-lg bg-[#0d1117] border border-[#30363d]">
+              {accountMode === 'live' ? '⚡ Real Vault (Polygon)' : '🎮 Demo Vault ($300 Paper)'}
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono">(Controls inside Settings)</span>
+          </div>
+
+          {/* Right: Data Transferred From Prediction Round Widget */}
+          <div className="flex items-center gap-2 sm:gap-2.5 font-mono text-[11px] text-slate-300 flex-wrap">
+            <span className="text-slate-400">
+              Strike Set: <strong className="text-white font-bold">:00 Min</strong>
+            </span>
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-400">
+              Hard Stop: <strong className="text-amber-400 font-bold">:04:50 (10s Rule)</strong>
+            </span>
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-400">
+              CLOB Feed: <strong className="text-emerald-400 font-bold">Live ({board?.assets?.[0]?.latency_ms ?? 16}ms)</strong>
+            </span>
+            <span className="text-slate-600 hidden sm:inline">•</span>
+            <span className="text-slate-400 hidden sm:inline">
+              Streams: <strong className="text-cyan-400 font-bold">7 Pairs Isolated</strong>
+            </span>
+          </div>
+        </div>
+
+        {/* LINE 2: NEATLY ALIGNED SETTINGS (Target Size, Confidence, R:R, Dynamic Cap, Trailing Lock Active) */}
+        <div className="pt-2 border-t border-[#30363d]/60 flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap text-slate-300">
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px]">Target Size:</span>
+              <strong className="text-white font-bold bg-[#0d1117] px-2 py-0.5 rounded border border-[#30363d]">
+                ${positionSize}
+              </strong>
+            </div>
+
+            <span className="text-slate-600 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px]">Confidence:</span>
+              <strong className="text-white font-bold bg-[#0d1117] px-2 py-0.5 rounded border border-[#30363d]">
+                ≥{confidenceThreshold}%
+              </strong>
+            </div>
+
+            <span className="text-slate-600 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px]">R:R:</span>
+              <strong className="text-white font-bold bg-[#0d1117] px-2 py-0.5 rounded border border-[#30363d]">
+                {riskRewardRatio.toFixed(2)}:1
+              </strong>
+            </div>
+
+            <span className="text-slate-600 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px]">Dynamic Cap:</span>
+              <strong className="text-amber-300 font-bold bg-[#0d1117] px-2 py-0.5 rounded border border-[#30363d]">
+                -${Math.abs(stats.dynamic_hard_cap ?? (positionSize * 2.5)).toFixed(2)}
+              </strong>
+            </div>
+
+            <span className="text-slate-600 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-emerald-400 font-bold text-[11px]">Trailing Lock: Active</span>
             </div>
           </div>
 
-          {/* Right: Round Indicators */}
-          <div className="text-center sm:text-right font-mono text-xs space-y-1">
-            <div className="text-slate-400 text-[11px]">
-              Strike Set: <strong className="text-white">:00 Min</strong>
-            </div>
-            <div className="text-slate-400 text-[11px]">
-              Hard Stop: <strong className="text-amber-400">:04:50</strong>
-            </div>
-            <div className="text-slate-400 text-[11px]">
-              CLOB Feed: <strong className="text-emerald-400">Live (0ms)</strong>
-            </div>
+          <div className="text-[10px] text-slate-400 font-mono hidden md:flex items-center gap-1.5">
+            <span>Active Exposure:</span>
+            <strong className="text-slate-200">${activeExposure.toFixed(2)}</strong>
+            <span className="text-slate-600">/</span>
+            <span className="text-slate-400">${(300 * (maxPortfolioMarginPct / 100)).toFixed(0)} Cap</span>
           </div>
-        </div>
-      </div>
-
-      {/* COMPACT TELEMETRY STRIP (NO SIZING BUTTONS OR MODE TOGGLE CLUTTER) */}
-      <div className="bg-[#161b22] border border-[#30363d] rounded-xl px-3.5 py-1.5 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs shadow-xs">
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Active Vault:</span>
-          <span className="font-mono font-bold text-xs text-white px-2 py-0.5 rounded-lg bg-[#0d1117] border border-[#30363d]">
-            {accountMode === 'live' ? '⚡ Real Vault (Polygon)' : '🎮 Demo Vault ($300 Paper)'}
-          </span>
-          <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">(Controls inside Settings)</span>
-        </div>
-
-        <div className="flex items-center gap-2.5 font-mono text-xs text-slate-300 flex-wrap">
-          <span>Target Size: <strong className="text-white font-bold">${positionSize}</strong></span>
-          <span className="text-slate-600">|</span>
-          <span>Confidence: <strong className="text-white font-bold">{confidenceThreshold}%</strong></span>
-          <span className="text-slate-600">|</span>
-          <span>R:R: <strong className="text-white font-bold">{riskRewardRatio}:1</strong></span>
-          <span className="text-slate-600">|</span>
-          <span className="text-amber-400 font-semibold flex items-center gap-1">
-            <span className="text-slate-400">Dynamic Cap:</span>
-            <strong className="text-amber-300">-${Math.abs(stats.dynamic_hard_cap ?? (positionSize * 2.5)).toFixed(2)}</strong>
-          </span>
-          <span className="text-slate-600">|</span>
-          <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Trailing Lock: Active</span>
-          </span>
         </div>
       </div>
 
