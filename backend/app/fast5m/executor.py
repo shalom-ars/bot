@@ -29,7 +29,7 @@ DEFAULT_SETTINGS = {
     "confidence_threshold": "70.0",       # Execution threshold: minimum composite confidence rating of >= 70
     "position_size_usd": "10.0",          # Admin sizing: $10, $25, $50
     "max_active_pools": "3",              # Max Active Pools: up to 2 to 3 pairs simultaneously
-    "multi_pair_min_score": "90.0",       # Minimum score for multi-pair concurrent execution (90%+)
+    "multi_pair_min_score": "70.0",       # Concurrent multi-pair threshold: allows simultaneous entries across multiple pairs
     "strategy_direction": "BOTH",         # Strategy Direction: BOTH (Up/Down), UP_ONLY, DOWN_ONLY
     "take_profit_dollar": "0.50",         # Target Profit dollar amount
     "stop_loss_dollar": "0.50",           # Stop Loss dollar amount (1:1 with TP)
@@ -97,6 +97,7 @@ class FastExecutor:
         self.settings: Dict[str, Any] = dict(DEFAULT_SETTINGS)
         self.active_trades: Dict[int, Dict[str, Any]] = {}
         self._traded_epochs: set = set() # (asset, epoch_bucket) tuples already traded
+        self._last_exit_timestamps: Dict[tuple, float] = {} # (user_id, asset) -> exit timestamp for debounce
         self._exec_task: Optional[asyncio.Task] = None
         self._exit_monitor_task: Optional[asyncio.Task] = None
         try:
@@ -295,6 +296,8 @@ class FastExecutor:
             db.rollback()
         finally:
             db.close()
+            for trade in self.active_trades.values():
+                self._last_exit_timestamps[(trade.get("user_id"), trade.get("asset"))] = time.time()
             self.active_trades.clear()
 
         logger.warning(f"[Fast5M Executor] 🚨 EMERGENCY STOP ACTIVATED. Auto-trading killed, {closed_count} positions closed.")
@@ -342,6 +345,7 @@ class FastExecutor:
             
             if trade_id in self.active_trades:
                 del self.active_trades[trade_id]
+                self._last_exit_timestamps[(db_trade.user_id, db_trade.asset)] = time.time()
                 
             return {
                 "status": "success",
@@ -370,10 +374,12 @@ class FastExecutor:
             self.active_trades.pop(tid, None)
 
         if user_id is not None:
-            # Strictly clear only this user's traded epochs
+            # Strictly clear only this user's traded epochs and debounce timestamps
             self._traded_epochs = {e for e in self._traded_epochs if len(e) > 0 and e[0] != user_id}
+            self._last_exit_timestamps = {k: v for k, v in self._last_exit_timestamps.items() if len(k) > 0 and k[0] != user_id}
         else:
             self._traded_epochs.clear()
+            self._last_exit_timestamps.clear()
             self.update_settings({"total_balance_usd": "300.0"})
 
         db: Session = SessionLocal()
@@ -586,7 +592,9 @@ class FastExecutor:
                 continue
 
             # Independent Exposure Safeguard for this user:
-            max_total_exposure = ubal * (max_margin_pct / 100.0)
+            # Ensure portfolio margin supports up to max_pools concurrent positions
+            effective_ubal = max(ubal, base_size * max_pools * 1.5, 300.0 if umode == "demo" else ubal)
+            max_total_exposure = effective_ubal * max(0.50, max_margin_pct / 100.0)
             current_exposure = sum(t.get("cost", 0.0) for t in user_trades)
             available_exposure = max(0.0, max_total_exposure - current_exposure)
 
@@ -614,49 +622,39 @@ class FastExecutor:
                 if not market:
                     continue
 
-                # Multi-Entry & Grid Levels evaluation
+                # ── CONCURRENCY & PAIR ALLOCATION AUDIT ────────────────────────
+                # Allow simultaneous positions across DIFFERENT pairs without restriction.
+                # On the SAME pair, obey max_allowed_for_asset (grid_levels_max if multi_entry else 1).
                 existing_for_asset = [t for t in user_trades if t.get("asset") == asset_score.asset]
-                asset_trade_count = len(existing_for_asset)
+                max_allowed_for_asset = grid_levels_max if multi_entry_on else 1
+                if len(existing_for_asset) >= max_allowed_for_asset:
+                    continue
 
-                if not multi_entry_on:
-                    if asset_trade_count > 0:
-                        continue
-                    epoch_key = (uid, asset_score.asset, market.epoch_bucket, 0)
-                    if epoch_key in self._traded_epochs:
-                        continue
-                else:
-                    if asset_trade_count >= grid_levels_max:
-                        continue
-                    # Spacing rule between grid levels on same asset
-                    if existing_for_asset and grid_step > 0:
-                        current_cand_price = market.up_ask if asset_score.direction == "UP" else market.down_ask
-                        too_close_grid = False
-                        for et in existing_for_asset:
-                            et_price = et.get("entry_price", 0.50)
-                            if abs(current_cand_price - et_price) / max(0.01, et_price) * 100.0 < grid_step:
-                                too_close_grid = True
-                                break
-                        if too_close_grid:
-                            continue
-                    epoch_key = (uid, asset_score.asset, market.epoch_bucket, asset_trade_count)
-                    if epoch_key in self._traded_epochs:
+                # Spacing rule between grid levels on same asset
+                if existing_for_asset and grid_step > 0:
+                    current_cand_price = market.up_ask if asset_score.direction == "UP" else market.down_ask
+                    too_close_grid = False
+                    for et in existing_for_asset:
+                        et_price = et.get("entry_price", 0.50)
+                        if abs(current_cand_price - et_price) / max(0.01, et_price) * 100.0 < grid_step:
+                            too_close_grid = True
+                            break
+                    if too_close_grid:
                         continue
 
-                # ── STRICT MULTI-THRESHOLD ENFORCEMENT (Issue #1) ──────────────────
-                # For the FIRST trade slot: require confidence >= conf_threshold.
-                # For ADDITIONAL concurrent slots: require >= multi_pair_threshold (stricter).
-                # In both cases, ARMED & READY status is shown but order is BLOCKED until score met.
-                current_count = len(user_trades) + len(user_candidates)
-                if current_count == 0:
-                    req_score = conf_threshold
-                else:
-                    req_score = multi_pair_threshold
+                # Anti-churn debounce: avoid re-entering the SAME pair within 5 seconds of exit
+                last_exit_ts = self._last_exit_timestamps.get((uid, asset_score.asset), 0)
+                if time.time() - last_exit_ts < 5.0:
+                    continue
 
+                # ── UNRESTRICTED MULTI-PAIR CONFIDENCE THRESHOLD ───────────────
+                # Every pair that satisfies the user-defined confidence threshold is admitted
+                # simultaneously up to available_slots without artificial multi_pair_min_score rate-limiting.
+                req_score = conf_threshold
                 if asset_score.confidence < req_score:
                     logger.debug(
                         f"[Fast5M Executor] 🔒 THRESHOLD BLOCK — {asset_score.asset} {asset_score.direction} "
-                        f"score {asset_score.confidence:.1f}% < required {req_score:.1f}% "
-                        f"({'1st slot' if current_count == 0 else f'slot #{current_count+1} (multi-pair)'}). "
+                        f"score {asset_score.confidence:.1f}% < required {req_score:.1f}%. "
                         f"Status: ARMED & READY — order dispatch BLOCKED."
                     )
                     continue
@@ -668,11 +666,13 @@ class FastExecutor:
             if not user_candidates:
                 continue
 
-            # Partition cost safely
+            # Partition cost safely so each concurrent pair receives proper sizing
             num_new_trades = len(user_candidates)
-            safe_per_trade_cost = max(0.50, min(base_size, round(available_exposure / num_new_trades, 2)))
+            safe_per_trade_cost = max(0.50, min(base_size, round(available_exposure / max(1, num_new_trades), 2)))
+            if safe_per_trade_cost < 0.50:
+                safe_per_trade_cost = base_size
 
-            # Open qualified pairs independently for this user bot
+            # Open all qualified pairs simultaneously without artificial rate-limiting
             for candidate in user_candidates:
                 await self._execute_single_trade(candidate, safe_per_trade_cost, user_id=uid, account_mode=umode)
 
@@ -1007,34 +1007,95 @@ class FastExecutor:
         resolution = "HOLD"
         exit_price = current_share_price
 
-        # Trailing profit lock parameters
+        # Trailing profit lock & reversal giveback parameters
         trailing_enabled = self.settings.get("trailing_lock_enabled", "true").lower() in ("true", "1", "yes")
+        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
         trailing_act_pct = float(self.settings.get("trailing_stop_activation_pct", 1.0))
         trailing_dist_pct = float(self.settings.get("trailing_stop_distance_pct", 0.5))
-        min_gain_for_trailing = max(0.01, round(cost * (trailing_act_pct / 100.0), 2))
-        tight_giveback = max(0.01, round(cost * (trailing_dist_pct / 100.0), 2))
-        reversal_enabled = self.settings.get("reversal_lock_enabled", "true").lower() in ("true", "1", "yes")
+
+        # Lock activation threshold: explicit dollar amount or percentage of cost
+        user_min_lock = self.settings.get("min_profit_to_lock")
+        act_pct_dollar = round(cost * (trailing_act_pct / 100.0), 2)
+        try:
+            lock_threshold = float(user_min_lock) if (user_min_lock is not None and str(user_min_lock).strip() != "") else act_pct_dollar
+        except (ValueError, TypeError):
+            lock_threshold = act_pct_dollar
+        lock_threshold = max(0.02, lock_threshold)
+
+        # Giveback pullback threshold: explicit dollar giveback or percentage of cost
+        user_giveback = self.settings.get("reversal_giveback_dollar")
+        dist_pct_dollar = round(cost * (trailing_dist_pct / 100.0), 2)
+        try:
+            effective_giveback = float(user_giveback) if (user_giveback is not None and str(user_giveback).strip() != "") else dist_pct_dollar
+        except (ValueError, TypeError):
+            effective_giveback = dist_pct_dollar
+        effective_giveback = max(0.01, effective_giveback)
+
+        # Arm trailing profit lock in real-time when peak profit touches lock_threshold
+        if (trailing_enabled or reversal_enabled) and not is_in_buffer:
+            if trade_peak_pnl >= lock_threshold or trade.get("trailing_armed"):
+                trade["trailing_armed"] = True
+                trade["profit_locked"] = True
+                trailing_floor = round(trade_peak_pnl - effective_giveback, 2)
+                trade["trailing_floor"] = trailing_floor
+                trade["giveback_target"] = effective_giveback
+
+        # Circuit breaker trigger & limit parameters
+        cb_enabled = self.settings.get("exit_circuit_breaker_enabled", "true").lower() in ("true", "1", "yes")
+        trigger_sl_price = round(entry_price * (1.0 - hard_stop_loss_fraction), 4)
+        max_slip_pct = float(self.settings.get("max_exit_slippage_pct", 1.0))
+        max_allowed_slip = entry_price * (max_slip_pct / 100.0)
+        min_allowed_exit_price = round(trigger_sl_price - max_allowed_slip, 4)
 
         # ─────────────────────────────────────────────────────────────
-        # 1. HARD ROUND TIMEOUT — Issue #4: Proper hedge/close at expiry
+        # 1. EXPIRY & PRE-EXPIRY PROTECTIVE LIQUIDITY GUARD
         # ─────────────────────────────────────────────────────────────
-        # Stage A: Early hedge at <=30s remaining for profitable positions.
-        #          Locks in profits before CLOB orderbooks dry up near expiry.
-        if time_rem <= 30.0 and unrealized_pnl > 0.0 and not is_in_buffer:
-            should_close = True
-            trade["circuit_breaker_active"] = False
-            trade["reversal_defense_active"] = False
-            raw_bid = real_book_bid if (real_book_bid is not None and real_book_bid > 0.001) else oracle_mark_price
-            resolution = "TIMEOUT_HEDGE_PROFITABLE"
-            exit_price = round(raw_bid, 4)
-            logger.info(
-                f"[Fast5M Executor] 💰 EARLY TIMEOUT HEDGE (30s rule): #{trade['id']} {asset} {outcome} "
-                f"Locking +${unrealized_pnl:.2f} profit before round expiry. Exit at ${exit_price:.4f}."
-            )
+        # Stage A: Pre-expiry aggressive liquidity guard (<=45s remaining).
+        #          Acts BEFORE round expiry. If the system detects insufficient
+        #          liquidity or wide exit slippage threatens the circuit breaker limit,
+        #          trigger an immediate protective exit at best available bid.
+        if time_rem <= 45.0 and not is_in_buffer:
+            if unrealized_pnl > 0.0:
+                should_close = True
+                trade["circuit_breaker_active"] = False
+                trade["reversal_defense_active"] = False
+                raw_bid = real_book_bid if (real_book_bid is not None and real_book_bid > 0.001) else oracle_mark_price
+                resolution = "TIMEOUT_HEDGE_PROFITABLE"
+                exit_price = round(raw_bid, 4)
+                logger.info(
+                    f"[Fast5M Executor] 💰 PRE-EXPIRY PROFIT HEDGE (45s window): #{trade['id']} {asset} {outcome} "
+                    f"Locking +${unrealized_pnl:.2f} profit before liquidity drains. Exit at ${exit_price:.4f}."
+                )
+            else:
+                asset_lower = asset.lower()
+                max_allowed_spread = float(self.settings.get(f"max_spread_{asset_lower}") or self.settings.get("max_spread", 0.20))
+                min_req_liq = float(self.settings.get(f"min_liquidity_usd_{asset_lower}") or self.settings.get("min_liquidity_usd", 20.0))
+                bid_depth = market.up_bid_depth if outcome == "UP" else market.down_bid_depth
+
+                liquidity_insufficient = (market.total_liquidity < min_req_liq) or (bid_depth < 3.0) or (real_book_bid is None or real_book_bid <= 0.01)
+                spread_excessive = (market.spread > max_allowed_spread) or (market.spread >= 0.15)
+                slippage_threatened = cb_enabled and (current_share_price < min_allowed_exit_price)
+
+                if liquidity_insufficient or spread_excessive or slippage_threatened:
+                    should_close = True
+                    trade["circuit_breaker_active"] = False
+                    trade["reversal_defense_active"] = False
+                    resolution = "PROTECTIVE_LIQUIDITY_EXIT"
+                    best_bid = real_book_bid if (real_book_bid is not None and real_book_bid > 0.005) else oracle_mark_price
+                    exit_price = round(best_bid, 4)
+                    reason_desc = (
+                        f"Liquidity Depleted (${market.total_liquidity:.1f} < ${min_req_liq:.1f})" if liquidity_insufficient else
+                        f"Spread Blown Out ({market.spread:.3f} > {max_allowed_spread:.3f})" if spread_excessive else
+                        f"Slippage Breached Circuit Limit (${current_share_price:.4f} < ${min_allowed_exit_price:.4f})"
+                    )
+                    logger.warning(
+                        f"[Fast5M Executor] 🛡️ PRE-EXPIRY PROTECTIVE LIQUIDITY GUARD TRIGGERED: #{trade['id']} {asset} {outcome} | "
+                        f"Time remaining: {time_rem:.1f}s | Reason: {reason_desc} | "
+                        f"Executing immediate protective exit at best available bid ${exit_price:.4f} to prevent holding into illiquid book!"
+                    )
 
         # Stage B: Final round expiration (<=10s remaining)
-        # Check Oracle resolution state to reward ITM contracts and enforce hard cap on dry-book losses.
-        elif time_rem <= 10.0:
+        elif not should_close and time_rem <= 10.0:
             should_close = True
             trade["circuit_breaker_active"] = False
             trade["reversal_defense_active"] = False
@@ -1065,7 +1126,7 @@ class FastExecutor:
                         f"Exit at best bid ${exit_price:.4f} (Remaining: {time_rem:.1f}s)."
                     )
                 else:
-                    # Orderbook has dried up: strictly cap loss at hard stop loss / dynamic risk cap, NEVER 100% wipeout!
+                    # Orderbook dried up: strictly cap loss at hard stop loss level
                     exit_price = round(entry_price * (1.0 - hard_stop_loss_fraction), 4)
                     resolution = "HARD_CAP_TIMEOUT_EXIT"
                     logger.warning(
@@ -1075,57 +1136,7 @@ class FastExecutor:
                     )
 
         # ─────────────────────────────────────────────────────────────
-        # 2. STRICT MARGIN-BASED HARD STOP LOSS (Issue #3: Bid/Ask Bounce Immunity)
-        # Stop loss triggers only when:
-        # a) Grace period buffer has fully expired (trade_age_s >= buffer_duration)
-        # b) Position is in loss (pnl_pct_decimal <= -hard_stop_loss_fraction)
-        # c) The actual market BID has dropped below entry bid, proving real market movement
-        # ─────────────────────────────────────────────────────────────
-        elif not should_close:
-            entry_bid_val = trade.get("entry_bid", entry_price)
-            bid_drop_pct_decimal = (current_share_price - entry_bid_val) / entry_bid_val if (entry_bid_val and entry_bid_val > 0.01) else pnl_pct_decimal
-            
-            # SL triggers only when outside buffer AND true bid drop matches or exceeds stop-loss fraction
-            if (not is_in_buffer) and (pnl_pct_decimal <= -hard_stop_loss_fraction) and (bid_drop_pct_decimal <= -hard_stop_loss_fraction):
-                cb_enabled = self.settings.get("exit_circuit_breaker_enabled", "true").lower() in ("true", "1", "yes")
-                trigger_sl_price = round(entry_price * (1.0 - hard_stop_loss_fraction), 4)
-                max_slip_pct = float(self.settings.get("max_exit_slippage_pct", 1.0))
-                max_allowed_slip = entry_price * (max_slip_pct / 100.0)
-                min_allowed_exit_price = round(trigger_sl_price - max_allowed_slip, 4)
-
-                if cb_enabled and current_share_price < min_allowed_exit_price and time_rem > 10.0:
-                    trade["circuit_breaker_active"] = True
-                    trade["circuit_breaker_min_acceptable"] = min_allowed_exit_price
-                    trade["circuit_breaker_target_sl"] = trigger_sl_price
-                    trade["buffer_status"] = f"CIRCUIT_BREAKER_DEFENSE (MinBid: ${min_allowed_exit_price:.3f})"
-                    logger.warning(
-                        f"[Fast5M Executor] ⚡ SLIPPAGE CIRCUIT BREAKER ENGAGED: #{trade['id']} {asset} {outcome} | "
-                        f"Target SL=${trigger_sl_price:.4f} | Vacuum Bid=${current_share_price:.4f} | "
-                        f"RECKLESS DUMP BLOCKED! Holding adaptive limit defense at ${min_allowed_exit_price:.4f}."
-                    )
-                else:
-                    should_close = True
-                    resolution = "CIRCUIT_BREAKER_SL_FILLED" if trade.get("circuit_breaker_active") else "HARD_STOP_LOSS"
-                    trade["circuit_breaker_active"] = False
-                    trade["reversal_defense_active"] = False
-
-                    if current_share_price < min_allowed_exit_price:
-                        exit_price = round(max(min_allowed_exit_price, oracle_mark_price), 4)
-                        logger.warning(
-                            f"[Fast5M Executor] 🛡️ EXIT SLIPPAGE CAP ENFORCED #{trade['id']} {asset} {outcome}: "
-                            f"Market bid ${current_share_price:.4f} crashed below limit ${min_allowed_exit_price:.4f}. "
-                            f"Clamped paper exit price to ${exit_price:.4f}."
-                        )
-                    else:
-                        exit_price = current_share_price
-
-                    logger.info(
-                        f"[Fast5M Executor] 🛑 STRICT HARD STOP LOSS TRIGGERED: #{trade['id']} {asset} {outcome} "
-                        f"Loss {pnl_pct:.2f}% <= -{hard_stop_loss_pct:.2f}% (Exit Price: ${exit_price:.4f}, Cost: ${cost:.2f})"
-                    )
-
-        # ─────────────────────────────────────────────────────────────
-        # 3. TAKE PROFIT TARGET & TRAILING PROFIT LOCK
+        # 2. TAKE PROFIT TARGET
         # ─────────────────────────────────────────────────────────────
         elif not should_close and (unrealized_pnl >= tp_target or pnl_pct_decimal >= tp_fraction):
             should_close = True
@@ -1133,23 +1144,58 @@ class FastExecutor:
             exit_price = current_share_price
             logger.info(f"[Fast5M Executor] 🎯 TAKE PROFIT HIT: #{trade['id']} {asset} {outcome} target +${unrealized_pnl:.2f} reached.")
 
-        elif not should_close and trailing_enabled and not is_in_buffer:
-            if trade.get("trailing_armed") or trade_peak_pnl >= min_gain_for_trailing:
-                trade["trailing_armed"] = True
-                trailing_floor = max(0.02, round(trade_peak_pnl - tight_giveback, 2))
-                trade["trailing_floor"] = trailing_floor
-
-                if unrealized_pnl <= trailing_floor and unrealized_pnl > 0.0:
-                    should_close = True
-                    resolution = "TAKE_PROFIT"
-                    exit_price = current_share_price
-                    logger.info(
-                        f"[Fast5M Executor] 🔒 AGGRESSIVE TRAILING STOP HIT: #{trade['id']} {asset} {outcome} locked at +${unrealized_pnl:.2f} "
-                        f"(Peak: +${trade_peak_pnl:.2f}, Floor: +${trailing_floor:.2f})"
-                    )
+        # ─────────────────────────────────────────────────────────────
+        # 3. REAL-TIME TRAILING STOP & REVERSAL GIVEBACK PROFIT LOCK
+        # Once profits are locked and the price pulls back by the specified
+        # giveback amount, close the position immediately without waiting for further momentum!
+        # ─────────────────────────────────────────────────────────────
+        elif not should_close and (trailing_enabled or reversal_enabled) and not is_in_buffer:
+            if trade.get("trailing_armed") and unrealized_pnl <= trade.get("trailing_floor", 0.0):
+                should_close = True
+                resolution = "REVERSAL_GIVEBACK_EXIT"
+                best_bid = real_book_bid if (real_book_bid is not None and real_book_bid > 0.001) else current_share_price
+                exit_price = round(best_bid, 4)
+                pulled_back = round(trade_peak_pnl - unrealized_pnl, 2)
+                logger.info(
+                    f"[Fast5M Executor] 🔒 REVERSAL GIVEBACK EXIT TRIGGERED: #{trade['id']} {asset} {outcome} | "
+                    f"Peak profit was +${trade_peak_pnl:.2f}, pulled back by ${pulled_back:.2f} "
+                    f"to ${unrealized_pnl:+.2f} (Floor: +${trade.get('trailing_floor', 0.0):.2f}, Giveback setting: ${effective_giveback:.2f}). "
+                    f"Instant market execution at best bid ${exit_price:.4f} without waiting for further momentum."
+                )
 
         # ─────────────────────────────────────────────────────────────
-        # 4. ACTIVE REVERSAL DEFENSE (Micro-drawdowns before hard stop)
+        # 4. SLIPPAGE CIRCUIT BREAKER & STRICT MARGIN-BASED HARD STOP LOSS
+        # If wide exit slippage breaches or threatens the circuit breaker limit,
+        # trigger an immediate protective exit at best available bid.
+        # ─────────────────────────────────────────────────────────────
+        elif not should_close and not is_in_buffer:
+            entry_bid_val = trade.get("entry_bid", entry_price)
+            bid_drop_pct_decimal = (current_share_price - entry_bid_val) / entry_bid_val if (entry_bid_val and entry_bid_val > 0.01) else pnl_pct_decimal
+
+            # A: Slippage Circuit Breaker breach: market bid crashed below acceptable slippage limit
+            if cb_enabled and current_share_price < min_allowed_exit_price:
+                should_close = True
+                resolution = "CIRCUIT_BREAKER_PROTECTIVE_EXIT"
+                best_bid = real_book_bid if (real_book_bid is not None and real_book_bid > 0.005) else oracle_mark_price
+                exit_price = round(best_bid, 4)
+                logger.warning(
+                    f"[Fast5M Executor] ⚡ SLIPPAGE CIRCUIT BREAKER TRIGGERED: #{trade['id']} {asset} {outcome} | "
+                    f"Market bid ${current_share_price:.4f} breached circuit limit ${min_allowed_exit_price:.4f} "
+                    f"(Target SL: ${trigger_sl_price:.4f}, Max Slip: {max_slip_pct}%). "
+                    f"Executing IMMEDIATE protective exit at best available bid ${exit_price:.4f} to prevent holding into illiquid book!"
+                )
+            # B: Strict margin-based hard stop loss hit outside buffer
+            elif (pnl_pct_decimal <= -hard_stop_loss_fraction) and (bid_drop_pct_decimal <= -hard_stop_loss_fraction):
+                should_close = True
+                resolution = "HARD_STOP_LOSS"
+                exit_price = current_share_price
+                logger.info(
+                    f"[Fast5M Executor] 🛑 STRICT HARD STOP LOSS TRIGGERED: #{trade['id']} {asset} {outcome} "
+                    f"Loss {pnl_pct:.2f}% <= -{hard_stop_loss_pct:.2f}% (Exit Price: ${exit_price:.4f}, Cost: ${cost:.2f})"
+                )
+
+        # ─────────────────────────────────────────────────────────────
+        # 5. ACTIVE REVERSAL DEFENSE (Micro-drawdowns before hard stop)
         # ─────────────────────────────────────────────────────────────
         elif not should_close and reversal_enabled and trade.get("reversal_defense_active"):
             hold_elapsed = time.time() - (trade.get("reversal_defense_start_ts") or time.time())
@@ -1176,7 +1222,7 @@ class FastExecutor:
                 actual_exit_bid = 1.00
             elif resolution in ("LOST", "LOST_CIRCUIT_BREAKER_EXPIRED"):
                 actual_exit_bid = 0.00
-            elif resolution in ("HARD_CAP_TIMEOUT_EXIT", "FORCE_ROUND_TIMEOUT", "TIMEOUT_HEDGE_PROFITABLE", "EXPIRED_ROUND_CLOSE"):
+            elif resolution in ("HARD_CAP_TIMEOUT_EXIT", "FORCE_ROUND_TIMEOUT", "TIMEOUT_HEDGE_PROFITABLE", "EXPIRED_ROUND_CLOSE", "PROTECTIVE_LIQUIDITY_EXIT", "CIRCUIT_BREAKER_PROTECTIVE_EXIT", "REVERSAL_GIVEBACK_EXIT"):
                 actual_exit_bid = exit_price
 
             realized_pnl = round((actual_exit_bid - entry_price) * shares_exact, 2)
@@ -1190,14 +1236,17 @@ class FastExecutor:
                 theoretical_price = 1.00
             elif resolution == "TAKE_PROFIT":
                 theoretical_price = round((cost + tp_target) / shares_exact, 4)
+            elif resolution == "REVERSAL_GIVEBACK_EXIT":
+                floor_dollar = trade.get("trailing_floor", unrealized_pnl)
+                theoretical_price = round((cost + floor_dollar) / shares_exact, 4)
             elif resolution in ("HARD_STOP_LOSS", "CIRCUIT_BREAKER_SL_FILLED", "HARD_CAP_TIMEOUT_EXIT"):
                 theoretical_price = round(entry_price * (1.0 - hard_stop_loss_fraction), 4)
+            elif resolution == "CIRCUIT_BREAKER_PROTECTIVE_EXIT":
+                theoretical_price = min_allowed_exit_price
             elif resolution == "REVERSAL_EXIT":
                 theoretical_price = entry_price  # Target was breakeven
-            elif resolution in ("FORCE_ROUND_TIMEOUT", "TIMEOUT_HEDGE_PROFITABLE", "EXPIRED_ROUND_CLOSE"):
+            elif resolution in ("FORCE_ROUND_TIMEOUT", "TIMEOUT_HEDGE_PROFITABLE", "EXPIRED_ROUND_CLOSE", "PROTECTIVE_LIQUIDITY_EXIT"):
                 theoretical_price = actual_exit_bid  # Market exit on available bid
-            elif resolution == "AGGRESSIVE_TRAILING_LOCK":
-                theoretical_price = round((cost + trade.get("trailing_floor", 0.02)) / shares_exact, 4)
             elif resolution in ("LOST", "LOST_CIRCUIT_BREAKER_EXPIRED"):
                 theoretical_price = 0.00
             else:
@@ -1243,6 +1292,7 @@ class FastExecutor:
                 logger.error(f"[Fast5M Executor] Error closing trade: {e}")
             finally:
                 db.close()
+                self._last_exit_timestamps[(trade.get("user_id"), trade["asset"])] = time.time()
                 self.active_trades.pop(trade["id"], None)
 
 
