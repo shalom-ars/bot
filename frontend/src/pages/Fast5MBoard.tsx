@@ -126,7 +126,11 @@ export default function Fast5MBoard() {
   const [takeProfitPct, setTakeProfitPct] = useState<number>(3.0);
   const [stopLossPct, setStopLossPct] = useState<number>(3.0);
   const [riskRewardRatio, setRiskRewardRatio] = useState<number>(1.0);
+  const [bufferEnabled, setBufferEnabled] = useState<boolean>(true);
   const [bufferTimerSec, setBufferTimerSec] = useState<number>(4.0);
+  const [multiEntryEnabled, setMultiEntryEnabled] = useState<boolean>(true);
+  const [gridLevels, setGridLevels] = useState<number>(2);
+  const [gridStepPct, setGridStepPct] = useState<number>(1.0);
   const [trailingLockEnabled, setTrailingLockEnabled] = useState<boolean>(true);
   const [trailingStopActivationPct, setTrailingStopActivationPct] = useState<number>(1.0);
   const [trailingStopDistancePct, setTrailingStopDistancePct] = useState<number>(0.5);
@@ -429,7 +433,11 @@ export default function Fast5MBoard() {
             const tp = parseFloat(s.take_profit_pct);
             if (sl > 0) setRiskRewardRatio(Number((tp / sl).toFixed(2)));
           }
+          if (s.buffer_enabled !== undefined) setBufferEnabled(s.buffer_enabled === 'true');
           if (s.buffer_timer_sec) setBufferTimerSec(parseFloat(s.buffer_timer_sec));
+          if (s.multi_entry_enabled !== undefined) setMultiEntryEnabled(s.multi_entry_enabled === 'true');
+          if (s.grid_levels) setGridLevels(parseInt(s.grid_levels));
+          if (s.grid_step_pct) setGridStepPct(parseFloat(s.grid_step_pct));
           if (s.min_profit_to_lock) setMinProfitToLock(parseFloat(s.min_profit_to_lock));
           if (s.reversal_giveback_dollar) setReversalGivebackDollar(parseFloat(s.reversal_giveback_dollar));
           if (s.trailing_lock_enabled) setTrailingLockEnabled(s.trailing_lock_enabled === 'true');
@@ -611,12 +619,17 @@ export default function Fast5MBoard() {
         multi_pair_min_score: multiPairMinScore,
         strategy_direction: strategyDirection,
         confidence_threshold: confidenceThreshold,
+        buffer_enabled: bufferEnabled,
         buffer_timer_sec: bufferTimerSec,
         take_profit_pct: takeProfitPct,
         stop_loss_pct: stopLossPct,
+        hard_stop_loss_pct: stopLossPct,
         risk_reward_ratio: riskRewardRatio,
         take_profit_dollar: takeProfitDollar,
         stop_loss_dollar: stopLossDollar,
+        multi_entry_enabled: multiEntryEnabled,
+        grid_levels: gridLevels,
+        grid_step_pct: gridStepPct,
         trailing_lock_enabled: trailingLockEnabled,
         trailing_stop_activation_pct: trailingStopActivationPct,
         trailing_stop_distance_pct: trailingStopDistancePct,
@@ -681,12 +694,17 @@ export default function Fast5MBoard() {
         multi_pair_min_score: multiPairMinScore,
         strategy_direction: strategyDirection,
         confidence_threshold: confidenceThreshold,
+        buffer_enabled: bufferEnabled,
         buffer_timer_sec: bufferTimerSec,
         take_profit_pct: takeProfitPct,
         stop_loss_pct: stopLossPct,
+        hard_stop_loss_pct: stopLossPct,
         risk_reward_ratio: riskRewardRatio,
         take_profit_dollar: takeProfitDollar,
         stop_loss_dollar: stopLossDollar,
+        multi_entry_enabled: multiEntryEnabled,
+        grid_levels: gridLevels,
+        grid_step_pct: gridStepPct,
         trailing_lock_enabled: trailingLockEnabled,
         trailing_stop_activation_pct: trailingStopActivationPct,
         trailing_stop_distance_pct: trailingStopDistancePct,
@@ -2010,50 +2028,68 @@ export default function Fast5MBoard() {
                   </div>
                 </div>
 
-                {/* 1. BUFFER / EXECUTION DELAY TIMER */}
-                <div className="bg-white p-3.5 rounded-xl border border-blue-200/80 shadow-xs space-y-2">
+                {/* 1. BUFFER SYSTEM & NOISE IMMUNITY WINDOW */}
+                <div className="bg-white p-3.5 rounded-xl border border-blue-200/80 shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
                       <Timer className="w-4 h-4 text-blue-600" />
-                      <span>1. Grace Period Buffer Timer</span>
+                      <span>1. Grace Period Buffer System</span>
                     </label>
-                    <span className="text-xs font-mono font-black px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
-                      {bufferTimerSec.toFixed(1)}s Delay
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1.0"
-                    max="15.0"
-                    step="0.5"
-                    value={bufferTimerSec}
-                    onChange={(e) => {
-                      markSettingEdited();
-                      setBufferTimerSec(Number(e.target.value));
-                    }}
-                    className="w-full accent-blue-600 cursor-pointer"
-                  />
-                  <div className="flex items-center justify-between gap-1.5">
-                    {[2.0, 3.0, 4.0, 5.0, 6.0].map((sec) => (
-                      <button
-                        key={sec}
-                        type="button"
-                        onClick={() => {
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg border ${
+                        bufferEnabled ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-500 border-slate-200'
+                      }`}>
+                        {bufferEnabled ? `${bufferTimerSec.toFixed(1)}s Delay` : 'DISABLED'}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={bufferEnabled}
+                        onChange={(e) => {
                           markSettingEdited();
-                          setBufferTimerSec(sec);
+                          setBufferEnabled(e.target.checked);
                         }}
-                        className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
-                          Math.abs(bufferTimerSec - sec) < 0.1
-                            ? 'bg-blue-600 text-white shadow-xs'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        {sec.toFixed(1)}s
-                      </button>
-                    ))}
+                        className="w-4 h-4 accent-blue-600 cursor-pointer"
+                        title="Toggle Grace Period Buffer on/off"
+                      />
+                    </div>
                   </div>
+                  {bufferEnabled && (
+                    <>
+                      <input
+                        type="range"
+                        min="1.0"
+                        max="15.0"
+                        step="0.5"
+                        value={bufferTimerSec}
+                        onChange={(e) => {
+                          markSettingEdited();
+                          setBufferTimerSec(Number(e.target.value));
+                        }}
+                        className="w-full accent-blue-600 cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between gap-1.5">
+                        {[2.0, 3.0, 4.0, 5.0, 6.0].map((sec) => (
+                          <button
+                            key={sec}
+                            type="button"
+                            onClick={() => {
+                              markSettingEdited();
+                              setBufferTimerSec(sec);
+                            }}
+                            className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                              Math.abs(bufferTimerSec - sec) < 0.1
+                                ? 'bg-blue-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {sec.toFixed(1)}s
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                   <div className="text-[10px] text-slate-500 leading-relaxed bg-blue-50/50 p-2 rounded-lg border border-blue-100">
-                    🛡️ <strong className="text-blue-900">Noise Immunity Window:</strong> Micro-spread noise is suppressed during the first {bufferTimerSec}s so trades don't trigger stop loss instantly on spread widening.
+                    🛡️ <strong className="text-blue-900">Noise Immunity Window:</strong> {bufferEnabled ? `Suppresses micro-spread noise for ${bufferTimerSec}s after entry. Strict hard stop loss breaches will always trigger immediate exit.` : 'Disabled: trades execute instant exit checks without entry delay.'}
                   </div>
                 </div>
 
@@ -2186,8 +2222,11 @@ export default function Fast5MBoard() {
                     </label>
                     <input
                       type="checkbox"
-                      checked={reversalLockEnabled}
-                      onChange={(e) => setReversalLockEnabled(e.target.checked)}
+                      checked={trailingLockEnabled}
+                      onChange={(e) => {
+                        markSettingEdited();
+                        setTrailingLockEnabled(e.target.checked);
+                      }}
                       className="w-4 h-4 accent-blue-600 cursor-pointer"
                     />
                   </div>
@@ -2203,10 +2242,13 @@ export default function Fast5MBoard() {
                         <input
                           type="number"
                           step="0.1"
-                          min="0.5"
+                          min="0.2"
                           max="5.0"
                           value={trailingStopActivationPct}
-                          onChange={(e) => setTrailingStopActivationPct(Math.max(0.2, Number(e.target.value)))}
+                          onChange={(e) => {
+                            markSettingEdited();
+                            setTrailingStopActivationPct(Math.max(0.2, Number(e.target.value)));
+                          }}
                           className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
                         />
                         <span className="text-slate-400 font-mono text-xs">%</span>
@@ -2221,7 +2263,10 @@ export default function Fast5MBoard() {
                           min="0.1"
                           max="2.0"
                           value={trailingStopDistancePct}
-                          onChange={(e) => setTrailingStopDistancePct(Math.max(0.1, Number(e.target.value)))}
+                          onChange={(e) => {
+                            markSettingEdited();
+                            setTrailingStopDistancePct(Math.max(0.1, Number(e.target.value)));
+                          }}
                           className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
                         />
                         <span className="text-slate-400 font-mono text-xs">%</span>
@@ -2237,10 +2282,13 @@ export default function Fast5MBoard() {
                         <input
                           type="number"
                           step="0.02"
-                          min="0.04"
+                          min="0.02"
                           max="0.50"
                           value={minProfitToLock}
-                          onChange={(e) => setMinProfitToLock(Math.max(0.02, Number(e.target.value)))}
+                          onChange={(e) => {
+                            markSettingEdited();
+                            setMinProfitToLock(Math.max(0.02, Number(e.target.value)));
+                          }}
                           className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
                         />
                       </div>
@@ -2255,11 +2303,32 @@ export default function Fast5MBoard() {
                           min="0.01"
                           max="0.10"
                           value={reversalGivebackDollar}
-                          onChange={(e) => setReversalGivebackDollar(Math.max(0.01, Number(e.target.value)))}
+                          onChange={(e) => {
+                            markSettingEdited();
+                            setReversalGivebackDollar(Math.max(0.01, Number(e.target.value)));
+                          }}
                           className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-mono text-xs font-bold text-slate-800"
                         />
                       </div>
                     </div>
+                  </div>
+
+                  {/* Reversal Defense Sub-Toggle */}
+                  <div className="flex items-center justify-between pt-1 text-[11px] text-slate-700">
+                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+                      <RotateCcw className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Technical Momentum Reversal Exit</span>
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={reversalLockEnabled}
+                      onChange={(e) => {
+                        markSettingEdited();
+                        setReversalLockEnabled(e.target.checked);
+                      }}
+                      className="w-3.5 h-3.5 accent-purple-600 cursor-pointer"
+                      title="Exit on momentum bounce back toward breakeven"
+                    />
                   </div>
                 </div>
 
@@ -2285,7 +2354,7 @@ export default function Fast5MBoard() {
                     🛡️ <strong>Catastrophic Drawdown Protection:</strong> Blocks reckless stop-loss market dumps when orderbook bid depth collapses (e.g. illiquid vacuum books on low-liquidity pairs like HYPE). Holds position with adaptive limit defense until liquidity replenishes or round expiry.
                   </p>
 
-                  <div className="bg-white p-2.5 rounded-xl border border-slate-200 space-y-1.5">
+                  <div className="bg-white p-2.5 rounded-xl border border-slate-200 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold text-slate-700">Max Allowed Exit Slippage:</span>
                       <span className="text-xs font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
@@ -2294,8 +2363,8 @@ export default function Fast5MBoard() {
                     </div>
                     <input
                       type="range"
-                      min="1.0"
-                      max="15.0"
+                      min="0.5"
+                      max="10.0"
                       step="0.5"
                       disabled={!exitCircuitBreakerEnabled}
                       value={maxExitSlippagePct}
@@ -2305,10 +2374,28 @@ export default function Fast5MBoard() {
                       }}
                       className="w-full accent-amber-600 cursor-pointer disabled:opacity-40"
                     />
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                      <span>Strict (1% - 3%)</span>
-                      <span>Balanced (5%)</span>
-                      <span>Permissive (10%+)</span>
+                    <div className="flex items-center justify-between gap-1.5">
+                      {[0.5, 1.0, 2.0, 5.0].map((slip) => (
+                        <button
+                          key={slip}
+                          type="button"
+                          disabled={!exitCircuitBreakerEnabled}
+                          onClick={() => {
+                            markSettingEdited();
+                            setMaxExitSlippagePct(slip);
+                          }}
+                          className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                            Math.abs(maxExitSlippagePct - slip) < 0.1
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40'
+                          }`}
+                        >
+                          {slip.toFixed(1)}%
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-slate-500 leading-snug">
+                      Clamps simulated paper exit price so stop-loss exits never dump below {maxExitSlippagePct.toFixed(1)}% slippage past trigger price.
                     </div>
                   </div>
                 </div>
@@ -2715,6 +2802,82 @@ export default function Fast5MBoard() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Multi-Entry & Grid Levels Trading */}
+                <div className="bg-white p-3.5 rounded-xl border border-indigo-200/80 shadow-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
+                      <Layers className="w-4 h-4 text-indigo-600" />
+                      <span>Multi-Entry & Grid Levels</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg border ${
+                        multiEntryEnabled ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-500 border-slate-200'
+                      }`}>
+                        {multiEntryEnabled ? `Grid Active (${gridLevels}x)` : 'SINGLE ENTRY'}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={multiEntryEnabled}
+                        onChange={(e) => {
+                          markSettingEdited();
+                          setMultiEntryEnabled(e.target.checked);
+                        }}
+                        className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                        title="Toggle Multi-Entry and Grid Levels"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    Allows the trading bot to execute multiple simultaneous trades and grid levels when opportunities arise, while maintaining strict risk management across all open positions.
+                  </p>
+
+                  {multiEntryEnabled && (
+                    <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                      <div>
+                        <span className="text-slate-600 text-[10px] font-semibold block">Grid Levels / Asset:</span>
+                        <div className="grid grid-cols-3 gap-1 mt-1">
+                          {[1, 2, 3].map((lvl) => (
+                            <button
+                              key={lvl}
+                              type="button"
+                              onClick={() => {
+                                markSettingEdited();
+                                setGridLevels(lvl);
+                              }}
+                              className={`py-1 text-center rounded font-mono font-bold text-xs transition-all cursor-pointer ${
+                                gridLevels === lvl
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                              }`}
+                            >
+                              {lvl}x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-slate-600 text-[10px] font-semibold block">Min Grid Spacing:</span>
+                        <div className="flex items-center gap-1 mt-1">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0.5"
+                            max="5.0"
+                            value={gridStepPct}
+                            onChange={(e) => {
+                              markSettingEdited();
+                              setGridStepPct(Math.max(0.1, Number(e.target.value)));
+                            }}
+                            className="w-full px-2 py-1 bg-white border border-slate-200 rounded font-mono text-xs font-bold text-indigo-700 focus:outline-hidden"
+                          />
+                          <span className="text-slate-400 font-mono text-xs">%</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Score Threshold */}

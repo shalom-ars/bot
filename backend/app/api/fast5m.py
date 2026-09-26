@@ -45,10 +45,16 @@ class SettingsUpdate(BaseModel):
     min_time_remaining: Optional[float] = None
     max_time_remaining: Optional[float] = None
     # Buffer Timer & Risk Parameters
+    buffer_enabled: Optional[bool] = None
     buffer_timer_sec: Optional[float] = None
     take_profit_pct: Optional[float] = None
     stop_loss_pct: Optional[float] = None
+    hard_stop_loss_pct: Optional[float] = None
     risk_reward_ratio: Optional[float] = None
+    # Multi-Entry & Grid Trading Rules
+    multi_entry_enabled: Optional[bool] = None
+    grid_levels: Optional[int] = None
+    grid_step_pct: Optional[float] = None
     # Active Quantitative Filters & Indicator Flags
     filter_delta_enabled: Optional[bool] = None
     filter_delta_weight: Optional[float] = None
@@ -342,7 +348,9 @@ def _extract_settings_from_payload(payload: SettingsUpdate) -> Dict[str, str]:
     if payload.max_time_remaining is not None:
         updates["max_time_remaining"] = str(payload.max_time_remaining)
 
-    # Buffer Timer & Risk Parameters
+    # Buffer System & Risk Parameters
+    if payload.buffer_enabled is not None:
+        updates["buffer_enabled"] = "true" if payload.buffer_enabled else "false"
     if payload.buffer_timer_sec is not None:
         updates["buffer_timer_sec"] = str(max(1.0, min(30.0, payload.buffer_timer_sec)))
     if payload.risk_reward_ratio is not None:
@@ -353,8 +361,24 @@ def _extract_settings_from_payload(payload: SettingsUpdate) -> Dict[str, str]:
         updates["take_profit_dollar"] = str(round(pos_size * (payload.take_profit_pct / 100.0), 2))
     if payload.stop_loss_pct is not None:
         updates["stop_loss_pct"] = str(payload.stop_loss_pct)
+        updates["hard_stop_loss_pct"] = str(payload.stop_loss_pct)
         pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
-        updates["stop_loss_dollar"] = str(round(pos_size * (payload.stop_loss_pct / 100.0), 2))
+        fraction = payload.stop_loss_pct / 100.0 if payload.stop_loss_pct >= 0.05 else payload.stop_loss_pct
+        updates["stop_loss_dollar"] = str(round(pos_size * fraction, 4))
+    if payload.hard_stop_loss_pct is not None:
+        updates["hard_stop_loss_pct"] = str(payload.hard_stop_loss_pct)
+        updates["stop_loss_pct"] = str(payload.hard_stop_loss_pct)
+        pos_size = float(payload.position_size_usd or fast_executor.settings.get("position_size_usd", 10.0))
+        fraction = payload.hard_stop_loss_pct / 100.0 if payload.hard_stop_loss_pct >= 0.05 else payload.hard_stop_loss_pct
+        updates["stop_loss_dollar"] = str(round(pos_size * fraction, 4))
+
+    # Multi-Entry & Grid Levels Rules
+    if payload.multi_entry_enabled is not None:
+        updates["multi_entry_enabled"] = "true" if payload.multi_entry_enabled else "false"
+    if payload.grid_levels is not None:
+        updates["grid_levels"] = str(max(1, min(5, payload.grid_levels)))
+    if payload.grid_step_pct is not None:
+        updates["grid_step_pct"] = str(max(0.1, min(10.0, payload.grid_step_pct)))
 
     # Active Filters & Indicators
     if payload.filter_delta_enabled is not None:
