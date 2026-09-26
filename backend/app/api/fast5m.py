@@ -509,16 +509,21 @@ def manual_exit_position(
 @router.post("/trades/demo/reset")
 @router.post("/reset-demo")
 def reset_demo_trading(
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
     """
     Reset Demo Account:
-    Wipes paper trade history and resets virtual equity back to $300.00 base for the user.
+    Wipes paper trade history and resets virtual equity back to $300.00 base
+    for the authenticated user ONLY. Never affects other users' data.
     """
-    if current_user and getattr(current_user, "status", "PENDING") != "APPROVED":
+    if not current_user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Authentication required to reset demo account.")
+    if getattr(current_user, "status", "PENDING") != "APPROVED":
         raise HTTPException(status_code=403, detail="Account pending administrator approval")
-    return fast_executor.reset_demo_account(user_id=current_user.id if current_user else None)
+    return fast_executor.reset_demo_account(user_id=current_user.id)
+
 
 
 

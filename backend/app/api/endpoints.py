@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.db.models import Market, Trade, Position
+from app.db.models import Market, Trade, Position, User
+from app.api.security import get_current_user
 
 router = APIRouter()
 
@@ -238,7 +239,13 @@ def get_pnl(db: Session = Depends(get_db)):
 @router.post("/demo/reset")
 @router.post("/trades/demo/reset")
 def reset_demo_router_alias(
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Reset Demo Account (user-scoped alias):
+    Wipes paper trade history ONLY for the authenticated user and resets
+    their virtual equity to $300.00. Requires valid JWT — never resets globally.
+    """
     from app.fast5m.executor import fast_executor
-    return fast_executor.reset_demo_account(user_id=None)
+    return fast_executor.reset_demo_account(user_id=current_user.id)
