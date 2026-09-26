@@ -8,7 +8,7 @@ import {
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
   BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
   Eye, EyeOff, Key, AlertTriangle, AlertCircle, Check, Copy, Link2, Unlink, X,
-  LogOut, ArrowDownToLine, ArrowUpFromLine
+  LogOut, ArrowDownToLine, ArrowUpFromLine, Menu, ChevronRight, ExternalLink, Coins
 } from 'lucide-react';
 import AdminConsoleTab from '../components/AdminConsoleTab';
 import BrandLogo from '../components/BrandLogo';
@@ -233,6 +233,17 @@ export default function Fast5MBoard() {
   const [resettingDemo, setResettingDemo] = useState<boolean>(false);
   const [isSwitchToRealModalOpen, setIsSwitchToRealModalOpen] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // Mobile Navigation Side Drawer & Rabby Wallet Sync
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+  const [isRabbyModalOpen, setIsRabbyModalOpen] = useState<boolean>(false);
+  const [rabbySyncing, setRabbySyncing] = useState<boolean>(false);
+  const [rabbySyncMsg, setRabbySyncMsg] = useState<string>('');
+  const [rabbySyncError, setRabbySyncError] = useState<string>('');
+  const [rabbyDepositAmount, setRabbyDepositAmount] = useState<string>('');
+  const [rabbyWithdrawAmount, setRabbyWithdrawAmount] = useState<string>('');
+  const [rabbyDepositMode, setRabbyDepositMode] = useState<'instant' | 'onchain'>('instant');
+  const [mobileMenuExclusive, setMobileMenuExclusive] = useState<boolean>(() => localStorage.getItem('mobile_menu_exclusive') !== 'false');
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -879,6 +890,279 @@ export default function Fast5MBoard() {
     ];
   };
 
+  const isRabbyAvailable = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const eth = (window as any).ethereum;
+    return Boolean(
+      (window as any).rabby ||
+      (eth && eth.isRabby) ||
+      (eth && eth.providers && eth.providers.some((p: any) => p.isRabby))
+    );
+  };
+
+  const getRabbyProvider = (): any => {
+    if (typeof window === 'undefined') return null;
+    const eth = (window as any).ethereum;
+    if ((window as any).rabby) return (window as any).rabby;
+    if (eth && eth.isRabby) return eth;
+    if (eth && eth.providers) {
+      const found = eth.providers.find((p: any) => p.isRabby);
+      if (found) return found;
+    }
+    return eth || null;
+  };
+
+  const connectRabbyWallet = async () => {
+    const provider = getRabbyProvider();
+    if (!provider || !isRabbyAvailable()) {
+      setIsRabbyModalOpen(true);
+      return;
+    }
+    setConnectingBrowserWallet(true);
+    setWalletError('');
+    setWalletMsg('');
+    setRabbySyncError('');
+    setRabbySyncMsg('');
+    try {
+      setRabbySyncMsg('Connecting to Rabby Wallet... Please approve access in your Rabby extension.');
+      const accounts = await provider.request({ method: 'eth_requestAccounts' });
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No account authorized in Rabby Wallet.');
+      }
+      const addr = accounts[0].toLowerCase();
+      setWalletAddressInput(addr);
+
+      // Verify or switch to Polygon Mainnet (0x89 = 137)
+      try {
+        const chainId = await provider.request({ method: 'eth_chainId' });
+        if (chainId !== '0x89' && chainId !== '137' && parseInt(chainId, 16) !== 137) {
+          try {
+            await provider.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x89' }],
+            });
+          } catch (switchError: any) {
+            if (switchError.code === 4902) {
+              await provider.request({
+                method: 'wallet_addEthereumChain',
+                params: [
+                  {
+                    chainId: '0x89',
+                    chainName: 'Polygon Mainnet',
+                    nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+                    rpcUrls: ['https://1rpc.io/matic', 'https://polygon-rpc.com'],
+                    blockExplorerUrls: ['https://polygonscan.com/'],
+                  },
+                ],
+              });
+            }
+          }
+        }
+      } catch (cErr) {
+        console.warn('Rabby chain switch notice:', cErr);
+      }
+
+      // Link to backend
+      const token = localStorage.getItem('token');
+      const res = await axios.post('/api/fast5m/wallet/connect', {
+        address: addr,
+        proxy_address: proxyAddressInput.trim() || undefined,
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      try {
+        await axios.post('/api/auth/link-wallet', { wallet_address: addr }, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+      } catch (linkErr) {
+        console.debug('Link wallet note:', linkErr);
+      }
+
+      try {
+        await axios.post('/api/fast5m/wallet/mode', { mode: 'live' }, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+      } catch (modeErr) {
+        console.debug('Mode set note:', modeErr);
+      }
+
+      // Sync Rabby balances via dedicated sync endpoint
+      try {
+        const syncRes = await axios.post('/api/fast5m/wallet/sync-rabby', {
+          address: addr,
+          sync_vault: true,
+          account_mode: 'live'
+        }, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (syncRes.data?.balances) {
+          setWalletInfo((prev: any) => ({
+            ...prev,
+            ...syncRes.data.balances,
+            account_mode: 'live',
+            is_connected: true,
+            is_rabby: true,
+            wallet_address: addr
+          }));
+        }
+      } catch (syncErr) {
+        console.warn('Rabby initial balance sync note:', syncErr);
+      }
+
+      if (res.data?.wallet) {
+        setWalletInfo({ ...res.data.wallet, account_mode: 'live', is_connected: true, is_rabby: true });
+        setAccountMode('live');
+        localStorage.setItem('account_mode', 'live');
+        localStorage.setItem('wallet_address', addr);
+        localStorage.setItem('wallet_provider', 'rabby');
+        localStorage.removeItem('demo_access');
+        setWalletMsg(`🐰 Rabby Wallet (${addr.slice(0, 6)}...${addr.slice(-4)}) connected & synced!`);
+      }
+
+      await fetchVault();
+      await fetchUserProfile();
+      await fetchBoard();
+      await fetchTrades(selectedTimeframe, 'live');
+      showToast('🐰 Rabby Wallet connected & Polygon balance synced successfully!');
+    } catch (err: any) {
+      console.error('Rabby connect error:', err);
+      if (err?.code === 4001 || err?.message?.includes('rejected') || err?.message?.includes('denied')) {
+        setWalletError('Rabby Wallet connection request was rejected in your extension.');
+      } else {
+        setWalletError(err?.response?.data?.detail || err?.message || 'Failed to connect Rabby Wallet.');
+      }
+    } finally {
+      setConnectingBrowserWallet(false);
+    }
+  };
+
+  const handleSyncRabbyWallet = async () => {
+    setRabbySyncing(true);
+    setRabbySyncError('');
+    setRabbySyncMsg('');
+    try {
+      const token = localStorage.getItem('token');
+      const addr = walletInfo?.wallet_address || walletAddressInput.trim() || undefined;
+      const res = await axios.post('/api/fast5m/wallet/sync-rabby', {
+        address: addr,
+        sync_vault: true
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      if (res.data?.balances) {
+        setWalletInfo((prev: any) => ({
+          ...prev,
+          ...res.data.balances,
+          wallet_address: res.data.wallet_address || prev?.wallet_address,
+          last_balance_sync: res.data.timestamp,
+          is_rabby: true
+        }));
+      }
+      await fetchVault();
+      setRabbySyncMsg('✨ Rabby Polygon balances synced fresh from on-chain RPC!');
+      showToast('🐰 Rabby balances synced!');
+    } catch (err: any) {
+      setRabbySyncError(err?.response?.data?.detail || err?.message || 'Failed to sync Rabby balances.');
+    } finally {
+      setRabbySyncing(false);
+    }
+  };
+
+  const handleRabbyDepositSync = async (amount: number, onchainTransfer = false) => {
+    if (!amount || amount <= 0) {
+      setRabbySyncError('Please enter a deposit amount greater than $0.00.');
+      return;
+    }
+    setRabbySyncing(true);
+    setRabbySyncError('');
+    setRabbySyncMsg('');
+    try {
+      let txHash: string | undefined = undefined;
+      const provider = getRabbyProvider();
+
+      // If user chooses On-Chain Transfer, prompt Rabby to send Polygon USDC to Polymarket Exchange
+      if (onchainTransfer && provider) {
+        setRabbySyncMsg('🐰 Please confirm Polygon USDC transfer in Rabby Wallet...');
+        const recipient = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E'; // Polymarket CTF Exchange
+        const usdcContract = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'; // Native Polygon USDC
+        const amountWei = BigInt(Math.floor(amount * 1_000_000)).toString(16).padStart(64, '0');
+        const cleanRecipient = recipient.toLowerCase().replace('0x', '').padStart(64, '0');
+        const data = `0xa9059cbb${cleanRecipient}${amountWei}`;
+        
+        txHash = await provider.request({
+          method: 'eth_sendTransaction',
+          params: [{
+            from: walletInfo?.wallet_address || walletAddressInput,
+            to: usdcContract,
+            data: data
+          }]
+        });
+        if (txHash) {
+          setRabbySyncMsg(`On-chain transfer submitted (${txHash.slice(0, 10)}...). Syncing vault...`);
+        }
+      }
+
+      const token = localStorage.getItem('token');
+      await axios.post('/api/fast5m/vault/deposit', {
+        amount,
+        tx_hash: txHash,
+        wallet_type: 'rabby',
+        sync_onchain: Boolean(onchainTransfer)
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      setRabbySyncMsg(`✅ Successfully synced deposit of $${amount.toFixed(2)} from Rabby into Trading Vault!`);
+      showToast(`🐰 Deposited & Synced $${amount.toFixed(2)} with Rabby Wallet!`);
+      setRabbyDepositAmount('');
+      await fetchVault();
+      await handleSyncRabbyWallet();
+    } catch (err: any) {
+      console.error('Rabby deposit sync error:', err);
+      if (err?.code === 4001 || err?.message?.includes('rejected') || err?.message?.includes('denied')) {
+        setRabbySyncError('Deposit transaction was rejected in Rabby Wallet.');
+      } else {
+        setRabbySyncError(err?.response?.data?.detail || err?.message || 'Failed to sync Rabby deposit.');
+      }
+    } finally {
+      setRabbySyncing(false);
+    }
+  };
+
+  const handleRabbyWithdrawSync = async (amount: number) => {
+    if (!amount || amount <= 0) {
+      setRabbySyncError('Please enter a withdrawal amount greater than $0.00.');
+      return;
+    }
+    setRabbySyncing(true);
+    setRabbySyncError('');
+    setRabbySyncMsg('');
+    try {
+      const destination = walletInfo?.wallet_address || walletAddressInput;
+      const token = localStorage.getItem('token');
+      await axios.post('/api/fast5m/vault/withdraw', {
+        amount,
+        wallet_type: 'rabby',
+        destination_address: destination
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      setRabbySyncMsg(`✅ Successfully de-allocated $${amount.toFixed(2)} back to Rabby Wallet (${destination.slice(0, 6)}...${destination.slice(-4)})!`);
+      showToast(`🐰 Withdrawn & Synced $${amount.toFixed(2)} to Rabby Wallet!`);
+      setRabbyWithdrawAmount('');
+      await fetchVault();
+      await handleSyncRabbyWallet();
+    } catch (err: any) {
+      console.error('Rabby withdraw sync error:', err);
+      setRabbySyncError(err?.response?.data?.detail || err?.message || 'Failed to sync Rabby withdrawal.');
+    } finally {
+      setRabbySyncing(false);
+    }
+  };
+
   const connectSpecificWallet = async (walletOpt: SupportedWallet) => {
     setConnectingBrowserWallet(true);
     setWalletError('');
@@ -1190,8 +1474,8 @@ export default function Fast5MBoard() {
             </div>
           </div>
 
-          {/* Navigation Tabs in Single Continuous Line */}
-          <nav className="flex items-center gap-1.5 text-xs font-bold shrink min-w-0">
+          {/* Navigation Tabs in Single Continuous Line (Desktop) */}
+          <nav className="hidden xl:flex items-center gap-1.5 text-xs font-bold shrink min-w-0">
             <button
               type="button"
               onClick={() => setActiveTab('board')}
@@ -1252,111 +1536,143 @@ export default function Fast5MBoard() {
           </nav>
         </div>
 
-        {/* Right: Unified Deposit/Withdraw, Compact Emergency Stop next to Wallet, Corner Logout */}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* 1. Unified Deposit / Withdraw Button */}
+        {/* Right: Rabby Sync Button + Desktop Actions + Top-Corner Mobile Drawer Button */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Quick Rabby Sync Hub Button */}
           <button
             type="button"
-            onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
-            className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0"
-            title="Deposit or Withdraw Capital to/from Trading Vault"
+            onClick={() => setIsRabbyModalOpen(true)}
+            className="px-2 py-1 bg-gradient-to-r from-purple-900/40 via-indigo-900/40 to-sky-900/40 hover:from-purple-800/60 hover:to-sky-800/60 border border-purple-500/40 text-purple-200 hover:text-white rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
+            title="Open Rabby Wallet Deposit & Withdrawal Sync Hub"
           >
-            <ArrowDownToLine className="w-3 h-3" />
-            <span>Deposit / Withdraw</span>
-          </button>
-
-          {/* 2. Compact Emergency Stop Button */}
-          {isAdmin ? (
-            board?.auto_trading_active ? (
-              <button
-                type="button"
-                onClick={() => setIsEmergencyStopModalOpen(true)}
-                disabled={toggling}
-                className="px-2 py-1 bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 animate-pulse border border-rose-500/40"
-                title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
-              >
-                <AlertTriangle className="w-3 h-3 text-white" />
-                <span className="hidden sm:inline">Emergency Stop</span>
-                <span className="sm:hidden">Stop</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleEmergencyStart}
-                disabled={toggling}
-                className="px-2 py-1 bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 border border-emerald-500/40"
-                title="Resume Engine: Re-arm automated execution"
-              >
-                <Play className="w-3 h-3 text-white" />
-                <span className="hidden sm:inline">Resume Engine</span>
-                <span className="sm:hidden">Resume</span>
-              </button>
-            )
-          ) : (
-            <div className="px-2 py-1 bg-[#0d1117] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-300 flex items-center gap-1 shrink-0">
-              <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-              <span>{board?.auto_trading_active ? 'Armed' : 'Paused'}</span>
-            </div>
-          )}
-
-          {/* 3. Demo Reset Button — strictly hidden when NOT in demo mode */}
-          {accountMode === 'demo' && !isRealAccount && (
-            <button
-              type="button"
-              onClick={() => setIsDemoResetModalOpen(true)}
-              className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0"
-              title="Reset Demo Account: Wipe paper history and restore initial $300 balance"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span className="hidden md:inline">Reset Demo</span>
-            </button>
-          )}
-
-          {/* 4. Wallet Button */}
-          <button
-            type="button"
-            onClick={() => setWalletModalOpen(true)}
-            className="flex items-center gap-1 px-2 py-1 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-200 transition-colors cursor-pointer shrink-0"
-            title="Open Web3 Wallet Controls & Balance"
-          >
-            <Wallet className={`w-3 h-3 ${isRealAccount ? 'text-emerald-400' : 'text-blue-400'}`} />
-            <span className="font-bold">{isRealAccount ? 'Real Wallet' : 'Wallet'}</span>
-            <span className={`text-[11px] font-bold ${isRealAccount ? 'text-emerald-400' : 'text-blue-300'}`}>
-              {isRealAccount
-                ? `($${(walletInfo?.usdc_total ?? 0).toFixed(2)})`
-                : `($${currentVaultAllocated.toFixed(2)})`}
-            </span>
-            {isRealAccount && walletInfo?.pol_gas_balance != null && (
-              <span className="text-[10px] text-purple-400 hidden 2xl:inline">
-                • {walletInfo.pol_gas_balance.toFixed(3)} POL
-              </span>
+            <span className="text-xs">🐰</span>
+            <span className="hidden sm:inline">Rabby Sync</span>
+            {walletInfo?.is_rabby && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             )}
           </button>
 
-          {/* 5. Disconnect Button */}
-          {(isRealAccount || walletInfo?.is_connected) && (
+          {/* Desktop Toolbar Elements */}
+          <div className="hidden xl:flex items-center gap-1 shrink-0">
+            {/* 1. Unified Deposit / Withdraw Button */}
             <button
               type="button"
-              onClick={handleDisconnectWallet}
-              className="flex items-center gap-1 px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-[11px] font-bold transition-all cursor-pointer shrink-0"
-              title="Disconnect Web3 Wallet (Switch back to Safe Demo)"
+              onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
+              className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0"
+              title="Deposit or Withdraw Capital to/from Trading Vault"
             >
-              <Unlink className="w-3 h-3 text-rose-400" />
-              <span className="hidden sm:inline">Disconnect</span>
+              <ArrowDownToLine className="w-3 h-3" />
+              <span>Deposit / Withdraw</span>
             </button>
-          )}
 
-          {/* 6. User Logout placed at the absolute far corner */}
-          <div className="pl-1 border-l border-[#30363d] flex-shrink-0">
+            {/* 2. Compact Emergency Stop Button */}
+            {isAdmin ? (
+              board?.auto_trading_active ? (
+                <button
+                  type="button"
+                  onClick={() => setIsEmergencyStopModalOpen(true)}
+                  disabled={toggling}
+                  className="px-2 py-1 bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 animate-pulse border border-rose-500/40"
+                  title="Emergency Stop: Instantly kill auto-trading and force-close all open trades"
+                >
+                  <AlertTriangle className="w-3 h-3 text-white" />
+                  <span className="hidden sm:inline">Emergency Stop</span>
+                  <span className="sm:hidden">Stop</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleEmergencyStart}
+                  disabled={toggling}
+                  className="px-2 py-1 bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 border border-emerald-500/40"
+                  title="Resume Engine: Re-arm automated execution"
+                >
+                  <Play className="w-3 h-3 text-white" />
+                  <span className="hidden sm:inline">Resume Engine</span>
+                  <span className="sm:hidden">Resume</span>
+                </button>
+              )
+            ) : (
+              <div className="px-2 py-1 bg-[#0d1117] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-300 flex items-center gap-1 shrink-0">
+                <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                <span>{board?.auto_trading_active ? 'Armed' : 'Paused'}</span>
+              </div>
+            )}
+
+            {/* 3. Demo Reset Button — strictly hidden when NOT in demo mode */}
+            {accountMode === 'demo' && !isRealAccount && (
+              <button
+                type="button"
+                onClick={() => setIsDemoResetModalOpen(true)}
+                className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                title="Reset Demo Account: Wipe paper history and restore initial $300 balance"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span className="hidden md:inline">Reset Demo</span>
+              </button>
+            )}
+
+            {/* 4. Wallet Button */}
             <button
               type="button"
-              onClick={() => setIsLogoutModalOpen(true)}
-              title="Log Out / Disconnect Session"
-              className="p-1.5 bg-[#0d1117] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/50 text-slate-400 hover:text-rose-300 rounded-xl transition-all cursor-pointer flex items-center justify-center flex-shrink-0"
+              onClick={() => setWalletModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-200 transition-colors cursor-pointer shrink-0"
+              title="Open Web3 Wallet Controls & Balance"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <Wallet className={`w-3 h-3 ${isRealAccount ? 'text-emerald-400' : 'text-blue-400'}`} />
+              <span className="font-bold">{isRealAccount ? 'Real Wallet' : 'Wallet'}</span>
+              <span className={`text-[11px] font-bold ${isRealAccount ? 'text-emerald-400' : 'text-blue-300'}`}>
+                {isRealAccount
+                  ? `($${(walletInfo?.usdc_total ?? 0).toFixed(2)})`
+                  : `($${currentVaultAllocated.toFixed(2)})`}
+              </span>
+              {isRealAccount && walletInfo?.pol_gas_balance != null && (
+                <span className="text-[10px] text-purple-400 hidden 2xl:inline">
+                  • {walletInfo.pol_gas_balance.toFixed(3)} POL
+                </span>
+              )}
             </button>
+
+            {/* 5. Disconnect Button */}
+            {(isRealAccount || walletInfo?.is_connected) && (
+              <button
+                type="button"
+                onClick={handleDisconnectWallet}
+                className="flex items-center gap-1 px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-[11px] font-bold transition-all cursor-pointer shrink-0"
+                title="Disconnect Web3 Wallet (Switch back to Safe Demo)"
+              >
+                <Unlink className="w-3 h-3 text-rose-400" />
+                <span className="hidden sm:inline">Disconnect</span>
+              </button>
+            )}
+
+            {/* 6. User Logout placed at the absolute far corner */}
+            <div className="pl-1 border-l border-[#30363d] flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsLogoutModalOpen(true)}
+                title="Log Out / Disconnect Session"
+                className="p-1.5 bg-[#0d1117] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/50 text-slate-400 hover:text-rose-300 rounded-xl transition-all cursor-pointer flex items-center justify-center flex-shrink-0"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
+
+          {/* Top-Corner Hamburger / Mobile Drawer Trigger Button */}
+          <button
+            type="button"
+            onClick={() => setIsMobileDrawerOpen(true)}
+            className={`${mobileMenuExclusive ? 'xl:hidden' : ''} p-1.5 sm:p-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-slate-200 hover:text-white rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs`}
+            title="Open Mobile Navigation Menu & Side Drawer"
+            aria-label="Navigation Menu"
+          >
+            <Menu className="w-4 h-4 text-sky-400" />
+            <span className="text-[11px] font-bold text-slate-300 hidden sm:inline">Menu</span>
+            {(trades.length > 0 || walletInfo?.is_connected) && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
+          </button>
         </div>
       </header>
 
@@ -2973,6 +3289,47 @@ export default function Fast5MBoard() {
                 <span className="font-bold text-slate-800">
                   ${positionSize * maxActivePools} / ${((stats.initial_balance ?? 300) + stats.total_pnl).toFixed(2)} ({(((positionSize * maxActivePools) / ((stats.initial_balance ?? 300) + stats.total_pnl)) * 100).toFixed(1)}%)
                 </span>
+              </div>
+
+              {/* 5. Mobile Interface & VPS Localhost Configuration */}
+              <div className="pt-3 border-t border-slate-200/60 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Menu className="w-3.5 h-3.5 text-indigo-600" />
+                    <span className="text-xs font-bold text-slate-800">Mobile Interface Menu Only</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={mobileMenuExclusive}
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setMobileMenuExclusive(val);
+                      localStorage.setItem('mobile_menu_exclusive', String(val));
+                      markSettingEdited();
+                      showToast(val ? 'Menu configured to appear exclusively on mobile interface' : 'Menu visible across all screen sizes');
+                    }}
+                    className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    title="Toggle mobile-exclusive navigation menu"
+                  />
+                </div>
+                <div className="text-[10px] text-slate-500 leading-snug bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-center justify-between">
+                  <span>
+                    Display Rule: <strong className="text-slate-800">{mobileMenuExclusive ? 'Exclusive on Mobile (< 1280px)' : 'Universal (All Screen Sizes)'}</strong>
+                  </span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold">
+                    {mobileMenuExclusive ? 'Mobile Exclusive Active' : 'Universal Mode'}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500 leading-snug bg-emerald-50/50 p-2 rounded-lg border border-emerald-100 flex items-center justify-between font-mono">
+                  <div className="flex items-center gap-1">
+                    <Server className="w-3 h-3 text-emerald-600" />
+                    <span className="text-emerald-800 font-bold">Server Endpoint:</span>
+                    <span className="text-slate-600">VPS Localhost (http://localhost)</span>
+                  </div>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
+                    Reverse Proxy Active
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -5128,6 +5485,720 @@ export default function Fast5MBoard() {
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Switch to Real & Wipe Demo</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🌟 MOBILE-RESPONSIVE TOP-CORNER NAVIGATION SIDE DRAWER */}
+      {/* ========================================================================= */}
+      {isMobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden text-left font-sans animate-fade-in">
+          {/* Backdrop Blur Overlay */}
+          <div
+            onClick={() => setIsMobileDrawerOpen(false)}
+            className="fixed inset-0 bg-black/75 backdrop-blur-sm transition-opacity duration-300"
+          />
+
+          {/* Drawer Container (Sliding in from the right top corner) */}
+          <div className="fixed top-0 right-0 h-full w-[88vw] max-w-[380px] bg-[#161b22] border-l border-[#30363d] shadow-2xl flex flex-col z-50 overflow-hidden">
+            {/* 1. Drawer Header */}
+            <div className="p-4 border-b border-[#30363d] flex items-center justify-between bg-[#0d1117]/80">
+              <div className="flex items-center gap-2.5">
+                <BrandLogo size={28} glow={true} />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black bg-gradient-to-r from-blue-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent">
+                      Jonanda Bot
+                    </span>
+                    <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold border ${
+                      isRealAccount 
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                    }`}>
+                      {isRealAccount ? 'Real Mode' : 'Demo Mode'}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    Shalom Bin Rasheed • 5M Engine
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileDrawerOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-[#21262d] text-slate-400 hover:text-white transition-colors cursor-pointer"
+                title="Close Drawer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Drawer Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+              
+              {/* 2. Rabby Wallet & Web3 Sync Hub Spotlight Card */}
+              <div className="bg-gradient-to-br from-[#1b1938] via-[#161b22] to-[#121b2d] border border-purple-500/40 rounded-2xl p-3.5 space-y-3 shadow-lg relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🐰</span>
+                    <div>
+                      <div className="font-black text-white text-xs flex items-center gap-1.5">
+                        <span>Rabby Wallet</span>
+                        {walletInfo?.is_connected ? (
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        ) : (
+                          <span className="w-2 h-2 rounded-full bg-slate-500" />
+                        )}
+                      </div>
+                      <div className="text-[10px] text-purple-300/80 font-mono">
+                        Polygon PoS Sync (137)
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileDrawerOpen(false);
+                      setIsRabbyModalOpen(true);
+                    }}
+                    className="px-2 py-1 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Sync Hub</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {/* Connected Rabby Details */}
+                {walletInfo?.is_connected ? (
+                  <div className="space-y-2 pt-1 font-mono text-[11px]">
+                    <div className="flex items-center justify-between bg-[#0d1117] p-2 rounded-xl border border-[#30363d]">
+                      <span className="text-slate-400 text-[10px]">Address:</span>
+                      <div className="flex items-center gap-1 text-slate-200">
+                        <span>{walletInfo.masked_address || displayAddress}</span>
+                        <button
+                          type="button"
+                          onClick={() => copyAddressToClipboard(walletInfo.wallet_address || userProfile?.wallet_address || '')}
+                          className="p-1 hover:text-white"
+                          title="Copy address"
+                        >
+                          <Copy className="w-3 h-3 text-slate-400" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5 text-center">
+                      <div className="bg-[#0d1117] p-2 rounded-xl border border-[#30363d]">
+                        <span className="text-[9px] text-slate-400 block">Total USDC</span>
+                        <span className="font-bold text-emerald-400 text-xs">${(walletInfo?.usdc_total ?? 0).toFixed(2)}</span>
+                      </div>
+                      <div className="bg-[#0d1117] p-2 rounded-xl border border-[#30363d]">
+                        <span className="text-[9px] text-slate-400 block">POL Gas</span>
+                        <span className="font-bold text-purple-300 text-xs">{(walletInfo?.pol_gas_balance ?? 0).toFixed(3)} POL</span>
+                      </div>
+                    </div>
+
+                    {/* Quick Sync & Action Buttons */}
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleSyncRabbyWallet}
+                        disabled={rabbySyncing}
+                        className="py-1.5 px-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-xl text-slate-200 text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 text-sky-400 ${rabbySyncing ? 'animate-spin' : ''}`} />
+                        <span>{rabbySyncing ? 'Syncing...' : 'Sync Balances'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMobileDrawerOpen(false);
+                          setIsRabbyModalOpen(true);
+                        }}
+                        className="py-1.5 px-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs"
+                      >
+                        <Coins className="w-3 h-3" />
+                        <span>Deposit / Withdraw</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-1">
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Connect Rabby Wallet to seamlessly sync Polygon USDC deposits and withdrawals into your live trading vault.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMobileDrawerOpen(false);
+                          connectRabbyWallet();
+                        }}
+                        disabled={connectingBrowserWallet}
+                        className="flex-1 py-2 px-3 bg-gradient-to-r from-purple-600 via-indigo-600 to-sky-600 hover:from-purple-500 hover:to-sky-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-md shadow-purple-900/30"
+                      >
+                        <span>🐰</span>
+                        <span>{connectingBrowserWallet ? 'Connecting...' : 'Connect Rabby'}</span>
+                      </button>
+                      <a
+                        href="https://rabby.io"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 hover:text-white rounded-xl border border-[#30363d] transition-colors"
+                        title="Download Rabby Wallet Extension"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Navigation Links */}
+              <div className="space-y-1">
+                <div className="text-[10px] font-mono uppercase text-slate-500 px-2 pb-1 font-bold">
+                  Navigation
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('board');
+                    setIsMobileDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold transition-all cursor-pointer ${
+                    activeTab === 'board'
+                      ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
+                      : 'text-slate-300 hover:bg-[#21262d] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Gauge className="w-4 h-4 text-blue-400" />
+                    <span>Dashboard</span>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('board');
+                    setIsMobileDrawerOpen(false);
+                    setTimeout(() => {
+                      const el = document.getElementById('fast5m-markets-grid');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }, 100);
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-300 hover:bg-[#21262d] hover:text-white font-bold transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Layers className="w-4 h-4 text-emerald-400" />
+                    <span>Markets Grid (7 Assets)</span>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('scoring');
+                    setIsMobileDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold transition-all cursor-pointer ${
+                    activeTab === 'scoring'
+                      ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
+                      : 'text-slate-300 hover:bg-[#21262d] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Radio className="w-4 h-4 text-amber-400" />
+                    <span>Signals & Quantitative Breakdown</span>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('settings');
+                      setIsMobileDrawerOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold transition-all cursor-pointer ${
+                      activeTab === 'settings'
+                        ? 'bg-purple-600/20 text-purple-300 border border-purple-500/30'
+                        : 'text-slate-300 hover:bg-[#21262d] hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Settings className="w-4 h-4 text-purple-400" />
+                      <span>Settings & Indicator Weights</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('trades');
+                    setIsMobileDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold transition-all cursor-pointer ${
+                    activeTab === 'trades'
+                      ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
+                      : 'text-slate-300 hover:bg-[#21262d] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <BookmarkCheck className="w-4 h-4 text-sky-400" />
+                    <span>Trade History</span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded-full bg-[#21262d] text-slate-300 text-[10px] font-mono">
+                    {trades.length}
+                  </span>
+                </button>
+              </div>
+
+              {/* 4. Quick Actions */}
+              <div className="space-y-2 pt-2 border-t border-[#30363d]">
+                <div className="text-[10px] font-mono uppercase text-slate-500 px-2 font-bold">
+                  Quick Actions
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Deposit / Withdraw */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileDrawerOpen(false);
+                      setVaultTab('deposit');
+                      setVaultModalOpen(true);
+                    }}
+                    className="p-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    <ArrowDownToLine className="w-3.5 h-3.5" />
+                    <span>Vault Deposit</span>
+                  </button>
+
+                  {/* Rabby Sync Hub */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileDrawerOpen(false);
+                      setIsRabbyModalOpen(true);
+                    }}
+                    className="p-2.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <span>🐰</span>
+                    <span>Rabby Hub</span>
+                  </button>
+                </div>
+
+                {/* Emergency Stop / Resume */}
+                {isAdmin && (
+                  board?.auto_trading_active ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileDrawerOpen(false);
+                        setIsEmergencyStopModalOpen(true);
+                      }}
+                      className="w-full p-2.5 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse"
+                    >
+                      <AlertTriangle className="w-4 h-4 text-rose-400" />
+                      <span>Emergency Stop Auto-Trading</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileDrawerOpen(false);
+                        handleEmergencyStart();
+                      }}
+                      className="w-full p-2.5 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Play className="w-4 h-4 text-emerald-400" />
+                      <span>Resume Auto-Trading Engine</span>
+                    </button>
+                  )
+                )}
+
+                {/* Reset Demo History */}
+                {accountMode === 'demo' && !isRealAccount && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileDrawerOpen(false);
+                      setIsDemoResetModalOpen(true);
+                    }}
+                    className="w-full p-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Demo Account ($300 Balance)</span>
+                  </button>
+                )}
+              </div>
+
+              {/* 5. Telemetry & Engine Status */}
+              <div className="bg-[#0d1117] rounded-xl p-3 border border-[#30363d] space-y-1.5 font-mono text-[11px]">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span>Engine Status:</span>
+                  <span className={`font-bold flex items-center gap-1 ${board?.auto_trading_active ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <span className={`w-2 h-2 rounded-full ${board?.auto_trading_active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                    {board?.auto_trading_active ? 'Armed & Trading' : 'Paused'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-slate-400">
+                  <span>Strike Countdown:</span>
+                  <span className="text-white font-bold">{board?.epoch_remaining_sec ?? 0}s remaining</span>
+                </div>
+                <div className="flex items-center justify-between text-slate-400">
+                  <span>Open Trades:</span>
+                  <span className="text-white font-bold">{trades.filter(t => t.status === 'OPEN').length} active</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 6. Session Footer */}
+            <div className="p-4 border-t border-[#30363d] bg-[#0d1117]/80 flex items-center justify-between gap-2">
+              {(isRealAccount || walletInfo?.is_connected) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileDrawerOpen(false);
+                    handleDisconnectWallet();
+                  }}
+                  className="flex-1 py-2 px-3 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Unlink className="w-3.5 h-3.5" />
+                  <span>Disconnect</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileDrawerOpen(false);
+                  setIsLogoutModalOpen(true);
+                }}
+                className="flex-1 py-2 px-3 bg-[#21262d] hover:bg-rose-950/40 border border-[#30363d] hover:border-rose-500/40 text-slate-300 hover:text-rose-300 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log Out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🐰 RABBY WALLET SPECIFIC SYNC & DEPOSIT / WITHDRAWAL MODAL */}
+      {/* ========================================================================= */}
+      {isRabbyModalOpen && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setIsRabbyModalOpen(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in text-left font-sans"
+        >
+          <div className="bg-[#161b22] border border-purple-500/40 rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl shadow-purple-950/40 space-y-4 relative text-slate-100 max-h-[92vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-[#30363d]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-500/20 via-indigo-500/20 to-sky-500/20 border border-purple-500/30 flex items-center justify-center text-xl shadow-xs">
+                  🐰
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white flex items-center gap-2">
+                    <span>Rabby Wallet Sync Hub</span>
+                    <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
+                      Polygon (137)
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Live Web3 deposit & withdrawal synchronization for Fast5M engine
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRabbyModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-[#21262d] text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error or Success alerts */}
+            {rabbySyncError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span className="flex-1">{rabbySyncError}</span>
+              </div>
+            )}
+            {rabbySyncMsg && (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                <span className="flex-1">{rabbySyncMsg}</span>
+              </div>
+            )}
+
+            {/* Rabby Status & On-Chain Polygon Balances */}
+            <div className="bg-[#0d1117] border border-[#30363d] rounded-2xl p-4 space-y-3 font-mono text-xs">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-400 text-[11px]">Rabby Address:</span>
+                  <span className="font-bold text-white text-xs">
+                    {walletInfo?.wallet_address ? `${walletInfo.wallet_address.slice(0, 6)}...${walletInfo.wallet_address.slice(-4)}` : (walletAddressInput || 'Not Connected')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSyncRabbyWallet}
+                    disabled={rabbySyncing}
+                    className="px-2.5 py-1 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-sky-400 hover:text-sky-300 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${rabbySyncing ? 'animate-spin' : ''}`} />
+                    <span>{rabbySyncing ? 'Syncing...' : 'Sync On-Chain'}</span>
+                  </button>
+                  {!walletInfo?.is_connected && (
+                    <button
+                      type="button"
+                      onClick={connectRabbyWallet}
+                      disabled={connectingBrowserWallet}
+                      className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all"
+                    >
+                      <span>Connect</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Balances Grid */}
+              <div className="grid grid-cols-3 gap-2 text-center pt-1">
+                <div className="bg-[#161b22] p-2.5 rounded-xl border border-[#30363d]">
+                  <span className="text-[10px] text-slate-400 block mb-0.5">Total USDC</span>
+                  <span className="font-black text-emerald-400 text-sm">
+                    ${(walletInfo?.usdc_total ?? 0).toFixed(2)}
+                  </span>
+                </div>
+                <div className="bg-[#161b22] p-2.5 rounded-xl border border-[#30363d]">
+                  <span className="text-[10px] text-slate-400 block mb-0.5">Native USDC</span>
+                  <span className="font-bold text-sky-400 text-xs">
+                    ${(walletInfo?.usdc_native ?? 0).toFixed(2)}
+                  </span>
+                </div>
+                <div className="bg-[#161b22] p-2.5 rounded-xl border border-[#30363d]">
+                  <span className="text-[10px] text-slate-400 block mb-0.5">POL Gas</span>
+                  <span className="font-bold text-purple-300 text-xs">
+                    {(walletInfo?.pol_gas_balance ?? 0).toFixed(3)} POL
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Deposit & Withdrawal Sync Action Tabs */}
+            <div className="space-y-4">
+              <div className="flex rounded-xl bg-[#0d1117] p-1 border border-[#30363d]">
+                <button
+                  type="button"
+                  onClick={() => setVaultTab('deposit')}
+                  className={`flex-1 py-2 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    vaultTab === 'deposit'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <ArrowDownToLine className="w-3.5 h-3.5" />
+                  <span>Sync Deposit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVaultTab('withdraw')}
+                  className={`flex-1 py-2 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    vaultTab === 'withdraw'
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <ArrowUpFromLine className="w-3.5 h-3.5" />
+                  <span>Sync Withdrawal</span>
+                </button>
+              </div>
+
+              {/* Deposit Section */}
+              {vaultTab === 'deposit' && (
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <span className="text-slate-300 font-bold">Deposit Amount (USDC):</span>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        Rabby Balance: <strong className="text-emerald-400">${(walletInfo?.usdc_total ?? 0).toFixed(2)}</strong>
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="e.g. 50"
+                        value={rabbyDepositAmount}
+                        onChange={(e) => setRabbyDepositAmount(e.target.value)}
+                        className="w-full bg-[#0d1117] border border-[#30363d] focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono outline-none"
+                      />
+                      <span className="absolute right-3.5 top-2.5 text-xs text-slate-400 font-mono">USDC</span>
+                    </div>
+                  </div>
+
+                  {/* Preset quick buttons */}
+                  <div className="flex items-center gap-2">
+                    {[10, 25, 50, 100].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setRabbyDepositAmount(String(preset))}
+                        className="flex-1 py-1 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] text-slate-300 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer"
+                      >
+                        ${preset}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setRabbyDepositAmount(String(Math.floor(walletInfo?.usdc_total ?? 100)))}
+                      className="flex-1 py-1 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer"
+                    >
+                      MAX
+                    </button>
+                  </div>
+
+                  {/* Deposit Mode Selector */}
+                  <div className="bg-[#0d1117] p-2.5 rounded-xl border border-[#30363d] space-y-2">
+                    <div className="text-[11px] text-slate-400 font-bold">Sync Mode:</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setRabbyDepositMode('instant')}
+                        className={`p-2 rounded-lg border text-left cursor-pointer transition-all ${
+                          rabbyDepositMode === 'instant'
+                            ? 'bg-emerald-950/40 border-emerald-500/50 text-white'
+                            : 'bg-[#161b22] border-[#30363d] text-slate-400'
+                        }`}
+                      >
+                        <div className="font-bold text-[11px] text-emerald-300">⚡ Instant Vault Sync</div>
+                        <div className="text-[9px] text-slate-400 mt-0.5">Allocates funds from verified Rabby balance</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRabbyDepositMode('onchain')}
+                        className={`p-2 rounded-lg border text-left cursor-pointer transition-all ${
+                          rabbyDepositMode === 'onchain'
+                            ? 'bg-purple-950/40 border-purple-500/50 text-white'
+                            : 'bg-[#161b22] border-[#30363d] text-slate-400'
+                        }`}
+                      >
+                        <div className="font-bold text-[11px] text-purple-300">🔗 On-Chain Transfer</div>
+                        <div className="text-[9px] text-slate-400 mt-0.5">Sends ERC20 transfer via Rabby popup</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRabbyDepositSync(parseFloat(rabbyDepositAmount) || 0, rabbyDepositMode === 'onchain')}
+                    disabled={rabbySyncing || !parseFloat(rabbyDepositAmount)}
+                    className="w-full py-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-900/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowDownToLine className="w-4 h-4" />
+                    <span>
+                      {rabbySyncing
+                        ? 'Syncing Deposit...'
+                        : `Deposit $${parseFloat(rabbyDepositAmount) || 0} to Trading Vault`}
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {/* Withdrawal Section */}
+              {vaultTab === 'withdraw' && (
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <span className="text-slate-300 font-bold">Withdraw Amount (USDC):</span>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        Safe Limit: <strong className="text-purple-300">${(vaultInfo?.available_to_withdraw ?? currentVaultAllocated).toFixed(2)}</strong>
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="e.g. 50"
+                        value={rabbyWithdrawAmount}
+                        onChange={(e) => setRabbyWithdrawAmount(e.target.value)}
+                        className="w-full bg-[#0d1117] border border-[#30363d] focus:border-purple-500 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono outline-none"
+                      />
+                      <span className="absolute right-3.5 top-2.5 text-xs text-slate-400 font-mono">USDC</span>
+                    </div>
+                  </div>
+
+                  {/* Active Margin Lock Info */}
+                  <div className="bg-[#0d1117] p-2.5 rounded-xl border border-[#30363d] space-y-1 font-mono text-[11px]">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>Vault Allocated Balance:</span>
+                      <span className="text-white font-bold">${currentVaultAllocated.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>Active Trade Margin Locked:</span>
+                      <span className="text-rose-400 font-bold">-${(vaultInfo?.active_margin ?? 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-[#30363d] pt-1 text-slate-300 font-bold">
+                      <span>Max Available to Withdraw:</span>
+                      <span className="text-emerald-400">${(vaultInfo?.available_to_withdraw ?? currentVaultAllocated).toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {/* Preset chips */}
+                  <div className="flex items-center gap-2">
+                    {[10, 25, 50].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setRabbyWithdrawAmount(String(preset))}
+                        className="flex-1 py-1 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] text-slate-300 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer"
+                      >
+                        ${preset}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setRabbyWithdrawAmount(String(Math.floor(vaultInfo?.available_to_withdraw ?? currentVaultAllocated)))}
+                      className="flex-1 py-1 bg-purple-950/40 hover:bg-purple-900/50 border border-purple-500/30 text-purple-300 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer"
+                    >
+                      MAX SAFE
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRabbyWithdrawSync(parseFloat(rabbyWithdrawAmount) || 0)}
+                    disabled={rabbySyncing || !parseFloat(rabbyWithdrawAmount)}
+                    className="w-full py-3 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-500 hover:to-indigo-500 active:scale-98 text-white font-black text-xs rounded-xl shadow-lg shadow-purple-900/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowUpFromLine className="w-4 h-4" />
+                    <span>
+                      {rabbySyncing
+                        ? 'Processing Withdrawal...'
+                        : `Withdraw $${parseFloat(rabbyWithdrawAmount) || 0} to Rabby Wallet`}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Note */}
+            <div className="pt-2 text-center text-[10px] text-slate-400 border-t border-[#30363d] flex items-center justify-center gap-1.5 font-mono">
+              <Shield className="w-3.5 h-3.5 text-purple-400" />
+              <span>Rabby Web3 Protocol • Non-custodial Polygon CTF Sync</span>
             </div>
           </div>
         </div>

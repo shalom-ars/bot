@@ -57,15 +57,15 @@ class Settings(BaseSettings):
     saas_secret_key: str = ""
 
     # Server & Network Configuration
-    server_host: str = "13.140.56.78"
+    server_host: str = "127.0.0.1"
     server_port: int = 8000
-    backend_url: str = "http://13.140.56.78:8000"
+    backend_url: str = "http://localhost"
 
     # Admin & Authentication Configuration
     admin_email: str = "shalombinrasheed@gmail.com"
     google_client_id: str = "249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com"
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
+    google_redirect_uri: str = "http://localhost/api/auth/google/callback"
 
     class Config:
         env_file = ".env"

@@ -51,7 +51,7 @@ DEFAULT_SETTINGS = {
     "grid_levels": "2",                   # Max simultaneous entries / grid levels per asset
     "grid_step_pct": "1.0",               # Minimum spacing between grid entries on the same asset
     "max_spread": "0.20",
-    "min_liquidity_usd": "100.0",
+    "min_liquidity_usd": "25.0",
     "min_time_remaining": "20.0",
     "max_time_remaining": "280.0",
     # Slippage Circuit Breaker on Exit
@@ -59,19 +59,19 @@ DEFAULT_SETTINGS = {
     "max_exit_slippage_pct": "1.0",       # Strict 1% slippage cap beyond SL trigger (prevents illiquid vacuum dumps)
     # Dedicated Per-Asset Spread & Liquidity Thresholds
     "max_spread_btc": "0.10",
-    "min_liquidity_usd_btc": "100.0",
+    "min_liquidity_usd_btc": "30.0",
     "max_spread_eth": "0.10",
-    "min_liquidity_usd_eth": "100.0",
+    "min_liquidity_usd_eth": "20.0",
     "max_spread_sol": "0.12",
-    "min_liquidity_usd_sol": "100.0",
+    "min_liquidity_usd_sol": "25.0",
     "max_spread_xrp": "0.12",
-    "min_liquidity_usd_xrp": "100.0",
+    "min_liquidity_usd_xrp": "20.0",
     "max_spread_doge": "0.12",
-    "min_liquidity_usd_doge": "100.0",
+    "min_liquidity_usd_doge": "20.0",
     "max_spread_bnb": "0.12",
-    "min_liquidity_usd_bnb": "100.0",
+    "min_liquidity_usd_bnb": "25.0",
     "max_spread_hype": "0.12",
-    "min_liquidity_usd_hype": "100.0",
+    "min_liquidity_usd_hype": "25.0",
     # Active Quantitative Filters & Indicator Weights
     "filter_delta_enabled": "true",
     "filter_delta_weight": "40.0",

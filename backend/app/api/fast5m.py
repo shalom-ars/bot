@@ -18,10 +18,15 @@ router = APIRouter()
 
 class VaultDepositRequest(BaseModel):
     amount: float
+    tx_hash: Optional[str] = None
+    wallet_type: Optional[str] = "rabby"
+    sync_onchain: bool = False
 
 
 class VaultWithdrawRequest(BaseModel):
     amount: float
+    wallet_type: Optional[str] = "rabby"
+    destination_address: Optional[str] = None
 
 
 
@@ -695,6 +700,75 @@ def refresh_fast5m_wallet_balances():
     }
 
 
+
+class RabbySyncRequest(BaseModel):
+    address: Optional[str] = None
+    sync_vault: bool = True
+    account_mode: Optional[str] = "live"
+
+
+@router.post("/wallet/sync-rabby")
+def sync_rabby_wallet(
+    req: RabbySyncRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Specifically synchronizes Rabby Web3 Wallet:
+    1. Refreshes on-chain Polygon USDC (Native & Bridged) + POL gas balances via RPC.
+    2. Syncs user vault balance state with the Rabby wallet.
+    3. Returns full synchronized status with Rabby metadata.
+    """
+    from app.fast5m.wallet import wallet_manager
+    if req.address:
+        clean_addr = req.address.strip().lower()
+        if not wallet_manager.is_connected or wallet_manager.wallet_address.lower() != clean_addr:
+            wallet_manager.connect(address=clean_addr)
+        if current_user:
+            current_user.wallet_address = clean_addr
+
+    balances = wallet_manager.refresh_balances()
+
+    vault_data = None
+    if current_user:
+        vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
+        if not vault:
+            is_live = (req.account_mode == "live" or current_user.auth_provider == "wallet")
+            vault = Fast5MUserVault(
+                user_id=current_user.id,
+                account_mode="live" if is_live else "demo",
+                wallet_address=req.address or current_user.wallet_address,
+                allocated_balance=round(wallet_manager.total_usdc_balance, 2) if is_live else 300.0,
+                initial_deposit=round(wallet_manager.total_usdc_balance, 2) if is_live else 300.0,
+                total_deposited=round(wallet_manager.total_usdc_balance, 2) if is_live else 300.0,
+                total_withdrawn=0.0
+            )
+            db.add(vault)
+            db.commit()
+            db.refresh(vault)
+        elif req.sync_vault and vault.account_mode == "live":
+            # If the user has funds on Rabby, update the vault's wallet address and commit
+            if req.address:
+                vault.wallet_address = req.address.strip().lower()
+            db.commit()
+
+        vault_data = {
+            "allocated_balance": vault.allocated_balance,
+            "account_mode": vault.account_mode,
+            "wallet_address": vault.wallet_address
+        }
+
+    return {
+        "status": "success",
+        "synced": True,
+        "wallet_type": "rabby",
+        "wallet_address": wallet_manager.wallet_address,
+        "balances": balances,
+        "vault": vault_data,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
 # ==========================================
 # ISOLATED TRADING VAULT & CAPITAL ALLOCATION
 # ==========================================
@@ -814,7 +888,9 @@ def deposit_to_vault(
     return {
         "success": True,
         "message": f"Successfully allocated ${req.amount:.2f} to Fast5M Trading Vault.",
-        "allocated_balance": new_total
+        "allocated_balance": new_total,
+        "wallet_type": req.wallet_type or "rabby",
+        "tx_hash": req.tx_hash
     }
 
 
@@ -873,7 +949,9 @@ def withdraw_from_vault(
         "success": True,
         "message": f"Successfully de-allocated ${req.amount:.2f} back to wallet reserve.",
         "allocated_balance": new_total,
-        "available_to_withdraw": round(max(0.0, new_total - active_margin), 2)
+        "available_to_withdraw": round(max(0.0, new_total - active_margin), 2),
+        "wallet_type": req.wallet_type or "rabby",
+        "destination_address": req.destination_address or (vault.wallet_address if vault else getattr(wallet_manager, "wallet_address", None))
     }
 
 
