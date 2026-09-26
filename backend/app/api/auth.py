@@ -25,11 +25,13 @@ class UserCreate(BaseModel):
 
 class WalletAuth(BaseModel):
     wallet_address: str
+    wallet_type: Optional[str] = "rabby"
     signature: Optional[str] = None
     message: Optional[str] = None
 
 class LinkWalletRequest(BaseModel):
     wallet_address: str
+    wallet_type: Optional[str] = "rabby"
     signature: Optional[str] = None
     message: Optional[str] = None
 
@@ -200,6 +202,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @router.post("/wallet", response_model=Token)
 def wallet_auth(auth_in: WalletAuth, db: Session = Depends(get_db)):
+    wallet_type = (auth_in.wallet_type or "rabby").strip().lower()
+    if wallet_type != "rabby":
+        raise HTTPException(status_code=400, detail="Only Rabby Wallet is supported as the official Web3 provider.")
+
     clean_addr = auth_in.wallet_address.strip().lower()
     if not clean_addr.startswith("0x") or len(clean_addr) < 10:
         raise HTTPException(status_code=400, detail="Invalid wallet address format")
@@ -208,6 +214,13 @@ def wallet_auth(auth_in: WalletAuth, db: Session = Depends(get_db)):
     if not user:
         # Check by wallet address if already registered
         user = db.query(User).filter(User.wallet_address == clean_addr).first()
+
+    if user and user.wallet_address and user.wallet_address.lower() != clean_addr:
+        if getattr(user, "role", "USER") != "SUPER_ADMIN":
+            raise HTTPException(
+                status_code=400,
+                detail=f"User #{user.id} is strictly bound to Rabby address {user.wallet_address[:6]}...{user.wallet_address[-4:]}. Cannot link a different address."
+            )
         
     if not user:
         user = User(
@@ -657,14 +670,25 @@ def link_wallet(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Link user's Web3 wallet address to their record. Real mode cannot be selected unless a valid address is attached."""
+    """Link user's Rabby Web3 wallet address to their record. Real mode cannot be selected unless a valid address is attached."""
+    wallet_type = (req.wallet_type or "rabby").strip().lower()
+    if wallet_type != "rabby":
+        raise HTTPException(status_code=400, detail="Only Rabby Wallet is supported as the official Web3 provider.")
+
     clean_addr = req.wallet_address.strip().lower()
     if not clean_addr.startswith("0x") or len(clean_addr) != 42:
         raise HTTPException(
             status_code=400,
-            detail="Invalid Polygon / Web3 public address format (must be 0x followed by 40 hex characters)"
+            detail="Invalid Polygon / Rabby public address format (must be 0x followed by 40 hex characters)"
         )
     
+    if current_user.wallet_address and current_user.wallet_address.lower() != clean_addr:
+        if getattr(current_user, "role", "USER") != "SUPER_ADMIN":
+            raise HTTPException(
+                status_code=400,
+                detail=f"User #{current_user.id} is strictly locked to Rabby address {current_user.wallet_address[:6]}...{current_user.wallet_address[-4:]}. Address change not allowed."
+            )
+
     current_user.wallet_address = clean_addr
     vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
     if vault:

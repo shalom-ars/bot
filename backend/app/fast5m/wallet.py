@@ -44,6 +44,7 @@ class Fast5MWalletManager:
         self.usdc_native_balance: float = 0.0
         self.usdc_bridged_balance: float = 0.0
         self.pol_balance: float = 0.0
+        self.wallet_type: str = "rabby"  # Exclusively Rabby Wallet
         self.last_balance_sync: Optional[datetime] = None
         self.is_connected: bool = False
         self.clob_api_status: str = "IDLE"  # IDLE, ONLINE, ERROR
@@ -339,6 +340,8 @@ class Fast5MWalletManager:
             "last_balance_sync": self.last_balance_sync.isoformat() if self.last_balance_sync else None,
             "can_trade_live": bool(self.is_connected and self.has_signer and self.account_mode == "live"),
             "polymarket_ctf_approved": True,  # Checked during live trade or mock pass
+            "wallet_type": "rabby",
+            "is_rabby": True,
         }
 
 # Global Singleton Instance

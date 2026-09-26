@@ -74,7 +74,7 @@ export default function LandingPage() {
           <div className="grid md:grid-cols-3 gap-8">
             {[
               { icon: Zap, title: "Sub-Second Pyth & Chainlink", desc: "Real-time oracle telemetry tracking spot price deltas, velocity, and epoch boundaries with zero lag." },
-              { icon: Wallet, title: "Web3 Multi-Wallet Support", desc: "Native integration for MetaMask, Coinbase Wallet, Phantom (EVM), Rabby, and WalletConnect with automatic Polygon switching." },
+              { icon: Wallet, title: "Official Rabby Wallet Integration", desc: "Native non-custodial Web3 execution via Rabby Wallet with automatic Polygon Mainnet network switching." },
               { icon: Lock, title: "Isolated Trading Vault", desc: "Allocate exact trading capital ($50, $100, $250, custom). Funds locked in open trades cannot be withdrawn until closed." },
               { icon: Activity, title: "Automated #1 Ranked Execution", desc: "Dynamically identifies and executes the single strongest quantitative opportunity across 7 assets concurrently." },
               { icon: Shield, title: "Hard Stop-Loss & Anti-Reversal", desc: "Strict max loss limit enforcement combined with aggressive trailing locks that bank profit on momentum turn." },

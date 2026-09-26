@@ -7,7 +7,7 @@ import {
   Timer, DollarSign, Activity, Lock, TrendingUp, TrendingDown,
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
   BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
-  Eye, EyeOff, Key, AlertTriangle, AlertCircle, Check, Copy, Link2, Unlink, X,
+  Eye, EyeOff, Key, AlertTriangle, AlertCircle, Check, Copy, ArrowRight, Unlink, X,
   LogOut, ArrowDownToLine, ArrowUpFromLine, Menu, ChevronRight, ExternalLink, Coins
 } from 'lucide-react';
 import AdminConsoleTab from '../components/AdminConsoleTab';
@@ -299,12 +299,19 @@ export default function Fast5MBoard() {
 
   const handleVaultDeposit = async (amt: number) => {
     if (amt <= 0) return;
+    if (isRealAccount && (!walletInfo?.is_connected || !walletInfo?.wallet_address)) {
+      const ok = await connectRabbyWallet();
+      if (!ok) {
+        setVaultError('Rabby Wallet connection required for real account deposit.');
+        return;
+      }
+    }
     setVaultLoading(true);
     setVaultError('');
     setVaultMsg('');
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.post('/api/fast5m/vault/deposit', { amount: amt }, {
+      const res = await axios.post('/api/fast5m/vault/deposit', { amount: amt, wallet_type: 'rabby' }, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       setVaultMsg(res.data?.message || `Successfully allocated $${amt.toFixed(2)} to trading vault.`);
@@ -319,12 +326,19 @@ export default function Fast5MBoard() {
 
   const handleVaultWithdraw = async (amt: number) => {
     if (amt <= 0) return;
+    if (isRealAccount && (!walletInfo?.is_connected || !walletInfo?.wallet_address)) {
+      const ok = await connectRabbyWallet();
+      if (!ok) {
+        setVaultError('Rabby Wallet connection required for real account withdrawal.');
+        return;
+      }
+    }
     setVaultLoading(true);
     setVaultError('');
     setVaultMsg('');
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.post('/api/fast5m/vault/withdraw', { amount: amt }, {
+      const res = await axios.post('/api/fast5m/vault/withdraw', { amount: amt, wallet_type: 'rabby' }, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       setVaultMsg(res.data?.message || `Successfully de-allocated $${amt.toFixed(2)} back to wallet reserve.`);
@@ -830,66 +844,6 @@ export default function Fast5MBoard() {
     setTimeout(() => setCopiedAddress(false), 2000);
   };
 
-  interface SupportedWallet {
-    id: string;
-    name: string;
-    icon: string;
-    description: string;
-    detected: boolean;
-    getProvider: () => any;
-  }
-
-  const getSupportedWallets = (): SupportedWallet[] => {
-    if (typeof window === 'undefined') return [];
-    const eth = (window as any).ethereum;
-    const phantom = (window as any).phantom?.ethereum;
-    const coinbase = (window as any).coinbaseWalletExtension;
-    const rabby = (window as any).rabby || (eth && eth.isRabby);
-
-    return [
-      {
-        id: 'metamask',
-        name: 'MetaMask',
-        icon: '🦊',
-        description: 'Popular Polygon & Ethereum browser extension',
-        detected: Boolean(eth && eth.isMetaMask && !eth.isRabby),
-        getProvider: () => eth,
-      },
-      {
-        id: 'coinbase',
-        name: 'Coinbase Wallet',
-        icon: '🔵',
-        description: 'Coinbase Wallet extension & mobile dApp',
-        detected: Boolean(coinbase || (eth && eth.isCoinbaseWallet)),
-        getProvider: () => coinbase || eth,
-      },
-      {
-        id: 'phantom',
-        name: 'Phantom (EVM)',
-        icon: '👻',
-        description: 'Multi-chain Phantom wallet in EVM mode',
-        detected: Boolean(phantom),
-        getProvider: () => phantom || eth,
-      },
-      {
-        id: 'rabby',
-        name: 'Rabby Wallet',
-        icon: '🐰',
-        description: 'Game-changing Web3 wallet for DeFi & Polygon',
-        detected: Boolean(rabby),
-        getProvider: () => (window as any).rabby || eth,
-      },
-      {
-        id: 'walletconnect',
-        name: 'WalletConnect',
-        icon: '🌐',
-        description: 'Universal Web3 provider & mobile wallet connect',
-        detected: Boolean(eth),
-        getProvider: () => eth,
-      },
-    ];
-  };
-
   const isRabbyAvailable = (): boolean => {
     if (typeof window === 'undefined') return false;
     const eth = (window as any).ethereum;
@@ -905,18 +859,18 @@ export default function Fast5MBoard() {
     const eth = (window as any).ethereum;
     if ((window as any).rabby) return (window as any).rabby;
     if (eth && eth.isRabby) return eth;
-    if (eth && eth.providers) {
+    if (eth && eth.providers && Array.isArray(eth.providers)) {
       const found = eth.providers.find((p: any) => p.isRabby);
       if (found) return found;
     }
-    return eth || null;
+    return null;
   };
 
-  const connectRabbyWallet = async () => {
+  const connectRabbyWallet = async (): Promise<boolean> => {
     const provider = getRabbyProvider();
     if (!provider || !isRabbyAvailable()) {
       setIsRabbyModalOpen(true);
-      return;
+      return false;
     }
     setConnectingBrowserWallet(true);
     setWalletError('');
@@ -967,12 +921,13 @@ export default function Fast5MBoard() {
       const res = await axios.post('/api/fast5m/wallet/connect', {
         address: addr,
         proxy_address: proxyAddressInput.trim() || undefined,
+        wallet_type: 'rabby',
       }, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
 
       try {
-        await axios.post('/api/auth/link-wallet', { wallet_address: addr }, {
+        await axios.post('/api/auth/link-wallet', { wallet_address: addr, wallet_type: 'rabby' }, {
           headers: token ? { Authorization: `Bearer ${token}` } : {}
         });
       } catch (linkErr) {
@@ -1025,6 +980,7 @@ export default function Fast5MBoard() {
       await fetchBoard();
       await fetchTrades(selectedTimeframe, 'live');
       showToast('🐰 Rabby Wallet connected & Polygon balance synced successfully!');
+      return true;
     } catch (err: any) {
       console.error('Rabby connect error:', err);
       if (err?.code === 4001 || err?.message?.includes('rejected') || err?.message?.includes('denied')) {
@@ -1032,6 +988,7 @@ export default function Fast5MBoard() {
       } else {
         setWalletError(err?.response?.data?.detail || err?.message || 'Failed to connect Rabby Wallet.');
       }
+      return false;
     } finally {
       setConnectingBrowserWallet(false);
     }
@@ -1074,6 +1031,14 @@ export default function Fast5MBoard() {
     if (!amount || amount <= 0) {
       setRabbySyncError('Please enter a deposit amount greater than $0.00.');
       return;
+    }
+    // Auto-connect Rabby if not connected yet
+    if (!walletInfo?.is_connected || !walletInfo?.wallet_address) {
+      const ok = await connectRabbyWallet();
+      if (!ok) {
+        setRabbySyncError('Please connect Rabby Wallet first to proceed with deposit.');
+        return;
+      }
     }
     setRabbySyncing(true);
     setRabbySyncError('');
@@ -1136,6 +1101,14 @@ export default function Fast5MBoard() {
       setRabbySyncError('Please enter a withdrawal amount greater than $0.00.');
       return;
     }
+    // Auto-connect Rabby if not connected yet
+    if (!walletInfo?.is_connected || !walletInfo?.wallet_address) {
+      const ok = await connectRabbyWallet();
+      if (!ok) {
+        setRabbySyncError('Please connect Rabby Wallet first to proceed with withdrawal.');
+        return;
+      }
+    }
     setRabbySyncing(true);
     setRabbySyncError('');
     setRabbySyncMsg('');
@@ -1160,117 +1133,6 @@ export default function Fast5MBoard() {
       setRabbySyncError(err?.response?.data?.detail || err?.message || 'Failed to sync Rabby withdrawal.');
     } finally {
       setRabbySyncing(false);
-    }
-  };
-
-  const connectSpecificWallet = async (walletOpt: SupportedWallet) => {
-    setConnectingBrowserWallet(true);
-    setWalletError('');
-    setWalletMsg('');
-    const provider = walletOpt.getProvider();
-    if (!provider) {
-      setWalletError(`${walletOpt.name} not detected in your browser. Please install the ${walletOpt.name} extension or open inside its dApp browser.`);
-      setConnectingBrowserWallet(false);
-      return;
-    }
-
-    try {
-      setWalletMsg(`Connecting to ${walletOpt.name}... Please approve connection.`);
-      const accounts = await provider.request({ method: 'eth_requestAccounts' });
-      if (!accounts || accounts.length === 0) {
-        throw new Error(`No account selected in ${walletOpt.name}.`);
-      }
-      const addr = accounts[0].toLowerCase();
-      setWalletAddressInput(addr);
-
-      // Ensure Polygon network (137 = 0x89)
-      try {
-        const chainId = await provider.request({ method: 'eth_chainId' });
-        if (chainId !== '0x89' && chainId !== '137' && parseInt(chainId, 16) !== 137) {
-          try {
-            await provider.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: '0x89' }],
-            });
-          } catch (switchError: any) {
-            if (switchError.code === 4902) {
-              await provider.request({
-                method: 'wallet_addEthereumChain',
-                params: [
-                  {
-                    chainId: '0x89',
-                    chainName: 'Polygon Mainnet',
-                    nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
-                    rpcUrls: ['https://1rpc.io/matic', 'https://polygon-rpc.com'],
-                    blockExplorerUrls: ['https://polygonscan.com/'],
-                  },
-                ],
-              });
-            }
-          }
-        }
-      } catch (chainErr) {
-        console.warn('Chain switch warning:', chainErr);
-      }
-
-      // Connect via backend API - connecting a Web3 wallet automatically switches to 'live' real mode
-      const token = localStorage.getItem('token');
-      const res = await axios.post('/api/fast5m/wallet/connect', {
-        address: addr,
-        proxy_address: proxyAddressInput.trim() || undefined,
-      }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-
-      // Link wallet to user record on backend
-      try {
-        await axios.post('/api/auth/link-wallet', { wallet_address: addr }, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
-      } catch (linkErr) {
-        console.debug('Link wallet note:', linkErr);
-      }
-
-      // Automatically arm REAL mode upon Web3 wallet connection
-      try {
-        await axios.post('/api/fast5m/wallet/mode', { mode: 'live' }, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
-      } catch (modeErr) {
-        console.debug('Mode set note:', modeErr);
-      }
-
-      if (res.data?.wallet) {
-        setWalletInfo({ ...res.data.wallet, account_mode: 'live', is_connected: true });
-        setAccountMode('live');
-        localStorage.setItem('account_mode', 'live');
-        localStorage.setItem('wallet_address', addr);
-        localStorage.removeItem('demo_access');
-        setWalletMsg(`Successfully linked ${walletOpt.name} (${addr.slice(0, 6)}...${addr.slice(-4)}) to Real Account!`);
-      }
-
-      await fetchUserProfile();
-      await fetchBoard();
-      await fetchTrades(selectedTimeframe, 'live');
-    } catch (e: any) {
-      console.error('Wallet connect error:', e);
-      if (e?.code === 4001 || e?.message?.includes('User rejected') || e?.message?.includes('denied')) {
-        setWalletError(`Connection request was rejected in ${walletOpt.name}.`);
-      } else {
-        setWalletError(e.response?.data?.detail || e.message || `Failed to connect ${walletOpt.name}.`);
-      }
-    } finally {
-      setConnectingBrowserWallet(false);
-    }
-  };
-
-  const connectBrowserWallet = async () => {
-    const wallets = getSupportedWallets();
-    const detected = wallets.filter(w => w.detected);
-    if (detected.length === 1) {
-      await connectSpecificWallet(detected[0]);
-    } else {
-      setWalletModalOpen(true);
     }
   };
 
@@ -4442,22 +4304,22 @@ export default function Fast5MBoard() {
             {/* TWO METHODS TO CONNECT WALLET */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-              {/* METHOD 1: CONNECT PERSONAL WEB3 WALLET (5 SUPPORTED OPTIONS) */}
+              {/* METHOD 1: CONNECT RABBY WALLET (SOLE & DEFAULT WEB3 PROVIDER) */}
               <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200/80 space-y-4 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="p-1.5 rounded-lg bg-indigo-100 text-indigo-700">
-                      <Link2 className="w-4 h-4" />
+                    <span className="p-1.5 rounded-lg bg-purple-100 text-purple-700 text-lg">
+                      🐰
                     </span>
-                    <h3 className="text-sm font-black text-slate-900">Method 1: Connect Supported Personal Wallet</h3>
+                    <h3 className="text-sm font-black text-slate-900">Method 1: Connect Rabby Wallet (Sole Web3 Provider)</h3>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Connect your personal Web3 wallet exclusively to the Real Account. Supported: MetaMask, Coinbase Wallet, Phantom, Rabby, or WalletConnect.
+                    Exclusively supported Web3 provider for sub-second Polygon Mainnet trading and Polymarket CLOB order routing.
                   </p>
 
                   <div className="my-3 bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">Connected Address:</span>
+                      <span className="text-slate-500">Connected Rabby Address:</span>
                       <div className="flex items-center gap-1 font-mono font-bold text-slate-900">
                         <span>{walletInfo?.masked_address || walletAddressInput || 'Not Connected'}</span>
                         {walletInfo?.wallet_address && (
@@ -4480,6 +4342,17 @@ export default function Fast5MBoard() {
                       </span>
                     </div>
 
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Provider Status:</span>
+                      <span className={`inline-flex items-center gap-1 font-bold font-mono text-[10px] px-2 py-0.5 rounded-full border ${
+                        isRabbyAvailable()
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                          : 'bg-amber-50 text-amber-700 border-amber-300'
+                      }`}>
+                        {isRabbyAvailable() ? '● Rabby Detected' : '● Extension Required'}
+                      </span>
+                    </div>
+
                     {copiedAddress && (
                       <div className="text-[10px] text-emerald-600 font-bold text-right">
                         ✓ Address copied to clipboard
@@ -4487,41 +4360,27 @@ export default function Fast5MBoard() {
                     )}
                   </div>
 
-                  {/* 5 Supported Wallets Grid */}
-                  <div className="space-y-1.5 pt-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                      Select Personal Wallet:
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {getSupportedWallets().map((w) => (
-                        <button
-                          key={w.id}
-                          type="button"
-                          onClick={() => connectSpecificWallet(w)}
-                          disabled={connectingBrowserWallet}
-                          className="p-2.5 bg-white hover:bg-indigo-50/70 border border-slate-200 hover:border-indigo-300 rounded-xl flex items-center justify-between text-left transition-all cursor-pointer group"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg shrink-0 group-hover:scale-110 transition-transform">{w.icon}</span>
-                            <div>
-                              <div className="text-xs font-black text-slate-800">{w.name}</div>
-                              <div className="text-[9px] text-slate-400 line-clamp-1">{w.description}</div>
-                            </div>
-                          </div>
-                          <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
-                            w.detected
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                              : 'bg-slate-100 text-slate-500 border-slate-200'
-                          }`}>
-                            {w.detected ? 'Ready' : 'Link'}
-                          </span>
-                        </button>
-                      ))}
+                  {/* Rabby Extension Notice or Action Button */}
+                  {!isRabbyAvailable() && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-800 text-xs flex items-center justify-between gap-2 mt-3">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Rabby Wallet extension required. Please install Rabby to continue.</span>
+                      </div>
+                      <a
+                        href="https://rabby.io"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-[11px] rounded-lg shadow-xs flex items-center gap-1 shrink-0"
+                      >
+                        <span>Install Rabby</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                {/* Disconnect Button if connected */}
+                {/* Disconnect / Connect Button */}
                 {walletInfo?.is_connected ? (
                   <button
                     type="button"
@@ -4529,17 +4388,27 @@ export default function Fast5MBoard() {
                     className="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs mt-3"
                   >
                     <Unlink className="w-4 h-4 text-rose-600" />
-                    <span>Disconnect Personal Wallet</span>
+                    <span>Disconnect Rabby Wallet</span>
                   </button>
                 ) : (
                   <button
                     type="button"
-                    onClick={connectBrowserWallet}
+                    onClick={connectRabbyWallet}
                     disabled={connectingBrowserWallet}
-                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2 mt-3"
+                    className="w-full py-2.5 px-4 bg-gradient-to-r from-purple-700 via-indigo-600 to-sky-600 hover:from-purple-600 hover:to-sky-500 text-white rounded-xl text-xs font-black shadow-md shadow-purple-500/20 cursor-pointer transition-all flex items-center justify-center gap-2 mt-3 disabled:opacity-50"
                   >
-                    <Wallet className="w-4 h-4" />
-                    <span>{connectingBrowserWallet ? 'Connecting Web3 Wallet...' : 'Connect Auto-Detected Wallet'}</span>
+                    {connectingBrowserWallet ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Awaiting Rabby Approval...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-base">🐰</span>
+                        <span>Connect Rabby Wallet</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 )}
               </div>
@@ -4763,36 +4632,71 @@ export default function Fast5MBoard() {
               </div>
             )}
 
-            {/* 5 Supported Personal Wallets Grid */}
+            {/* Rabby Wallet (Sole & Default Web3 Provider) */}
             <div className="space-y-2">
               <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
-                Link Supported Personal Wallet (Exclusively Real Account):
+                Official Web3 Provider (Exclusively Real Account):
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {getSupportedWallets().map((w) => (
-                  <button
-                    key={w.id}
-                    type="button"
-                    onClick={() => connectSpecificWallet(w)}
-                    disabled={connectingBrowserWallet}
-                    className="p-2.5 bg-slate-50 hover:bg-indigo-50/70 border border-slate-200 hover:border-indigo-300 rounded-xl flex items-center justify-between text-left transition-all cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-xl shrink-0 group-hover:scale-110 transition-transform">{w.icon}</span>
-                      <div>
-                        <div className="text-xs font-black text-slate-800">{w.name}</div>
-                        <div className="text-[10px] text-slate-400 line-clamp-1">{w.description}</div>
+              <div className="p-3.5 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-sky-50 rounded-2xl border border-purple-200/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl p-2 bg-white rounded-xl border border-purple-200 shadow-xs">🐰</span>
+                    <div>
+                      <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                        <span>Rabby Wallet</span>
+                        <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold">
+                          Default
+                        </span>
                       </div>
+                      <div className="text-[10px] text-slate-500">Sole supported Web3 wallet for Polygon Mainnet & Polymarket CLOB</div>
                     </div>
-                    <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
-                      w.detected
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                        : 'bg-slate-100 text-slate-500 border-slate-200'
-                    }`}>
-                      {w.detected ? 'Ready' : 'Link'}
-                    </span>
+                  </div>
+                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                    isRabbyAvailable()
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                      : 'bg-amber-50 text-amber-700 border-amber-300'
+                  }`}>
+                    {isRabbyAvailable() ? '● Extension Detected' : '● Extension Required'}
+                  </span>
+                </div>
+
+                {!isRabbyAvailable() ? (
+                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-800 text-[11px] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Rabby Wallet extension required. Please install Rabby to continue.</span>
+                    </div>
+                    <a
+                      href="https://rabby.io"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-[10px] rounded-lg shadow-xs flex items-center gap-1 shrink-0"
+                    >
+                      <span>Install Rabby</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={connectRabbyWallet}
+                    disabled={connectingBrowserWallet}
+                    className="w-full py-2.5 bg-gradient-to-r from-purple-700 via-indigo-600 to-sky-600 hover:from-purple-600 hover:to-sky-500 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {connectingBrowserWallet ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Awaiting Rabby Approval...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>🐰</span>
+                        <span>Connect Rabby Wallet</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </>
+                    )}
                   </button>
-                ))}
+                )}
               </div>
             </div>
 

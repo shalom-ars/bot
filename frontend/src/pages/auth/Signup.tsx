@@ -41,42 +41,87 @@ export default function Signup() {
     }
   };
 
-  // Web3 Wallet Connection with User Signature Approval
+  // Rabby Provider Detection
+  const getRabbyProvider = (): any => {
+    if (typeof window === 'undefined') return null;
+    const eth = (window as any).ethereum;
+    if ((window as any).rabby) return (window as any).rabby;
+    if (eth && eth.isRabby) return eth;
+    if (eth && eth.providers && Array.isArray(eth.providers)) {
+      const found = eth.providers.find((p: any) => p.isRabby);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  // Web3 Rabby Wallet Connection with User Signature Approval
   const handleConnectWallet = async () => {
     setError(null);
     setWalletStatus(null);
     
-    if (typeof window === 'undefined' || !(window as any).ethereum) {
+    const provider = getRabbyProvider();
+    if (!provider) {
       setIsWalletModalOpen(true);
       return;
     }
 
     setWalletLoading(true);
     try {
-      setWalletStatus('Please select and approve your wallet in MetaMask...');
-      const accounts = await (window as any).ethereum.request({ 
+      setWalletStatus('Please approve connection in Rabby Wallet...');
+      const accounts = await provider.request({ 
         method: 'eth_requestAccounts' 
       });
       
       if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts selected in MetaMask.');
+        throw new Error('No accounts selected in Rabby Wallet.');
       }
       
-      const walletAddress = accounts[0];
+      const walletAddress = accounts[0].toLowerCase();
 
-      setWalletStatus('Please sign and approve connection in MetaMask...');
+      // Enforce network validation for Polygon Mainnet (Chain ID 137 / 0x89) directly through Rabby
+      try {
+        const chainId = await provider.request({ method: 'eth_chainId' });
+        if (chainId !== '0x89' && chainId !== '137' && parseInt(chainId, 16) !== 137) {
+          try {
+            await provider.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x89' }],
+            });
+          } catch (switchError: any) {
+            if (switchError.code === 4902) {
+              await provider.request({
+                method: 'wallet_addEthereumChain',
+                params: [
+                  {
+                    chainId: '0x89',
+                    chainName: 'Polygon Mainnet',
+                    nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+                    rpcUrls: ['https://1rpc.io/matic', 'https://polygon-rpc.com'],
+                    blockExplorerUrls: ['https://polygonscan.com/'],
+                  },
+                ],
+              });
+            }
+          }
+        }
+      } catch (cErr) {
+        console.warn('Rabby network switch notice:', cErr);
+      }
+
+      setWalletStatus('Please sign verification message in Rabby Wallet...');
       const nonce = Math.floor(Math.random() * 1000000);
-      const challengeMessage = `Genanda Bot Real Money Trading Access\n\nPlease approve and sign to verify ownership of your wallet for live trading.\n\nWallet: ${walletAddress}\nNonce: ${nonce}\nTimestamp: ${new Date().toISOString()}`;
+      const challengeMessage = `Jonanda Bot Real Money Trading Access (Rabby Wallet)\n\nPlease approve and sign to verify ownership of your Rabby wallet for live trading.\n\nWallet: ${walletAddress}\nNonce: ${nonce}\nTimestamp: ${new Date().toISOString()}`;
       
-      const signature = await (window as any).ethereum.request({
+      const signature = await provider.request({
         method: 'personal_sign',
         params: [challengeMessage, walletAddress]
       });
 
-      setWalletStatus('Verifying approval and linking real funds...');
+      setWalletStatus('Verifying approval and setting up Polygon CLOB vault...');
       
       const res = await client.post('/auth/wallet', { 
         wallet_address: walletAddress,
+        wallet_type: 'rabby',
         signature: signature,
         message: challengeMessage
       });
@@ -84,18 +129,31 @@ export default function Signup() {
       setConnectedWallet(walletAddress);
       localStorage.setItem('token', res.data.access_token);
       localStorage.setItem('wallet_address', walletAddress);
-      localStorage.setItem('account_mode', 'real_money');
+      localStorage.setItem('wallet_type', 'rabby');
+      localStorage.setItem('account_mode', 'live');
+
+      // Initial Rabby balance sync
+      try {
+        await client.post('/fast5m/wallet/sync-rabby', {
+          wallet_address: walletAddress,
+          action: 'connect'
+        }, {
+          headers: { Authorization: `Bearer ${res.data.access_token}` }
+        });
+      } catch (sErr) {
+        console.debug('Rabby sync note', sErr);
+      }
 
       setWalletStatus('Approved! Entering trading terminal...');
       setTimeout(() => {
         navigate('/app');
-      }, 700);
+      }, 500);
     } catch (err: any) {
       console.error('Wallet connection error:', err);
       if (err?.code === 4001 || err?.message?.includes('User rejected') || err?.message?.includes('denied')) {
-        setError('Wallet connection or signature approval was rejected in MetaMask.');
+        setError('Wallet connection or signature approval was rejected in Rabby Wallet.');
       } else {
-        setError(err?.response?.data?.detail || err?.message || 'Failed to connect Web3 wallet. Please try again.');
+        setError(err?.response?.data?.detail || err?.message || 'Failed to connect Rabby Wallet. Please try again.');
       }
     } finally {
       setWalletLoading(false);
@@ -274,12 +332,12 @@ export default function Signup() {
           </div>
 
           <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/50 p-3 rounded-xl border border-slate-800">
-            ⚡ Connect your Web3 wallet (MetaMask, Rabby, or Polygon Signer) to trade with real USDC on Polymarket&apos;s Central Limit Order Book with sub-second automation.
+            ⚡ Connect your Rabby Wallet (Sole & Default Web3 Provider) to trade with real USDC on Polymarket&apos;s Central Limit Order Book with sub-second automation.
           </p>
 
           {walletStatus && (
-            <div className="bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 p-2.5 rounded-xl text-xs flex items-center gap-2 animate-pulse font-mono">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400 shrink-0" />
+            <div className="bg-purple-500/20 border border-purple-500/30 text-purple-300 p-2.5 rounded-xl text-xs flex items-center gap-2 animate-pulse font-mono">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400 shrink-0" />
               <span>{walletStatus}</span>
             </div>
           )}
@@ -288,25 +346,25 @@ export default function Signup() {
             onClick={handleConnectWallet}
             disabled={walletLoading}
             type="button"
-            className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
+            className="w-full bg-gradient-to-r from-purple-700 via-indigo-600 to-sky-600 hover:from-purple-600 hover:to-sky-500 text-white font-black text-sm py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
           >
             {walletLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Awaiting MetaMask Approval...</span>
+                <span>Awaiting Rabby Approval...</span>
               </>
             ) : (
               <>
-                <Wallet className="w-4 h-4" />
-                <span>Connect Wallet for Real Money</span>
+                <span className="text-lg">🐰</span>
+                <span>Connect Rabby Wallet for Real Money</span>
                 <ArrowRight className="w-4 h-4 ml-1" />
               </>
             )}
           </button>
 
           <p className="text-[10px] text-slate-400 text-center flex items-center justify-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Non-custodial: Requires MetaMask signature to verify wallet ownership</span>
+            <Shield className="w-3.5 h-3.5 text-purple-400" />
+            <span>Non-custodial: Requires Rabby Wallet signature to verify wallet ownership</span>
           </p>
         </div>
       )}
@@ -363,29 +421,29 @@ export default function Signup() {
         </Link>
       </div>
 
-      {/* MODAL: WEB3 WALLET NOT DETECTED */}
+      {/* MODAL: RABBY WALLET NOT DETECTED */}
       {isWalletModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border-2 border-indigo-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border-2 border-purple-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
             <button 
               onClick={() => setIsWalletModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl">
-                <Wallet className="w-6 h-6" />
+              <div className="p-2.5 bg-purple-500/20 text-purple-400 rounded-xl text-2xl flex items-center justify-center">
+                🐰
               </div>
               <div>
-                <h3 className="text-base font-black text-white">Web3 Wallet Required</h3>
-                <p className="text-xs text-slate-400">MetaMask or compatible extension not found</p>
+                <h3 className="text-base font-black text-white">Rabby Wallet Required</h3>
+                <p className="text-xs text-purple-300 font-mono">Sole & Default Web3 Provider</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              To trade with real money and connect live funds on Genanda Bot, please install MetaMask extension or open this website inside the MetaMask mobile app browser.
+              Rabby Wallet extension required. Please install Rabby to continue.
             </p>
 
             <div className="flex gap-2.5 pt-2">
@@ -397,12 +455,12 @@ export default function Signup() {
                 Close
               </button>
               <a
-                href="https://metamask.io/download/"
+                href="https://rabby.io"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-2/3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs py-2.5 rounded-xl transition-all shadow-md flex justify-center items-center gap-2"
+                className="w-2/3 bg-gradient-to-r from-purple-600 via-indigo-600 to-sky-600 hover:from-purple-500 hover:to-sky-500 text-white font-black text-xs py-2.5 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 cursor-pointer"
               >
-                <span>Install MetaMask</span>
+                <span>Download Rabby Wallet</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>

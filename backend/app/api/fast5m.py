@@ -102,6 +102,7 @@ class ManualOrderRequest(BaseModel):
 
 class WalletConnectRequest(BaseModel):
     address: str
+    wallet_type: Optional[str] = "rabby"
     private_key: Optional[str] = None
     proxy_address: Optional[str] = None
     api_key: Optional[str] = None
@@ -585,7 +586,11 @@ def connect_fast5m_wallet(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
-    """Connect a real Polygon wallet and configure signing credentials. Exclusively links to real account."""
+    """Connect a real Polygon Rabby wallet and configure signing credentials. Exclusively links to real account."""
+    wallet_type = (req.wallet_type or "rabby").strip().lower()
+    if wallet_type != "rabby":
+        raise HTTPException(status_code=400, detail="Only Rabby Wallet is supported as the official Web3 provider.")
+
     from app.fast5m.wallet import wallet_manager
     res = wallet_manager.connect(
         address=req.address,
@@ -603,6 +608,14 @@ def connect_fast5m_wallet(
     wallet_manager.set_mode("live")
 
     if current_user:
+        # Strict user-to-Rabby-address lock
+        if current_user.wallet_address and current_user.wallet_address.lower() != clean_addr:
+            # Allow admin to switch, but lock regular users
+            if getattr(current_user, "role", "USER") != "SUPER_ADMIN":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"User #{current_user.id} is strictly bound to Rabby address {current_user.wallet_address[:6]}...{current_user.wallet_address[-4:]}. Disconnect first to link a new address."
+                )
         current_user.wallet_address = clean_addr
         vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == current_user.id).first()
         if vault:
@@ -623,6 +636,7 @@ def connect_fast5m_wallet(
 
     res["wallet"] = wallet_manager.get_status()
     res["account_mode"] = "live"
+    res["wallet_type"] = "rabby"
     return res
 
 
