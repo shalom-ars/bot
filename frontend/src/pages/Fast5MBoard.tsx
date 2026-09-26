@@ -8,7 +8,7 @@ import {
   CheckCircle2, XCircle, Award, Wallet, Wifi, Server, Settings, Cpu, Gauge, Radio, Layers,
   BookmarkCheck, RotateCcw, Scale, SlidersHorizontal, Database,
   Eye, EyeOff, Key, AlertTriangle, AlertCircle, Check, Copy, ArrowRight, Unlink, X,
-  LogOut, ArrowDownToLine, ArrowUpFromLine, Menu, ChevronRight, ExternalLink, Coins
+  LogOut, ArrowDownToLine, ArrowUpFromLine, Menu, ChevronRight, ExternalLink
 } from 'lucide-react';
 import AdminConsoleTab from '../components/AdminConsoleTab';
 import BrandLogo from '../components/BrandLogo';
@@ -198,7 +198,6 @@ export default function Fast5MBoard() {
 
   // Real Wallet & Polymarket CLOB State
   const [walletInfo, setWalletInfo] = useState<any | null>(null);
-  const [walletModalOpen, setWalletModalOpen] = useState<boolean>(false);
   const [walletAddressInput, setWalletAddressInput] = useState<string>('');
   const [privateKeyInput, setPrivateKeyInput] = useState<string>('');
   const [proxyAddressInput, setProxyAddressInput] = useState<string>('');
@@ -216,19 +215,13 @@ export default function Fast5MBoard() {
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const [accountMode, setAccountMode] = useState<'demo' | 'live' | 'all'>('demo');
   const [vaultInfo, setVaultInfo] = useState<any | null>(null);
-  const [vaultModalOpen, setVaultModalOpen] = useState<boolean>(false);
   const [vaultTab, setVaultTab] = useState<'deposit' | 'withdraw'>('deposit');
-  const [vaultAmountInput, setVaultAmountInput] = useState<string>('');
-  const [vaultLoading, setVaultLoading] = useState<boolean>(false);
-  const [vaultMsg, setVaultMsg] = useState<string>('');
-  const [vaultError, setVaultError] = useState<string>('');
 
   // Confirmation Modals & Dialogs
   const [isEmergencyStopModalOpen, setIsEmergencyStopModalOpen] = useState<boolean>(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState<boolean>(false);
   const [tradeToExit, setTradeToExit] = useState<any | null>(null);
   const [exitingTrade, setExitingTrade] = useState<boolean>(false);
-  const [pendingTransfer, setPendingTransfer] = useState<{ type: 'deposit' | 'withdraw'; amount: number } | null>(null);
   const [isDemoResetModalOpen, setIsDemoResetModalOpen] = useState<boolean>(false);
   const [resettingDemo, setResettingDemo] = useState<boolean>(false);
   const [isSwitchToRealModalOpen, setIsSwitchToRealModalOpen] = useState<boolean>(false);
@@ -297,58 +290,18 @@ export default function Fast5MBoard() {
     }
   };
 
-  const handleVaultDeposit = async (amt: number) => {
-    if (amt <= 0) return;
-    if (isRealAccount && (!walletInfo?.is_connected || !walletInfo?.wallet_address)) {
-      const ok = await connectRabbyWallet();
-      if (!ok) {
-        setVaultError('Rabby Wallet connection required for real account deposit.');
-        return;
+  const handleOpenDepositWithdraw = async (tab: 'deposit' | 'withdraw' = 'deposit') => {
+    setVaultTab(tab);
+    if (!walletInfo?.is_connected || !walletInfo?.wallet_address) {
+      if (isRabbyAvailable()) {
+        try {
+          await connectRabbyWallet();
+        } catch (e) {
+          console.debug('Auto-connect on deposit/withdraw click:', e);
+        }
       }
     }
-    setVaultLoading(true);
-    setVaultError('');
-    setVaultMsg('');
-    try {
-      const token = localStorage.getItem('token');
-      const res = await axios.post('/api/fast5m/vault/deposit', { amount: amt, wallet_type: 'rabby' }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-      setVaultMsg(res.data?.message || `Successfully allocated $${amt.toFixed(2)} to trading vault.`);
-      await fetchVault();
-      await fetchBoard();
-    } catch (err: any) {
-      setVaultError(err?.response?.data?.detail || 'Failed to allocate deposit.');
-    } finally {
-      setVaultLoading(false);
-    }
-  };
-
-  const handleVaultWithdraw = async (amt: number) => {
-    if (amt <= 0) return;
-    if (isRealAccount && (!walletInfo?.is_connected || !walletInfo?.wallet_address)) {
-      const ok = await connectRabbyWallet();
-      if (!ok) {
-        setVaultError('Rabby Wallet connection required for real account withdrawal.');
-        return;
-      }
-    }
-    setVaultLoading(true);
-    setVaultError('');
-    setVaultMsg('');
-    try {
-      const token = localStorage.getItem('token');
-      const res = await axios.post('/api/fast5m/vault/withdraw', { amount: amt, wallet_type: 'rabby' }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-      setVaultMsg(res.data?.message || `Successfully de-allocated $${amt.toFixed(2)} back to wallet reserve.`);
-      await fetchVault();
-      await fetchBoard();
-    } catch (err: any) {
-      setVaultError(err?.response?.data?.detail || 'Failed to withdraw from vault.');
-    } finally {
-      setVaultLoading(false);
-    }
+    setIsRabbyModalOpen(true);
   };
 
   const handleResetDemoAccount = async () => {
@@ -1189,8 +1142,8 @@ export default function Fast5MBoard() {
       }
       const userWallet = userProfile?.wallet_address || walletInfo?.wallet_address;
       if (!userWallet && !walletInfo?.is_connected) {
-        setWalletModalOpen(true);
-        setWalletError('Web3 wallet required: Please connect and link your Polygon wallet address first.');
+        handleOpenDepositWithdraw('deposit');
+        setWalletError('Rabby Wallet required: Please connect and link your Rabby wallet address first.');
         return;
       }
     }
@@ -1398,36 +1351,25 @@ export default function Fast5MBoard() {
           </nav>
         </div>
 
-        {/* Right: Rabby Sync Button + Desktop Actions + Top-Corner Mobile Drawer Button */}
+        {/* Right: Unified Rabby Deposit/Withdraw Button + Desktop Actions + Top-Corner Mobile Drawer Button */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Quick Rabby Sync Hub Button */}
+          {/* Single Unified Primary Button: Deposit / Withdraw with Rabby Icon */}
           <button
             type="button"
-            onClick={() => setIsRabbyModalOpen(true)}
-            className="px-2 py-1 bg-gradient-to-r from-purple-900/40 via-indigo-900/40 to-sky-900/40 hover:from-purple-800/60 hover:to-sky-800/60 border border-purple-500/40 text-purple-200 hover:text-white rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
-            title="Open Rabby Wallet Deposit & Withdrawal Sync Hub"
+            onClick={() => handleOpenDepositWithdraw('deposit')}
+            className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 active:scale-95 text-white font-bold text-[11px] sm:text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0 border border-emerald-400/30"
+            title="Deposit or Withdraw USDC via Rabby Wallet"
           >
             <span className="text-xs">🐰</span>
-            <span className="hidden sm:inline">Rabby Sync</span>
-            {walletInfo?.is_rabby && (
+            <span>Deposit / Withdraw</span>
+            {walletInfo?.is_connected && (
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             )}
           </button>
 
           {/* Desktop Toolbar Elements */}
           <div className="hidden xl:flex items-center gap-1 shrink-0">
-            {/* 1. Unified Deposit / Withdraw Button */}
-            <button
-              type="button"
-              onClick={() => { setVaultTab('deposit'); setVaultModalOpen(true); }}
-              className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0"
-              title="Deposit or Withdraw Capital to/from Trading Vault"
-            >
-              <ArrowDownToLine className="w-3 h-3" />
-              <span>Deposit / Withdraw</span>
-            </button>
-
-            {/* 2. Compact Emergency Stop Button */}
+            {/* 1. Compact Emergency Stop Button */}
             {isAdmin ? (
               board?.auto_trading_active ? (
                 <button
@@ -1477,7 +1419,7 @@ export default function Fast5MBoard() {
             {/* 4. Wallet Button */}
             <button
               type="button"
-              onClick={() => setWalletModalOpen(true)}
+              onClick={() => handleOpenDepositWithdraw('deposit')}
               className="flex items-center gap-1 px-2 py-1 bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-[11px] font-mono text-slate-200 transition-colors cursor-pointer shrink-0"
               title="Open Web3 Wallet Controls & Balance"
             >
@@ -1999,7 +1941,7 @@ export default function Fast5MBoard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setWalletModalOpen(true)}
+                  onClick={() => handleOpenDepositWithdraw('deposit')}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
                 >
                   <Wallet className="w-3.5 h-3.5" />
@@ -4566,512 +4508,6 @@ export default function Fast5MBoard() {
       )}
 
 
-      {/* 8. INTERACTIVE WALLET CONNECTION MODAL */}
-      {walletModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-xl w-full p-5 sm:p-6 space-y-5 relative overflow-hidden">
-            
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="p-2 rounded-xl bg-purple-50 text-purple-600">
-                  <Wallet className="w-5 h-5" />
-                </span>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Connect Real Wallet (Polymarket CLOB)</h3>
-                  <p className="text-[11px] text-slate-500">Polygon Mainnet (Chain ID 137) • Sub-Second Order Execution</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setWalletModalOpen(false)}
-                className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Notification Messages in Modal */}
-            {walletMsg && (
-              <div className="flex items-center gap-2 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>{walletMsg}</span>
-              </div>
-            )}
-            {walletError && (
-              <div className="flex items-center gap-2 p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span>{walletError}</span>
-              </div>
-            )}
-
-            {/* Balances Sub-Bar */}
-            {walletInfo?.is_connected && (
-              <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
-                <div>
-                  <span className="text-slate-400 text-[10px] block">Connected Address</span>
-                  <span className="font-bold text-slate-800">{walletInfo.masked_address}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 text-[10px] block">Spendable USDC</span>
-                  <span className="font-black text-emerald-600">${walletInfo.usdc_total.toFixed(2)}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 text-[10px] block">POL Gas</span>
-                  <span className="font-bold text-purple-700">{walletInfo.pol_gas_balance.toFixed(3)} POL</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleDisconnectWallet}
-                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 font-sans"
-                  title="Disconnect Personal Wallet"
-                >
-                  <Unlink className="w-3 h-3 text-rose-600" />
-                  <span>Disconnect</span>
-                </button>
-              </div>
-            )}
-
-            {/* Rabby Wallet (Sole & Default Web3 Provider) */}
-            <div className="space-y-2">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
-                Official Web3 Provider (Exclusively Real Account):
-              </label>
-              <div className="p-3.5 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-sky-50 rounded-2xl border border-purple-200/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl p-2 bg-white rounded-xl border border-purple-200 shadow-xs">🐰</span>
-                    <div>
-                      <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                        <span>Rabby Wallet</span>
-                        <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold">
-                          Default
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-slate-500">Sole supported Web3 wallet for Polygon Mainnet & Polymarket CLOB</div>
-                    </div>
-                  </div>
-                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border shrink-0 ${
-                    isRabbyAvailable()
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                      : 'bg-amber-50 text-amber-700 border-amber-300'
-                  }`}>
-                    {isRabbyAvailable() ? '● Extension Detected' : '● Extension Required'}
-                  </span>
-                </div>
-
-                {!isRabbyAvailable() ? (
-                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-800 text-[11px] flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>Rabby Wallet extension required. Please install Rabby to continue.</span>
-                    </div>
-                    <a
-                      href="https://rabby.io"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-[10px] rounded-lg shadow-xs flex items-center gap-1 shrink-0"
-                    >
-                      <span>Install Rabby</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={connectRabbyWallet}
-                    disabled={connectingBrowserWallet}
-                    className="w-full py-2.5 bg-gradient-to-r from-purple-700 via-indigo-600 to-sky-600 hover:from-purple-600 hover:to-sky-500 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                  >
-                    {connectingBrowserWallet ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Awaiting Rabby Approval...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>🐰</span>
-                        <span>Connect Rabby Wallet</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Divider */}
-            <div className="relative flex py-1 items-center">
-              <div className="grow border-t border-slate-200"></div>
-              <span className="shrink mx-3 text-slate-400 text-[10px] uppercase font-bold">OR Automated Signer Key</span>
-              <div className="grow border-t border-slate-200"></div>
-            </div>
-
-            {/* Manual Form */}
-            <div className="space-y-2.5">
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 block mb-1">Polygon Wallet Address (0x...):</label>
-                <input
-                  type="text"
-                  placeholder="0x..."
-                  value={walletAddressInput}
-                  onChange={(e) => setWalletAddressInput(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-800 focus:outline-hidden focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-bold text-slate-700">Signer Private Key (for 24/7 fast execution):</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowPrivateKey(!showPrivateKey)}
-                    className="text-[10px] text-purple-600 font-bold flex items-center gap-0.5 hover:underline cursor-pointer"
-                  >
-                    {showPrivateKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    <span>{showPrivateKey ? 'Hide' : 'Show'}</span>
-                  </button>
-                </div>
-                <input
-                  type={showPrivateKey ? 'text' : 'password'}
-                  placeholder={walletInfo?.has_signer ? '•••••••••••••••••••••••••••••••••••• (Signer Active)' : 'Paste 64-character private key'}
-                  value={privateKeyInput}
-                  onChange={(e) => setPrivateKeyInput(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-800 focus:outline-hidden focus:border-purple-500"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleSaveWalletCredentials}
-                disabled={savingWalletCreds}
-                className="w-full py-2.5 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white rounded-xl text-xs font-black shadow-md shadow-purple-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
-              >
-                <Key className="w-4 h-4" />
-                <span>{savingWalletCreds ? 'Verifying...' : 'Save & Authorize Signer Key'}</span>
-              </button>
-            </div>
-
-            {/* Mode Toggle / Status inside Modal */}
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Trading Mode:</span>
-              <div className="flex items-center gap-2">
-                {isRealAccount ? (
-                  <>
-                    <span className="px-3 py-1 rounded-lg text-xs font-black bg-emerald-600 text-white shadow-xs flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                      ⚡ Real Account Exclusive (Live CLOB)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleDisconnectWallet}
-                      className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 font-sans"
-                    >
-                      <Unlink className="w-3 h-3 text-rose-600" />
-                      <span>Disconnect</span>
-                    </button>
-                  </>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleWalletMode('demo')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        walletInfo?.account_mode === 'demo' || !walletInfo?.is_connected
-                          ? 'bg-blue-600 text-white font-black shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Demo ($300)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleWalletMode('live')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        walletInfo?.account_mode === 'live'
-                          ? 'bg-emerald-600 text-white font-black shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Live (CLOB)
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-
-      {/* 9. ISOLATED TRADING VAULT ALLOCATION MODAL (DEPOSIT / WITHDRAW) */}
-      {vaultModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fade-in text-left">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 relative overflow-hidden">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="p-2.5 rounded-2xl bg-indigo-100 text-indigo-700 shrink-0">
-                  <Lock className="w-5 h-5" />
-                </span>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Trading Capital Vault</h3>
-                  <p className="text-xs text-slate-500">Isolated Sub-Wallet Allocation & Risk Bounds</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setVaultModalOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Notification messages */}
-            {vaultMsg && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded-xl text-xs flex items-center gap-2 font-medium">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>{vaultMsg}</span>
-              </div>
-            )}
-            {vaultError && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-2.5 rounded-xl text-xs flex items-center gap-2 font-medium">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span>{vaultError}</span>
-              </div>
-            )}
-
-            {/* Mode & Tab Switcher */}
-            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold gap-1">
-              <button
-                type="button"
-                onClick={() => { setVaultTab('deposit'); setVaultError(''); setVaultMsg(''); }}
-                className={`flex-1 py-2 px-3 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                  vaultTab === 'deposit' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <ArrowDownToLine className="w-3.5 h-3.5" />
-                <span>Deposit / Allocate</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => { setVaultTab('withdraw'); setVaultError(''); setVaultMsg(''); }}
-                className={`flex-1 py-2 px-3 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                  vaultTab === 'withdraw' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <ArrowUpFromLine className="w-3.5 h-3.5" />
-                <span>Withdraw to Wallet</span>
-              </button>
-            </div>
-
-            {/* TAB 1: DEPOSIT / ALLOCATE CAPITAL */}
-            {vaultTab === 'deposit' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                      {isRealAccount ? 'Connected Wallet Balance' : 'Demo Wallet Reserve'}
-                    </span>
-                    <span className="text-sm font-black text-slate-800 font-mono">
-                      ${vaultInfo?.account_mode === 'live' 
-                        ? (walletInfo?.usdc_total != null ? walletInfo.usdc_total.toFixed(2) : (vaultInfo?.total_wallet_balance != null ? vaultInfo.total_wallet_balance.toFixed(2) : '0.00')) 
-                        : '1,000.00'} USDC
-                    </span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">
-                      Source: {isRealAccount ? displayAddress : 'Virtual Reserve'}
-                    </span>
-                  </div>
-                  <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-indigo-500 block">Dashboard Trading Vault</span>
-                    <span className="text-sm font-black text-indigo-950 font-mono">
-                      ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'} USDC
-                    </span>
-                    <span className="text-[10px] text-indigo-600 font-bold block mt-0.5">
-                      Target: Active Bot Margin
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    Amount to Deposit into Dashboard (USDC):
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">$</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="5"
-                      value={vaultAmountInput}
-                      onChange={(e) => setVaultAmountInput(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:border-indigo-500"
-                      placeholder="50"
-                    />
-                  </div>
-
-                  {/* Preset Allocation Buttons */}
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {[50, 100, 250].map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() => setVaultAmountInput(String(preset))}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
-                      >
-                        +${preset}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const bal = vaultInfo?.account_mode === 'live' ? (walletInfo?.usdc_total ?? vaultInfo?.total_wallet_balance ?? 50) : 300;
-                        setVaultAmountInput(String(Math.max(5, Math.floor(bal * 0.5))));
-                      }}
-                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
-                    >
-                      50% Balance
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const bal = vaultInfo?.account_mode === 'live' ? (walletInfo?.usdc_total ?? vaultInfo?.total_wallet_balance ?? 100) : 300;
-                        setVaultAmountInput(String(Math.max(5, Math.floor(bal))));
-                      }}
-                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
-                    >
-                      100% (Max)
-                    </button>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  🔒 <strong>Instant Fund Allocation:</strong> Deposited funds move immediately into your active dashboard balance to trade prediction rounds safely within your set risk limits.
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => setPendingTransfer({ type: 'deposit', amount: parseFloat(vaultAmountInput) || 0 })}
-                  disabled={vaultLoading || !(parseFloat(vaultAmountInput) > 0)}
-                  className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-500/20 cursor-pointer transition-all flex items-center justify-center gap-2"
-                >
-                  <ArrowDownToLine className="w-4 h-4" />
-                  <span>{vaultLoading ? 'Allocating Funds...' : `Deposit $${parseFloat(vaultAmountInput) || 0} USDC into Dashboard`}</span>
-                </button>
-              </div>
-            )}
-
-            {/* TAB 2: WITHDRAW / DE-ALLOCATE TO WALLET */}
-            {vaultTab === 'withdraw' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Dashboard Balance</span>
-                    <span className="text-xs font-black text-slate-800 font-mono">
-                      ${vaultInfo?.allocated_balance != null ? vaultInfo.allocated_balance.toFixed(2) : '300.00'}
-                    </span>
-                  </div>
-                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                    <span className="text-[9px] uppercase font-bold text-amber-600 block">Locked in Trades</span>
-                    <span className="text-xs font-black text-amber-900 font-mono">
-                      ${vaultInfo?.active_margin != null ? vaultInfo.active_margin.toFixed(2) : '0.00'}
-                    </span>
-                  </div>
-                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
-                    <span className="text-[9px] uppercase font-bold text-emerald-600 block">Available to Transfer</span>
-                    <span className="text-xs font-black text-emerald-950 font-mono">
-                      ${vaultInfo?.available_to_withdraw != null ? vaultInfo.available_to_withdraw.toFixed(2) : '300.00'}
-                    </span>
-                  </div>
-                </div>
-
-                {vaultInfo?.active_margin > 0 && (
-                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-800 flex items-start gap-2">
-                    <Shield className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <span>
-                      <strong>Safety Lock Active:</strong> ${vaultInfo.active_margin.toFixed(2)} is committed in open active trades and is locked until rounds conclude. Available to withdraw: <strong>${vaultInfo.available_to_withdraw.toFixed(2)}</strong>.
-                    </span>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    Amount to Transfer Back to Wallet (USDC):
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">$</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="5"
-                      max={vaultInfo?.available_to_withdraw || 300}
-                      value={vaultAmountInput}
-                      onChange={(e) => setVaultAmountInput(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:border-indigo-500"
-                      placeholder="50"
-                    />
-                  </div>
-
-                  {/* Preset De-allocation Buttons */}
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const maxAvail = vaultInfo?.available_to_withdraw ?? 300;
-                        setVaultAmountInput(String(Math.max(1, Number((maxAvail * 0.25).toFixed(2)))));
-                      }}
-                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
-                    >
-                      25% Available
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const maxAvail = vaultInfo?.available_to_withdraw ?? 300;
-                        setVaultAmountInput(String(Math.max(1, Number((maxAvail * 0.50).toFixed(2)))));
-                      }}
-                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
-                    >
-                      50% Available
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const maxAvail = vaultInfo?.available_to_withdraw ?? 300;
-                        setVaultAmountInput(String(Number(maxAvail.toFixed(2))));
-                      }}
-                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg font-mono transition-colors cursor-pointer"
-                    >
-                      100% (All Available)
-                    </button>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  ↩️ <strong>Direct Return to Connected Wallet:</strong> Withdrawn funds will be transferred directly back into your connected Web3 wallet ({isRealAccount ? displayAddress : 'Demo Reserve'}).
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => setPendingTransfer({ type: 'withdraw', amount: parseFloat(vaultAmountInput) || 0 })}
-                  disabled={
-                    vaultLoading || 
-                    !(parseFloat(vaultAmountInput) > 0) || 
-                    parseFloat(vaultAmountInput) > (vaultInfo?.available_to_withdraw ?? 300)
-                  }
-                  className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all flex items-center justify-center gap-2"
-                >
-                  <ArrowUpFromLine className="w-4 h-4" />
-                  <span>{vaultLoading ? 'Transferring Funds...' : `Transfer $${parseFloat(vaultAmountInput) || 0} USDC Back to Connected Wallet`}</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* MODAL 1: EMERGENCY STOP CONFIRMATION */}
       {isEmergencyStopModalOpen && (
         <div
@@ -5225,83 +4661,6 @@ export default function Fast5MBoard() {
                 ) : (
                   <span>Confirm Exit Now</span>
                 )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 4: DEPOSIT / WITHDRAW CONFIRMATION */}
-      {pendingTransfer && (
-        <div
-          onClick={(e) => { if (e.target === e.currentTarget && !vaultLoading) setPendingTransfer(null); }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
-        >
-          <div className="bg-[#12161f] border-2 border-indigo-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative text-left">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl">
-                {pendingTransfer.type === 'deposit' ? <ArrowDownToLine className="w-6 h-6" /> : <ArrowUpFromLine className="w-6 h-6" />}
-              </div>
-              <div>
-                <h3 className="text-base font-black text-white">
-                  Confirm {pendingTransfer.type === 'deposit' ? 'Vault Deposit' : 'Vault Withdrawal'}
-                </h3>
-                <p className="text-xs text-indigo-300/80 font-mono">Polygon Mainnet (Chain ID 137)</p>
-              </div>
-            </div>
-
-            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-3.5 space-y-2 text-xs font-mono">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Transfer Amount:</span>
-                <span className="text-emerald-400 font-black text-sm">${pendingTransfer.amount.toFixed(2)} USDC</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Network:</span>
-                <span className="text-purple-300 font-bold">Polygon Mainnet (137)</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Connected Wallet:</span>
-                <span className="text-white font-mono text-[11px] truncate max-w-[200px]" title={walletInfo?.wallet_address || displayAddress}>
-                  {isRealAccount ? (walletInfo?.wallet_address || displayAddress) : 'Demo Simulation Reserve'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Destination:</span>
-                <span className="text-blue-300 font-bold">
-                  {pendingTransfer.type === 'deposit' ? 'Dashboard Trading Vault' : 'External Web3 Wallet'}
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Please verify transfer details before proceeding with execution.
-            </p>
-
-            <div className="flex items-center justify-end gap-2.5 pt-2">
-              <button
-                type="button"
-                disabled={vaultLoading}
-                onClick={() => setPendingTransfer(null)}
-                className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={vaultLoading}
-                onClick={async () => {
-                  const amt = pendingTransfer.amount;
-                  const type = pendingTransfer.type;
-                  setPendingTransfer(null);
-                  if (type === 'deposit') {
-                    await handleVaultDeposit(amt);
-                  } else {
-                    await handleVaultWithdraw(amt);
-                  }
-                }}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md shadow-indigo-600/30 transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                <span>Confirm Transfer</span>
               </button>
             </div>
           </div>
@@ -5518,11 +4877,11 @@ export default function Fast5MBoard() {
                         type="button"
                         onClick={() => {
                           setIsMobileDrawerOpen(false);
-                          setIsRabbyModalOpen(true);
+                          handleOpenDepositWithdraw('deposit');
                         }}
                         className="py-1.5 px-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs"
                       >
-                        <Coins className="w-3 h-3" />
+                        <span className="text-xs">🐰</span>
                         <span>Deposit / Withdraw</span>
                       </button>
                     </div>
@@ -5670,32 +5029,21 @@ export default function Fast5MBoard() {
                   Quick Actions
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Deposit / Withdraw */}
+                <div>
+                  {/* Single Unified Primary Button: Deposit / Withdraw with Rabby Icon */}
                   <button
                     type="button"
                     onClick={() => {
                       setIsMobileDrawerOpen(false);
-                      setVaultTab('deposit');
-                      setVaultModalOpen(true);
+                      handleOpenDepositWithdraw('deposit');
                     }}
-                    className="p-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                    className="w-full p-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all shadow-md shadow-emerald-950/30 cursor-pointer border border-emerald-400/30"
                   >
-                    <ArrowDownToLine className="w-3.5 h-3.5" />
-                    <span>Vault Deposit</span>
-                  </button>
-
-                  {/* Rabby Sync Hub */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMobileDrawerOpen(false);
-                      setIsRabbyModalOpen(true);
-                    }}
-                    className="p-2.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                  >
-                    <span>🐰</span>
-                    <span>Rabby Hub</span>
+                    <span className="text-sm">🐰</span>
+                    <span>Deposit / Withdraw</span>
+                    {walletInfo?.is_connected && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+                    )}
                   </button>
                 </div>
 
@@ -5812,7 +5160,7 @@ export default function Fast5MBoard() {
                 </div>
                 <div>
                   <h3 className="text-base font-black text-white flex items-center gap-2">
-                    <span>Rabby Wallet Sync Hub</span>
+                    <span>Rabby Deposit & Withdrawal</span>
                     <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
                       Polygon (137)
                     </span>
@@ -5842,6 +5190,49 @@ export default function Fast5MBoard() {
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
                 <span className="flex-1">{rabbySyncMsg}</span>
+              </div>
+            )}
+
+            {/* If Rabby is not connected, show prominent connect prompt */}
+            {!walletInfo?.is_connected && (
+              <div className="p-3.5 bg-gradient-to-r from-purple-950/70 via-indigo-950/60 to-purple-900/40 border border-purple-500/40 rounded-2xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-2xl p-1.5 bg-purple-500/20 rounded-xl border border-purple-500/30">🐰</span>
+                  <div>
+                    <div className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>Rabby Wallet Required</span>
+                      <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+                        Polygon 137
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-purple-200/80 mt-0.5">
+                      {isRabbyAvailable()
+                        ? 'Connect Rabby to deposit or withdraw Polygon USDC.'
+                        : 'Rabby extension not detected. Install Rabby to proceed.'}
+                    </div>
+                  </div>
+                </div>
+                {isRabbyAvailable() ? (
+                  <button
+                    type="button"
+                    onClick={connectRabbyWallet}
+                    disabled={connectingBrowserWallet}
+                    className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/30 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                  >
+                    <span>{connectingBrowserWallet ? 'Connecting...' : 'Connect Rabby'}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <a
+                    href="https://rabby.io"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5 shrink-0"
+                  >
+                    <span>Install Rabby</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
             )}
 
