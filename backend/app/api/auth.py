@@ -584,26 +584,39 @@ def google_callback_get(
     """
     from app.config import settings
     import urllib.parse
+    from fastapi import Request
+
+    logger.info(f"[OAuth Callback] GET /auth/google/callback hit | code={'<present>' if code else 'MISSING'} | error={error} | state={state}")
     
-    raw_redirect = getattr(settings, "google_redirect_uri", "http://localhost:8000/api/auth/google/callback")
+    raw_redirect = getattr(settings, "google_redirect_uri", "http://localhost/api/auth/google/callback")
+    logger.info(f"[OAuth Callback] Configured GOOGLE_REDIRECT_URI = {raw_redirect}")
+    
+    # Derive frontend base from configured redirect URI
     if "/api/" in raw_redirect:
         frontend_base = raw_redirect.split("/api/")[0]
     elif "/login" in raw_redirect:
         frontend_base = raw_redirect.rsplit("/login", 1)[0]
     else:
-        frontend_base = "http://localhost:8000"
+        frontend_base = raw_redirect.rstrip("/")
+
+    logger.info(f"[OAuth Callback] Derived frontend_base = {frontend_base}")
     
     if error:
+        logger.warning(f"[OAuth Callback] Google returned error: {error}")
         return RedirectResponse(url=f"{frontend_base}/login?error={urllib.parse.quote(error)}")
     
     if not code:
+        logger.error("[OAuth Callback] Missing Google authorization code in callback")
         return RedirectResponse(url=f"{frontend_base}/login?error={urllib.parse.quote('Missing Google authorization code')}")
         
     redirect_uri = raw_redirect
+    logger.info(f"[OAuth Callback] Exchanging code with redirect_uri={redirect_uri}")
     token_res = _exchange_google_code(code, redirect_uri)
+    logger.info(f"[OAuth Callback] Token exchange result keys: {list(token_res.keys())}")
     
     if "error" in token_res and "email" not in token_res:
         err_msg = token_res.get("error", "Failed to exchange authorization code")
+        logger.error(f"[OAuth Callback] Code exchange failed: {err_msg}")
         return RedirectResponse(url=f"{frontend_base}/login?error={urllib.parse.quote(str(err_msg))}")
         
     email = token_res.get("email")
@@ -618,12 +631,17 @@ def google_callback_get(
         sub_id = verified.get("sub")
     
     if not email:
+        logger.error("[OAuth Callback] Could not extract email from Google tokens")
         return RedirectResponse(url=f"{frontend_base}/login?error={urllib.parse.quote('Failed to verify Google account email')}")
-        
+    
+    logger.info(f"[OAuth Callback] Authenticated Google user: {email}")
     auth_data = _authenticate_google_user(db, email, name=name, sub_id=sub_id)
     jwt_tok = auth_data["access_token"]
     
-    return RedirectResponse(url=f"{frontend_base}/login?token={jwt_tok}&auth=google")
+    redirect_url = f"{frontend_base}/login?token={jwt_tok}&auth=google"
+    logger.info(f"[OAuth Callback] Redirecting to frontend: {frontend_base}/login?token=<jwt>&auth=google")
+    return RedirectResponse(url=redirect_url)
+
 
 @router.post("/google", response_model=Token)
 @router.post("/google-login", response_model=Token)

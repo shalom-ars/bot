@@ -34,8 +34,12 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
 
   const getOAuthRedirectUri = () => {
-    if (typeof window === 'undefined') return 'http://localhost:5173/login';
-    return `${window.location.origin}/login`;
+    if (typeof window === 'undefined') return 'http://localhost/api/auth/google/callback';
+    // Must match what the backend sends to Google's token exchange endpoint.
+    // Flow: Google → /api/auth/google/callback (backend) → /login?token=xxx (frontend)
+    const envRedirectUri = (import.meta as any).env?.VITE_GOOGLE_REDIRECT_URI;
+    if (envRedirectUri) return envRedirectUri;
+    return `${window.location.origin}/api/auth/google/callback`;
   };
 
   useEffect(() => {
@@ -302,32 +306,6 @@ export default function Login() {
     }, 500);
   };
 
-  // Popup window fallback for Google OAuth enforcing prompt=select_account
-  const openGoogleOAuthPopup = (clientId: string) => {
-    try {
-      const redirectUri = getOAuthRedirectUri();
-      const stateNonce = Math.random().toString(36).substring(2, 12);
-      sessionStorage.setItem('oauth_state', stateNonce);
-
-      // Enforce valid query parameters: prompt=select_account, client_id, redirect_uri, response_type=code, and scope
-      const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: 'openid email profile',
-        prompt: 'select_account',
-        access_type: 'offline',
-        state: stateNonce
-      });
-
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-      openGoogleOAuthUrlPopup(url, redirectUri);
-    } catch (err: any) {
-      console.warn('OAuth popup launch note:', err);
-      setGoogleLoading(false);
-      setError('Unable to open Google account selection window. Please check popup permissions.');
-    }
-  };
 
   // Trigger Google OAuth flow with explicit prompt: 'select_account'
   const triggerGoogleOAuthFlow = async () => {
@@ -339,19 +317,48 @@ export default function Login() {
       (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
       '249826315250-n48g1r4vhfv9h7kndfmlq0d60sk64u6f.apps.googleusercontent.com';
 
-    // 1. Fetch formatted OAuth authorization URL from backend
+    console.log('[OAuth] Starting Google OAuth flow');
+    console.log('[OAuth] redirect_uri:', redirectUri);
+
+    // 1. Fetch formatted OAuth authorization URL from backend (preferred — ensures redirect_uri matches exactly)
     try {
       const res = await client.get(`/auth/google/url?redirect_uri=${encodeURIComponent(redirectUri)}`);
       if (res.data?.auth_url) {
-        openGoogleOAuthUrlPopup(res.data.auth_url, redirectUri);
+        console.log('[OAuth] Got auth_url from backend:', res.data.auth_url);
+        // If redirect goes to backend callback, use direct navigation (not popup).
+        // Backend /api/auth/google/callback will redirect to /login?token=xxx after exchange.
+        const isBackendCallback = redirectUri.includes('/api/auth/');
+        if (isBackendCallback) {
+          window.location.href = res.data.auth_url;
+        } else {
+          openGoogleOAuthUrlPopup(res.data.auth_url, redirectUri);
+        }
         return;
       }
     } catch (e) {
-      console.debug('Backend auth url endpoint note, using standard authorization URL', e);
+      console.warn('[OAuth] Could not fetch auth URL from backend, using client-side URL:', e);
     }
 
-    // 2. Standard authorization URL popup with prompt=select_account
-    openGoogleOAuthPopup(googleClientId);
+    // 2. Fallback: build URL client-side and use direct redirect (backend callback) or popup (frontend callback)
+    const stateNonce = Math.random().toString(36).substring(2, 12);
+    sessionStorage.setItem('oauth_state', stateNonce);
+    const params = new URLSearchParams({
+      client_id: googleClientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      prompt: 'select_account',
+      access_type: 'offline',
+      state: stateNonce,
+    });
+    const fallbackUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    console.log('[OAuth] Fallback auth URL:', fallbackUrl);
+    const isBackendCallback = redirectUri.includes('/api/auth/');
+    if (isBackendCallback) {
+      window.location.href = fallbackUrl;
+    } else {
+      openGoogleOAuthUrlPopup(fallbackUrl, redirectUri);
+    }
   };
 
   // Direct manual Gmail authentication
