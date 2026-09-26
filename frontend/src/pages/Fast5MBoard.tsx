@@ -330,8 +330,14 @@ export default function Fast5MBoard() {
     setResettingDemo(true);
     try {
       const token = localStorage.getItem('token');
-      await axios.post('/api/demo/reset', {}, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      if (!token) {
+        showToast('⚠️ Authentication required. Please log in first.');
+        alert('Authentication required. Please log in first.');
+        setResettingDemo(false);
+        return;
+      }
+      await axios.post('/api/fast5m/demo/reset', {}, {
+        headers: { Authorization: `Bearer ${token}` }
       });
       setTrades([]);
       setStats({
@@ -347,12 +353,19 @@ export default function Fast5MBoard() {
         current_balance: 300,
       });
       setIsDemoResetModalOpen(false);
-      showToast('Demo account successfully reset to fresh state!');
+      showToast('✅ Demo account successfully reset to $300.00 base balance!');
       await fetchVault();
       await fetchBoard();
       await fetchTrades(selectedTimeframe, 'demo');
     } catch (e: any) {
-      alert(e?.response?.data?.detail || 'Failed to reset demo account.');
+      if (e?.response?.status === 401) {
+        showToast('⚠️ Session expired. Please log in again.');
+        alert('Session expired. Please log in again.');
+      } else {
+        const errorMsg = e?.response?.data?.detail || 'Failed to reset demo account.';
+        showToast(`❌ ${errorMsg}`);
+        alert(errorMsg);
+      }
     } finally {
       setResettingDemo(false);
     }
@@ -381,7 +394,7 @@ export default function Fast5MBoard() {
     setIsSwitchToRealModalOpen(false);
     try {
       const token = localStorage.getItem('token');
-      await axios.post('/api/demo/reset', {}, {
+      await axios.post('/api/fast5m/demo/reset', {}, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       setTrades([]);

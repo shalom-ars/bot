@@ -88,6 +88,7 @@ def test_executor_save_and_restore_defaults():
 
 def test_multi_pair_execution_and_aggressive_trailing():
     executor = FastExecutor()
+    executor.active_trades.clear()
     assert int(executor.settings["max_active_pools"]) == 3
     assert float(executor.settings["multi_pair_min_score"]) == 90.0
     assert float(executor.settings["trailing_stop_activation_pct"]) == 1.0

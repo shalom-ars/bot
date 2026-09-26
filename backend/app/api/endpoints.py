@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.db.models import Market, Trade, Position, User
@@ -247,5 +247,7 @@ def reset_demo_router_alias(
     Wipes paper trade history ONLY for the authenticated user and resets
     their virtual equity to $300.00. Requires valid JWT — never resets globally.
     """
+    if getattr(current_user, "status", "PENDING") == "SUSPENDED":
+        raise HTTPException(status_code=403, detail="Account has been suspended")
     from app.fast5m.executor import fast_executor
     return fast_executor.reset_demo_account(user_id=current_user.id)

@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
 from app.db.models import Fast5MTrade, Fast5MSetting, Fast5MUserVault, Fast5MUserSetting, User
-from app.api.security import get_current_user_optional, get_current_super_admin
+from app.api.security import get_current_user, get_current_user_optional, get_current_super_admin
 from app.fast5m.engine import fast5m_engine
 from app.fast5m.executor import fast_executor
 
@@ -533,7 +533,7 @@ def manual_exit_position(
 @router.post("/trades/demo/reset")
 @router.post("/reset-demo")
 def reset_demo_trading(
-    current_user: User = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -541,11 +541,8 @@ def reset_demo_trading(
     Wipes paper trade history and resets virtual equity back to $300.00 base
     for the authenticated user ONLY. Never affects other users' data.
     """
-    if not current_user:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Authentication required to reset demo account.")
-    if getattr(current_user, "status", "PENDING") != "APPROVED":
-        raise HTTPException(status_code=403, detail="Account pending administrator approval")
+    if getattr(current_user, "status", "PENDING") == "SUSPENDED":
+        raise HTTPException(status_code=403, detail="Account has been suspended")
     return fast_executor.reset_demo_account(user_id=current_user.id)
 
 

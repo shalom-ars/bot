@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
-from app.db.models import Fast5MTrade, Fast5MSetting
+from app.db.models import Fast5MTrade, Fast5MSetting, Fast5MUserVault, UserTrade, UserPortfolio
 from app.fast5m.scorer import ScoredAsset, fast_scorer
 from app.fast5m.discovery import fast_markets
 from app.fast5m.oracle import fast_oracle
@@ -29,10 +29,10 @@ DEFAULT_SETTINGS = {
     "confidence_threshold": "70.0",       # Execution threshold: minimum composite confidence rating of >= 70
     "position_size_usd": "10.0",          # Admin sizing: $10, $25, $50
     "max_active_pools": "3",              # Max Active Pools: up to 2 to 3 pairs simultaneously
-    "multi_pair_min_score": "85.0",       # Minimum score for multi-pair concurrent execution (85%+)
+    "multi_pair_min_score": "90.0",       # Minimum score for multi-pair concurrent execution (90%+)
     "strategy_direction": "BOTH",         # Strategy Direction: BOTH (Up/Down), UP_ONLY, DOWN_ONLY
-    "take_profit_dollar": "0.30",         # Target Profit dollar amount
-    "stop_loss_dollar": "0.05",           # Stop Loss dollar amount (0.5% on $10 = $0.05)
+    "take_profit_dollar": "0.50",         # Target Profit dollar amount
+    "stop_loss_dollar": "0.50",           # Stop Loss dollar amount (1:1 with TP)
     "risk_reward_ratio": "1.0",           # Configurable Risk-to-Reward Ratio (e.g. 1.0, 1.5, 2.0)
     "buffer_enabled": "true",             # Master toggle for grace period buffer
     "buffer_timer_sec": "4.0",            # 3 to 5 second Grace Period Buffer immediately after trade entry
@@ -58,20 +58,20 @@ DEFAULT_SETTINGS = {
     "exit_circuit_breaker_enabled": "true",
     "max_exit_slippage_pct": "1.0",       # Strict 1% slippage cap beyond SL trigger (prevents illiquid vacuum dumps)
     # Dedicated Per-Asset Spread & Liquidity Thresholds
-    "max_spread_btc": "0.06",
-    "min_liquidity_usd_btc": "150.0",
-    "max_spread_eth": "0.06",
-    "min_liquidity_usd_eth": "150.0",
-    "max_spread_sol": "0.08",
-    "min_liquidity_usd_sol": "120.0",
-    "max_spread_xrp": "0.10",
+    "max_spread_btc": "0.10",
+    "min_liquidity_usd_btc": "100.0",
+    "max_spread_eth": "0.10",
+    "min_liquidity_usd_eth": "100.0",
+    "max_spread_sol": "0.12",
+    "min_liquidity_usd_sol": "100.0",
+    "max_spread_xrp": "0.12",
     "min_liquidity_usd_xrp": "100.0",
-    "max_spread_doge": "0.10",
+    "max_spread_doge": "0.12",
     "min_liquidity_usd_doge": "100.0",
-    "max_spread_bnb": "0.08",
+    "max_spread_bnb": "0.12",
     "min_liquidity_usd_bnb": "100.0",
-    "max_spread_hype": "0.08",
-    "min_liquidity_usd_hype": "150.0",
+    "max_spread_hype": "0.12",
+    "min_liquidity_usd_hype": "100.0",
     # Active Quantitative Filters & Indicator Weights
     "filter_delta_enabled": "true",
     "filter_delta_weight": "40.0",
@@ -360,6 +360,7 @@ class FastExecutor:
         """
         Wipes demo paper trading history for the user and resets virtual balance to $300.00.
         Real account history and live on-chain trades are strictly preserved.
+        Multi-tenant isolation: Only touches records for `user_id`. Never affects other users.
         """
         demo_trade_ids = [
             tid for tid, t in self.active_trades.items() 
@@ -368,8 +369,12 @@ class FastExecutor:
         for tid in demo_trade_ids:
             self.active_trades.pop(tid, None)
 
-        self._traded_epochs.clear()
-        self.update_settings({"total_balance_usd": "300.0"})
+        if user_id is not None:
+            # Strictly clear only this user's traded epochs
+            self._traded_epochs = {e for e in self._traded_epochs if len(e) > 0 and e[0] != user_id}
+        else:
+            self._traded_epochs.clear()
+            self.update_settings({"total_balance_usd": "300.0"})
 
         db: Session = SessionLocal()
         deleted_count = 0
@@ -380,13 +385,38 @@ class FastExecutor:
             )
             if user_id is not None:
                 query = query.filter(Fast5MTrade.user_id == user_id)
-                # Reset user's vault balance to 300.0
+                # Reset or initialize user's vault balance to 300.0
                 vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == user_id).first()
                 if vault:
                     vault.allocated_balance = 300.0
                     vault.initial_deposit = 300.0
                     vault.total_deposited = 300.0
                     vault.total_withdrawn = 0.0
+                    vault.account_mode = "demo"
+                else:
+                    vault = Fast5MUserVault(
+                        user_id=user_id,
+                        account_mode="demo",
+                        allocated_balance=300.0,
+                        initial_deposit=300.0,
+                        total_deposited=300.0,
+                        total_withdrawn=0.0
+                    )
+                    db.add(vault)
+
+                from app.db.models import UserTrade, UserPortfolio
+                db.query(UserTrade).filter(UserTrade.user_id == user_id).delete(synchronize_session=False)
+                portfolio = db.query(UserPortfolio).filter(UserPortfolio.user_id == user_id).first()
+                if portfolio:
+                    portfolio.current_balance = 300.0
+                    portfolio.initial_balance = 300.0
+                    portfolio.equity = 300.0
+                    portfolio.exposure = 0.0
+                    portfolio.realized_pnl = 0.0
+                    portfolio.unrealized_pnl = 0.0
+                    portfolio.drawdown = 0.0
+                    portfolio.trades = 0
+                    portfolio.wins = 0
 
             deleted_count = query.delete(synchronize_session=False)
             db.commit()
@@ -494,16 +524,34 @@ class FastExecutor:
         if not scored_assets:
             return
 
-        # Query all approved active users so every user bot executes independently
+        # Query all active non-suspended users so every user bot executes independently
         db: Session = SessionLocal()
         user_targets = []
         try:
             from app.db.models import User, Fast5MUserVault
-            active_users = db.query(User).filter(User.status == "APPROVED", User.is_active == True).all()
+            active_users = db.query(User).filter(
+                User.is_active == True,
+                User.status != "SUSPENDED"
+            ).all()
             for u in active_users:
                 vault = db.query(Fast5MUserVault).filter(Fast5MUserVault.user_id == u.id).first()
-                mode = vault.account_mode if vault else "demo"
-                balance = float(vault.allocated_balance) if vault and vault.allocated_balance > 0 else float(self.settings.get("total_balance_usd", 300.0))
+                can_live = (u.status == "APPROVED" and getattr(u, "allowed_mode", "DEMO_ONLY") == "REAL_AND_DEMO")
+                mode = "live" if (vault and vault.account_mode == "live" and can_live) else "demo"
+                if vault and vault.allocated_balance is not None and vault.allocated_balance > 0:
+                    balance = float(vault.allocated_balance)
+                else:
+                    balance = float(self.settings.get("total_balance_usd", 300.0))
+                    if not vault:
+                        vault = Fast5MUserVault(
+                            user_id=u.id,
+                            account_mode=mode,
+                            allocated_balance=balance,
+                            initial_deposit=balance,
+                            total_deposited=balance,
+                            total_withdrawn=0.0
+                        )
+                        db.add(vault)
+                        db.commit()
                 user_targets.append({
                     "user_id": u.id,
                     "email": u.email,
@@ -682,6 +730,7 @@ class FastExecutor:
         # Clamp shares: max 200 shares per $10 notional (equivalent to a $0.05 min fill price)
         # This guards against absurd share quantities (e.g. 500 shares for $10 at $0.02 entry)
         max_shares = round(cost / 0.05, 4)
+        shares = min(max_shares, round(cost / max(0.01, entry_price), 4))
         existing_count = len([t for t in self.active_trades.values() if t.get("asset") == top_asset.asset and (user_id is None or t.get("user_id") == user_id)])
         epoch_key = (user_id, top_asset.asset, market.epoch_bucket, existing_count)
 
@@ -804,22 +853,7 @@ class FastExecutor:
         # When exiting an UP position, we sell at up_bid; when exiting DOWN, we sell at down_bid.
         raw_exit_bid = market.up_bid if outcome == "UP" else market.down_bid
 
-        # ── ORACLE-ANCHORED EXIT BID SANITY CLAMP ────────────────────────────────
-        # Reject exit bids that are dust/outlier prices far from oracle fair value.
-        # This prevents a legitimate $0.39 entry from being "exited" at a $0.02 dust bid.
-        oracle_delta_pct_exit = getattr(oracle, 'delta_pct', 0.0)
-        fair_mid_exit = min(0.88, max(0.12, 0.50 + (oracle_delta_pct_exit * 1.5)))
-        MAX_EXIT_BID_DEVIATION = 0.08  # 8% from fair_mid
-
-        real_book_bid = None
-        if raw_exit_bid and raw_exit_bid > 0.01 and abs(raw_exit_bid - fair_mid_exit) <= MAX_EXIT_BID_DEVIATION:
-            real_book_bid = raw_exit_bid
-        elif raw_exit_bid and raw_exit_bid > 0.01:
-            logger.warning(
-                f"[Fast5M Executor] ⚠️ OUTLIER EXIT BID CLAMPED for #{trade.get('id')} {asset} {outcome}: "
-                f"raw_bid=${raw_exit_bid:.4f} deviates {abs(raw_exit_bid - fair_mid_exit):.4f} from "
-                f"fair_mid=${fair_mid_exit:.4f}. Falling back to oracle-estimated exit price."
-            )
+        real_book_bid = raw_exit_bid if (raw_exit_bid and raw_exit_bid > 0.0001) else None
 
         # True oracle mark price using ratio-scaled binary option delta (delta factor ~1.5x)
         entry_oracle = trade.get("entry_oracle_price", strike_price)
@@ -839,7 +873,14 @@ class FastExecutor:
 
         # ── STRICT MARGIN-BASED SETTINGS PARSING (Rule #3) ───────────────────
         # Ensure a value like 0.5% is read as 0.005 in decimal, not confused with $0.50
-        raw_sl = float(self.settings.get("hard_stop_loss_pct") or self.settings.get("stop_loss_pct") or 0.5)
+        sl_val = self.settings.get("stop_loss_pct")
+        hard_sl_val = self.settings.get("hard_stop_loss_pct")
+        if sl_val is not None and (sl_val != "0.5" or hard_sl_val is None):
+            raw_sl = float(sl_val)
+        elif hard_sl_val is not None:
+            raw_sl = float(hard_sl_val)
+        else:
+            raw_sl = float(sl_val or 0.5)
         hard_stop_loss_fraction = raw_sl / 100.0 if raw_sl >= 0.05 else raw_sl
         hard_stop_loss_pct = round(hard_stop_loss_fraction * 100.0, 2) # e.g. 0.5%
 
@@ -917,30 +958,45 @@ class FastExecutor:
         # clamp simulated paper exit price to maximum allowable slippage or oracle mark price.
         # ─────────────────────────────────────────────────────────────
         elif not should_close and (pnl_pct_decimal <= -hard_stop_loss_fraction):
-            should_close = True
-            resolution = "HARD_STOP_LOSS"
-            trade["reversal_defense_active"] = False
-
+            cb_enabled = self.settings.get("exit_circuit_breaker_enabled", "true").lower() in ("true", "1", "yes")
             trigger_sl_price = round(entry_price * (1.0 - hard_stop_loss_fraction), 4)
             max_slip_pct = float(self.settings.get("max_exit_slippage_pct", 1.0))
             max_allowed_slip = entry_price * (max_slip_pct / 100.0)
             min_allowed_exit_price = round(trigger_sl_price - max_allowed_slip, 4)
 
-            if current_share_price < min_allowed_exit_price:
-                exit_price = round(max(min_allowed_exit_price, oracle_mark_price), 4)
+            # Circuit breaker check: If top bid depth is severely below allowable slippage limit,
+            # engage defense to avoid dumping into an illiquid vacuum until liquidity replenishes or round expiry
+            if cb_enabled and current_share_price < min_allowed_exit_price and time_rem > 10.0:
+                trade["circuit_breaker_active"] = True
+                trade["circuit_breaker_min_acceptable"] = min_allowed_exit_price
+                trade["circuit_breaker_target_sl"] = trigger_sl_price
+                trade["buffer_status"] = f"CIRCUIT_BREAKER_DEFENSE (MinBid: ${min_allowed_exit_price:.3f})"
                 logger.warning(
-                    f"[Fast5M Executor] 🛡️ EXIT SLIPPAGE CAP ENFORCED #{trade['id']} {asset} {outcome}: "
-                    f"Market bid ${current_share_price:.4f} crashed below limit ${min_allowed_exit_price:.4f} "
-                    f"(Trigger: ${trigger_sl_price:.4f}, SL: -{hard_stop_loss_pct}%, MaxSlip: {max_slip_pct}%). "
-                    f"Clamped paper exit price to ${exit_price:.4f}."
+                    f"[Fast5M Executor] ⚡ SLIPPAGE CIRCUIT BREAKER ENGAGED: #{trade['id']} {asset} {outcome} | "
+                    f"Target SL=${trigger_sl_price:.4f} | Vacuum Bid=${current_share_price:.4f} | "
+                    f"RECKLESS DUMP BLOCKED! Holding adaptive limit defense at ${min_allowed_exit_price:.4f} until liquidity replenishes."
                 )
             else:
-                exit_price = current_share_price
+                should_close = True
+                resolution = "CIRCUIT_BREAKER_SL_FILLED" if trade.get("circuit_breaker_active") else "HARD_STOP_LOSS"
+                trade["circuit_breaker_active"] = False
+                trade["reversal_defense_active"] = False
 
-            logger.info(
-                f"[Fast5M Executor] 🛑 STRICT HARD STOP LOSS TRIGGERED: #{trade['id']} {asset} {outcome} "
-                f"Loss {pnl_pct:.2f}% <= -{hard_stop_loss_pct:.2f}% (Exit Price: ${exit_price:.4f}, Cost: ${cost:.2f})"
-            )
+                if current_share_price < min_allowed_exit_price:
+                    exit_price = round(max(min_allowed_exit_price, oracle_mark_price), 4)
+                    logger.warning(
+                        f"[Fast5M Executor] 🛡️ EXIT SLIPPAGE CAP ENFORCED #{trade['id']} {asset} {outcome}: "
+                        f"Market bid ${current_share_price:.4f} crashed below limit ${min_allowed_exit_price:.4f} "
+                        f"(Trigger: ${trigger_sl_price:.4f}, SL: -{hard_stop_loss_pct}%, MaxSlip: {max_slip_pct}%). "
+                        f"Clamped paper exit price to ${exit_price:.4f}."
+                    )
+                else:
+                    exit_price = current_share_price
+
+                logger.info(
+                    f"[Fast5M Executor] 🛑 STRICT HARD STOP LOSS TRIGGERED: #{trade['id']} {asset} {outcome} "
+                    f"Loss {pnl_pct:.2f}% <= -{hard_stop_loss_pct:.2f}% (Exit Price: ${exit_price:.4f}, Cost: ${cost:.2f})"
+                )
 
         # ─────────────────────────────────────────────────────────────
         # 3. TAKE PROFIT TARGET & TRAILING PROFIT LOCK

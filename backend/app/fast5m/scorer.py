@@ -148,10 +148,13 @@ class FastScorer:
         max_spread = float(raw_asset_spread) if raw_asset_spread is not None and float(raw_asset_spread) > 0 else float(cfg.get("max_spread", 0.20))
 
         raw_asset_liq = cfg.get(f"min_liquidity_usd_{asset_lower}")
-        min_liquidity = float(raw_asset_liq) if raw_asset_liq is not None and float(raw_asset_liq) > 0 else float(cfg.get("min_liquidity_usd", 100.0))
-        # Adaptive liquidity bound: ensure smaller trades (e.g. $1 - $10) are not blocked by huge book depth checks
-        pos_size = float(cfg.get("position_size_usd", 10.0))
-        effective_min_liq = max(10.0, min(min_liquidity, pos_size * 5.0))
+        if raw_asset_liq is not None and float(raw_asset_liq) > 0:
+            effective_min_liq = float(raw_asset_liq)
+        else:
+            min_liquidity = float(cfg.get("min_liquidity_usd", 100.0))
+            # Adaptive liquidity bound: ensure smaller trades (e.g. $1 - $10) are not blocked by huge book depth checks
+            pos_size = float(cfg.get("position_size_usd", 10.0))
+            effective_min_liq = max(10.0, min(min_liquidity, pos_size * 5.0))
 
         min_time = float(cfg.get("min_time_remaining", 20.0))
         max_time = float(cfg.get("max_time_remaining", 280.0))
