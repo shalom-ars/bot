@@ -75,6 +75,7 @@ class SettingsUpdate(BaseModel):
     # Slippage Circuit Breaker on Exit
     exit_circuit_breaker_enabled: Optional[bool] = None
     max_exit_slippage_pct: Optional[float] = None
+    max_entry_slippage_pct: Optional[float] = None
     # Dedicated Per-Asset Spread & Liquidity Thresholds
     max_spread_btc: Optional[float] = None
     min_liquidity_usd_btc: Optional[float] = None
@@ -415,6 +416,8 @@ def _extract_settings_from_payload(payload: SettingsUpdate) -> Dict[str, str]:
         updates["exit_circuit_breaker_enabled"] = "true" if payload.exit_circuit_breaker_enabled else "false"
     if payload.max_exit_slippage_pct is not None:
         updates["max_exit_slippage_pct"] = str(payload.max_exit_slippage_pct)
+    if payload.max_entry_slippage_pct is not None:
+        updates["max_entry_slippage_pct"] = str(payload.max_entry_slippage_pct)
 
     # Dedicated Per-Asset Spread & Liquidity Thresholds
     for asset in ["btc", "eth", "sol", "xrp", "doge", "bnb", "hype"]:

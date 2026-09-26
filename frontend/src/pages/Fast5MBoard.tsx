@@ -138,6 +138,7 @@ export default function Fast5MBoard() {
   const [reversalLockEnabled, setReversalLockEnabled] = useState<boolean>(true);
   const [minProfitToLock, setMinProfitToLock] = useState<number>(0.10);
   const [reversalGivebackDollar, setReversalGivebackDollar] = useState<number>(0.03);
+  const [maxEntrySlippagePct, setMaxEntrySlippagePct] = useState<number>(0.8);
 
   interface UserProfileData {
     id?: number;
@@ -436,6 +437,7 @@ export default function Fast5MBoard() {
           if (s.trailing_stop_distance_pct) setTrailingStopDistancePct(parseFloat(s.trailing_stop_distance_pct));
           if (s.max_portfolio_margin_pct) setMaxPortfolioMarginPct(parseFloat(s.max_portfolio_margin_pct));
           if (s.reversal_lock_enabled !== undefined) setReversalLockEnabled(s.reversal_lock_enabled === 'true');
+          if (s.max_entry_slippage_pct) setMaxEntrySlippagePct(parseFloat(s.max_entry_slippage_pct));
 
           if (s.filter_delta_enabled !== undefined) setFilterDeltaEnabled(s.filter_delta_enabled !== 'false');
           if (s.filter_delta_weight) setFilterDeltaWeight(parseFloat(s.filter_delta_weight));
@@ -643,6 +645,7 @@ export default function Fast5MBoard() {
         max_time_remaining: maxTimeRemaining,
         exit_circuit_breaker_enabled: exitCircuitBreakerEnabled,
         max_exit_slippage_pct: maxExitSlippagePct,
+        max_entry_slippage_pct: maxEntrySlippagePct,
         max_spread_btc: (perAssetSpread['BTC'] ?? 6) / 100,
         min_liquidity_usd_btc: perAssetLiquidity['BTC'] ?? 150,
         max_spread_eth: (perAssetSpread['ETH'] ?? 6) / 100,
@@ -718,6 +721,7 @@ export default function Fast5MBoard() {
         max_time_remaining: maxTimeRemaining,
         exit_circuit_breaker_enabled: exitCircuitBreakerEnabled,
         max_exit_slippage_pct: maxExitSlippagePct,
+        max_entry_slippage_pct: maxEntrySlippagePct,
         max_spread_btc: (perAssetSpread['BTC'] ?? 6) / 100,
         min_liquidity_usd_btc: perAssetLiquidity['BTC'] ?? 150,
         max_spread_eth: (perAssetSpread['ETH'] ?? 6) / 100,
@@ -1234,9 +1238,15 @@ export default function Fast5MBoard() {
   const deltaPct = bestAsset?.delta_pct != null ? bestAsset.delta_pct : -0.0518;
   const bannerDelta = `${deltaVal >= 0 ? '+' : ''}${deltaVal} (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(4)}%)`;
   const bannerLatency = bestAsset?.latency_ms ?? 75;
-  const bannerStatus = (bestAsset && bestAsset.confidence >= confidenceThreshold && bestAsset.is_tradable)
-    ? 'ARMED & READY'
-    : (activeList.some((t: any) => t.asset === bannerAsset) ? 'EXECUTING' : 'WAITING EDGE');
+  const isScoreArmed = Boolean(bestAsset && bestAsset.confidence >= confidenceThreshold && bestAsset.is_tradable);
+  const isExecuting = activeList.some((t: any) => t.asset === bannerAsset);
+  const bannerStatus = !board?.auto_trading_active
+    ? 'PAUSED'
+    : (isExecuting
+      ? 'EXECUTING'
+      : (isScoreArmed
+        ? 'ARMED & READY'
+        : 'WAITING'));
 
   // Web3 wallet connects exclusively to Real Account for all users.
   // Upon real wallet connection, automatically hide all demo account details from view.
@@ -1768,6 +1778,10 @@ export default function Fast5MBoard() {
             <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
               bannerStatus === 'ARMED & READY'
                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                : bannerStatus === 'EXECUTING'
+                ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                : bannerStatus === 'PAUSED'
+                ? 'bg-slate-500/20 text-slate-400 border-slate-500/30'
                 : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
             }`}>
               {bannerStatus}
@@ -2531,6 +2545,50 @@ export default function Fast5MBoard() {
                       Clamps simulated paper exit price so stop-loss exits never dump below {maxExitSlippagePct.toFixed(1)}% slippage past trigger price.
                     </div>
                   </div>
+
+                  {/* Pre-Trade Entry Slippage & Spread Filter (Issue #2) */}
+                  <div className="bg-white p-2.5 rounded-xl border border-blue-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-700">Max Entry Slippage Filter:</span>
+                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                        {maxEntrySlippagePct.toFixed(1)}% Max Slip
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="2.0"
+                      step="0.1"
+                      value={maxEntrySlippagePct}
+                      onChange={(e) => {
+                        markSettingEdited();
+                        setMaxEntrySlippagePct(Number(e.target.value));
+                      }}
+                      className="w-full accent-blue-600 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1.5">
+                      {[0.5, 0.8, 1.0, 1.5].map((slip) => (
+                        <button
+                          key={slip}
+                          type="button"
+                          onClick={() => {
+                            markSettingEdited();
+                            setMaxEntrySlippagePct(slip);
+                          }}
+                          className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                            Math.abs(maxEntrySlippagePct - slip) < 0.05
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {slip.toFixed(1)}%
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-slate-500 leading-snug">
+                      🛡️ <strong>Slippage & Spread Guard:</strong> If difference between expected mid-price and best available ask exceeds {maxEntrySlippagePct.toFixed(1)}%, the fill is aborted to prevent market-entering into an immediate loss.
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -3014,9 +3072,12 @@ export default function Fast5MBoard() {
                 </div>
 
                 {/* Score Threshold */}
-                <div>
+                <div className="space-y-2">
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs text-slate-600 font-semibold">Min Composite Score (Primary):</label>
+                    <div>
+                      <label className="text-xs text-slate-700 font-bold block">Min Composite Score (Strict Multi-Threshold):</label>
+                      <span className="text-[10px] text-slate-500">Order dispatch is strictly blocked until score reaches this threshold</span>
+                    </div>
                     <span className="font-mono font-bold text-sm text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
                       ≥ {confidenceThreshold}%
                     </span>
@@ -3024,16 +3085,36 @@ export default function Fast5MBoard() {
                   <input
                     type="range"
                     min="50"
-                    max="90"
+                    max="99"
                     step="1"
                     value={confidenceThreshold}
-                    onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
+                    onChange={(e) => {
+                      markSettingEdited();
+                      setConfidenceThreshold(Number(e.target.value));
+                    }}
                     className="w-full accent-purple-600 cursor-pointer"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
-                    <span>50% (High Freq)</span>
-                    <span>70% (Recommended)</span>
-                    <span>90% (Strict)</span>
+                  <div className="flex items-center justify-between gap-1.5">
+                    {[50, 70, 80, 91, 95].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          markSettingEdited();
+                          setConfidenceThreshold(preset);
+                        }}
+                        className={`flex-1 py-1 text-center rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                          confidenceThreshold === preset
+                            ? 'bg-purple-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {preset}%
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-purple-700 bg-purple-50/60 p-2 rounded-lg border border-purple-100 leading-snug">
+                    🛡️ <strong>Strict Multi-Threshold Enforcement:</strong> Orders are NOT executed purely based on Rank #1. If current score &lt; {confidenceThreshold}%, status stays WAITING / ARMED with order dispatch completely blocked.
                   </div>
                 </div>
 
